@@ -1,0 +1,15 @@
+.gradle/
+build/
+out/
+*.class
+
+.env
+.env.*
+
+.idea/
+.vscode/
+.DS_Store
+
+docs/
+README.md
+gradlew.bat

@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@theme {
+  --color-app-canvas: #f8faff;
+  --color-app-ink: #182342;
+  --color-brand-accent: #b9e88f;
+  --color-brand-primary: #6262cc;
+  --color-sample-primary: #2857d0;
+  --color-sample-heading: #16203d;
+  --color-sample-muted: #56617c;
+  --color-sample-border: #dce3f6;
+  --breakpoint-chat: 47.5rem;
+  --breakpoint-sample: 45rem;
+  --animate-connection-pulse: connection-pulse 1s ease-in-out infinite alternate;
+
+  @keyframes connection-pulse {
+    to {
+      opacity: 0.35;
+    }
+  }
+}
+
+@layer base {
+  :root {
+    color: var(--color-app-ink);
+    background: var(--color-app-canvas);
+    font-family: Inter, Pretendard, 'Noto Sans KR', system-ui, sans-serif;
+    line-height: normal;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+    background: var(--color-app-canvas);
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+}

@@ -1,0 +1,17 @@
+FROM node:24-bookworm-slim
+
+WORKDIR /app
+
+RUN corepack enable && chown node:node /app
+
+COPY --chown=node:node package.json pnpm-lock.yaml ./
+
+USER node
+
+RUN pnpm install --frozen-lockfile
+
+COPY --chown=node:node . ./
+
+EXPOSE 5173
+
+CMD ["pnpm", "dev"]

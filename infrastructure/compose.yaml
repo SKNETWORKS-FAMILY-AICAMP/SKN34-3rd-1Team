@@ -1,0 +1,60 @@
+name: govbiz
+
+services:
+  ai-service:
+    build:
+      context: ../backend/ai-service
+      dockerfile: Dockerfile
+    init: true
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-luna}
+      LLM_MODEL_TIMEOUT_SECONDS: ${LLM_MODEL_TIMEOUT_SECONDS:-8.0}
+      LLM_RUN_TIMEOUT_SECONDS: ${LLM_RUN_TIMEOUT_SECONDS:-10.0}
+    expose:
+      - "8000"
+
+  core-api:
+    build:
+      context: ../backend/core-api
+      dockerfile: Dockerfile
+    init: true
+    environment:
+      AI_SERVICE_BASE_URL: http://ai-service:8000
+      AI_SERVICE_READ_TIMEOUT: ${AI_SERVICE_READ_TIMEOUT:-12s}
+      APP_CORS_ALLOWED_ORIGIN: ${APP_CORS_ALLOWED_ORIGIN:-http://127.0.0.1:5173}
+      BIZINFO_API_BASE_URL: ${BIZINFO_API_BASE_URL:-https://apis.data.go.kr}
+      BIZINFO_API_CONNECT_TIMEOUT: ${BIZINFO_API_CONNECT_TIMEOUT:-2s}
+      BIZINFO_API_READ_TIMEOUT: ${BIZINFO_API_READ_TIMEOUT:-10s}
+      DATA_GO_KR_SERVICE_KEY: ${DATA_GO_KR_SERVICE_KEY:-}
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  web:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.dev
+    init: true
+    working_dir: /app
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      VITE_CORE_API_BASE_URL: /
+      VITE_DEV_PROXY_TARGET: http://core-api:8080
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - ../frontend:/app
+      - web-node-modules:/app/node_modules
+
+  bizinfo-stub:
+    profiles:
+      - verification
+    build:
+      context: ./stubs/bizinfo
+      dockerfile: Dockerfile
+    init: true
+    expose:
+      - "8001"
+
+volumes:
+  web-node-modules:
