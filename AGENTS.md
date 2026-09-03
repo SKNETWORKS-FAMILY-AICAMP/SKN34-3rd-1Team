@@ -82,9 +82,72 @@
 - 실제 사용처가 하나뿐이고 호출부 안에 두는 편이 더 명확한 작은 함수는 불필요하게 별도
   Helper 파일로 추출하지 않는다.
 
+### MySQL 및 MyBatis 영속성 규칙
+
+- 관계형 데이터베이스 접근의 기본 흐름은
+  `Controller → Service → Repository → MyBatis Mapper → Mapper XML → MySQL`이다.
+  Controller, Facade, Client, Domain은 MyBatis Mapper를 직접 호출하지 않는다.
+- 관계형 DB 접근 코드는 해당 기능의 `repository`에 둔다. 단순히 DB를 사용한다는 이유만으로 별도
+  DAO 계층, Repository interface, 범용 BaseRepository를 추가하지 않는다.
+- MyBatis SQL 실행 계약과 DB 행 타입은 해당 기능의 `repository/mapper`에 둔다. SQL 실행
+  interface는 `Mapper`, DB 행 클래스는 `DbRow`로 끝낸다.
+- `DbRow`는 MyBatis가 DB 한 행을 읽고 쓰기 위한 경계 타입이다. MyBatis 객체 생성에 필요한
+  기본값과 `var`를 사용할 수 있지만 Domain의 Value Object, JPA Entity, 공개 DTO로 취급하지 않고
+  Repository 밖으로 노출하지 않는다.
+- Repository는 Domain과 `DbRow` 사이의 변환 및 JSON 같은 DB 표현의 직렬화·역직렬화를 담당한다.
+  Domain에는 MyBatis annotation이나 DB 컬럼 매핑 세부사항을 넣지 않는다.
+- MyBatis Mapper는 `DbRow`, 원시 값, 영향받은 행 수처럼 SQL 실행에 필요한 값만 입출력한다.
+  접수 상태 계산이나 외부 응답 정규화 같은 업무 로직을 Mapper 또는 Mapper XML에 넣지 않는다.
+- 실제 SQL은 `src/main/resources/mybatis/{기능}/repository` 아래 Mapper와 같은 이름의 XML에 둔다.
+  production 영속성 코드에서 같은 기능에 JPA, `JdbcClient`, annotation SQL을 함께 사용하지 않는다.
+  다른 방식이 꼭 필요하면 역할과 트랜잭션 경계를 먼저 설명하고 사용자에게 알린다.
+- Mapper XML의 `namespace`는 Mapper interface의 전체 이름과, statement `id`는 interface 메서드명과
+  일치시킨다. 조회 컬럼과 `resultMap`은 명시하고 `SELECT *`를 사용하지 않는다.
+- SQL 값은 `#{...}`로 바인딩한다. 검증된 식별자를 동적으로 조립해야 하는 명확한 이유가 없다면
+  문자열을 그대로 치환하는 `${...}`를 사용하지 않는다.
+- 지원사업 원본 식별자는 `(source_code, source_program_id)` 조합으로 다룬다. 서로 다른 제공처의
+  원본 ID가 전역에서 유일하다고 가정하지 않는다.
+- 날짜가 지나면서 바뀌는 접수 상태는 DB에 고정해 저장하지 않고, 저장된 신청 기간과 서울 기준
+  현재 날짜를 사용해 Domain 규칙으로 다시 계산한다.
+
+### 스키마와 데이터 동기화 규칙
+
+- MySQL 스키마 변경은 `src/main/resources/db/migration`의 Flyway migration으로만 관리한다.
+  이미 적용될 수 있는 migration은 수정하거나 삭제하지 않고 다음 버전의
+  `V{번호}__{설명}.sql`을 추가한다.
+- migration과 SQL은 production과 같은 MySQL 8.4 문법을 기준으로 작성하고, 한글 데이터는
+  `utf8mb4` 문자 집합을 유지한다.
+- 고유성이나 참조 무결성처럼 반드시 지켜야 하는 조건은 애플리케이션 검사에만 의존하지 않고
+  DB constraint로도 보장한다.
+- 운영 데이터를 삭제하거나 되돌리기 어려운 migration은 정확한 대상과 복구 방법을 확인하고
+  사용자의 명시적인 승인 없이 추가하거나 적용하지 않는다.
+- DB 비밀번호와 운영 연결 정보는 코드나 migration에 넣지 않고 환경변수 또는 secret으로 주입한다.
+- 외부 API 호출을 DB transaction 안에서 수행하지 않는다. 전체 데이터를 먼저 수집하고 검증한 뒤,
+  DB 반영만 하나의 짧은 transaction으로 처리한다.
+- 하나의 Repository 안에서 여러 SQL을 묶는 transaction은 Repository의 공개 메서드가 소유할 수 있다.
+  여러 Repository의 쓰기를 묶는 업무 transaction은 Service가 소유하며 Mapper는 경계를 만들지 않는다.
+- 외부 데이터 동기화는 같은 입력을 반복해도 결과가 같도록 UPSERT 기반으로 구현한다. 신규·변경
+  데이터 저장과 사라진 데이터의 비활성화는 제공처별로 하나의 transaction에서 처리한다.
+- 저장·갱신·비활성화 범위는 항상 `source_code`로 제한한다. 한 제공처의 동기화 실패나 누락이
+  다른 제공처의 데이터에 영향을 주면 안 된다.
+- 외부 API 오류, 일부 페이지 실패, 응답 검증 실패처럼 전체 수집 성공을 확인할 수 없는 경우에는
+  기존 데이터를 비활성화하거나 삭제하지 않는다.
+- 제공처가 알린 전체 건수와 실제 수집 건수가 다르거나 페이지 완전성을 확인할 수 없는 경우도
+  전체 수집 실패로 취급하고 기존 데이터를 유지한다.
+
+### 데이터베이스 검증
+
+- Flyway migration, MyBatis Mapper XML 또는 Repository를 변경하면 실제 MySQL 8.4 Testcontainers를
+  사용하는 통합 테스트를 실행한다. MySQL 전용 JSON, UPSERT, 날짜, 문자 정렬 동작을 H2로 대체하지 않는다.
+- Repository 통합 테스트는 변경 범위에 맞춰 한글·특수문자, JSON 배열, nullable 날짜, 복합 식별자,
+  UPSERT와 transaction rollback을 검증한다.
+- 동기화 기능을 변경하면 동일 데이터 재수집, 누락 공고 비활성화, 중간 실패 시 기존 데이터 보존을
+  실제 MySQL 통합 테스트로 확인한다.
+- Testcontainers 공통 설정은 테스트 전용 `_common/test`에 두고 production 코드나 설정에 포함하지 않는다.
+
 ### 의존 방향과 변경 원칙
 
-- 기본 의존 방향은 `Controller → Service → Facade → Client`로 고정한다.
+- 외부 시스템 호출의 기본 의존 방향은 `Controller → Service → Facade → Client`로 고정한다.
 - Controller는 Facade나 Client를 직접 호출하지 않고 사용자 유스케이스를 담당하는 Service만 호출한다.
 - Service는 필요한 Repository를 직접 사용하며, 외부 하위 시스템의 호출·검증·변환이
   복잡할 때만 Facade를 사용한다. 단순 Client 호출을 한 줄 전달하는 Facade는 만들지 않는다.
