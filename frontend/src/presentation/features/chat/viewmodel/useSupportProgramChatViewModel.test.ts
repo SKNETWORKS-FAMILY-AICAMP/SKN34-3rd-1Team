@@ -13,8 +13,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAppStore } from '../../../../app/store'
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
 import type { SearchSupportProgramsUseCase } from '../../../../domain/usecases/SearchSupportProgramsUseCase'
-import { useSupportProgramChatViewModel } from '../viewmodel/useSupportProgramChatViewModel'
-import { draftChanged } from './chatSlice'
+import { draftChanged } from '../state/chatSlice'
+import { useSupportProgramChatViewModel } from './useSupportProgramChatViewModel'
 
 afterEach(cleanup)
 
