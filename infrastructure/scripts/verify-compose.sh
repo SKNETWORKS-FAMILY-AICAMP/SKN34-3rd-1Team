@@ -18,6 +18,10 @@ export OPENAI_API_KEY="compose-verification-key-never-sent"
 export LLM_MODEL_TIMEOUT_SECONDS="8.0"
 export LLM_RUN_TIMEOUT_SECONDS="10.0"
 export AI_SERVICE_READ_TIMEOUT="12s"
+# The verification stack connects to MySQL through the Compose network. Give its
+# host-only port a separate default so a developer's local MySQL on 3306 does
+# not prevent the smoke test from starting.
+export MYSQL_HOST_PORT="${VERIFY_COMPOSE_MYSQL_HOST_PORT:-13306}"
 
 COMPOSE=(
   docker compose
@@ -52,7 +56,7 @@ wait_for_http() {
   local label=$1
   local url=$2
   local expected_status=$3
-  local expected_body_patterns=("${@:4}")
+  shift 3
   local deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
   local actual_status="000"
   local body_matches
@@ -71,7 +75,7 @@ wait_for_http() {
 
     if [[ "${actual_status}" == "${expected_status}" ]]; then
       body_matches=true
-      for pattern in "${expected_body_patterns[@]}"; do
+      for pattern in "$@"; do
         if [[ -n "${pattern}" ]] && ! grep -Eq "${pattern}" "${LAST_RESPONSE_FILE}"; then
           body_matches=false
           break

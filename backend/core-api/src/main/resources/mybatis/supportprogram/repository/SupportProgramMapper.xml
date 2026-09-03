@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ai.govbiz.core.supportprogram.repository.mapper.SupportProgramMapper">
+
+    <resultMap id="supportProgramDbRow"
+               type="ai.govbiz.core.supportprogram.repository.mapper.SupportProgramDbRow">
+        <id column="source_code" property="sourceCode" />
+        <id column="source_program_id" property="sourceProgramId" />
+        <result column="title" property="title" />
+        <result column="organization" property="organization" />
+        <result column="summary" property="summary" />
+        <result column="categories" property="categoriesJson" />
+        <result column="regions" property="regionsJson" />
+        <result column="target_description" property="targetDescription" />
+        <result column="application_period_raw" property="applicationPeriodRaw" />
+        <result column="application_start_date" property="applicationStartDate" />
+        <result column="application_end_date" property="applicationEndDate" />
+        <result column="source_url" property="sourceUrl" />
+        <result column="source_sort_timestamp" property="sourceSortTimestamp" />
+    </resultMap>
+
+    <insert id="upsert"
+            parameterType="ai.govbiz.core.supportprogram.repository.mapper.SupportProgramDbRow">
+        INSERT INTO support_program (
+            source_code,
+            source_program_id,
+            title,
+            organization,
+            summary,
+            categories,
+            regions,
+            target_description,
+            application_period_raw,
+            application_start_date,
+            application_end_date,
+            source_url,
+            source_sort_timestamp,
+            is_source_present
+        ) VALUES (
+            #{sourceCode},
+            #{sourceProgramId},
+            #{title},
+            #{organization},
+            #{summary},
+            #{categoriesJson,jdbcType=VARCHAR},
+            #{regionsJson,jdbcType=VARCHAR},
+            #{targetDescription},
+            #{applicationPeriodRaw},
+            #{applicationStartDate,jdbcType=DATE},
+            #{applicationEndDate,jdbcType=DATE},
+            #{sourceUrl},
+            #{sourceSortTimestamp,jdbcType=VARCHAR},
+            TRUE
+        )
+        ON DUPLICATE KEY UPDATE
+            title = #{title},
+            organization = #{organization},
+            summary = #{summary},
+            categories = #{categoriesJson,jdbcType=VARCHAR},
+            regions = #{regionsJson,jdbcType=VARCHAR},
+            target_description = #{targetDescription},
+            application_period_raw = #{applicationPeriodRaw},
+            application_start_date = #{applicationStartDate,jdbcType=DATE},
+            application_end_date = #{applicationEndDate,jdbcType=DATE},
+            source_url = #{sourceUrl},
+            source_sort_timestamp = #{sourceSortTimestamp,jdbcType=VARCHAR},
+            is_source_present = TRUE,
+            last_seen_at = CURRENT_TIMESTAMP(6)
+    </insert>
+
+    <select id="findBySourceAndProgramId" resultMap="supportProgramDbRow">
+        SELECT
+            source_code,
+            source_program_id,
+            title,
+            organization,
+            summary,
+            categories,
+            regions,
+            target_description,
+            application_period_raw,
+            application_start_date,
+            application_end_date,
+            source_url,
+            source_sort_timestamp
+        FROM support_program
+        WHERE source_code = #{sourceCode}
+          AND source_program_id = #{sourceProgramId}
+          AND is_source_present = TRUE
+    </select>
+</mapper>

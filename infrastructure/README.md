@@ -1,12 +1,13 @@
 # GovBiz Docker Compose
 
-Docker Compose는 React, Core API, AI Service를 한 번에 실행하고 실제 서비스 경계를 검증합니다.
+Docker Compose는 React, Core API, AI Service와 지원사업 카탈로그용 MySQL을 한 번에 실행하고 실제 서비스 경계를 검증합니다.
 
 ```text
 Browser (127.0.0.1:5173)
   → Vite web container
       → /api proxy
           → core-api:8080
+              ├→ mysql:3306
               ├→ https://apis.data.go.kr
               └→ ai-service:8000
                     └→ https://api.openai.com (LLM 활성 시)
@@ -19,12 +20,14 @@ Browser (127.0.0.1:5173)
 | 브라우저의 React | `/api/...` | Vite 프록시가 같은 Origin 요청을 Core API로 중계 |
 | web 컨테이너 | `http://core-api:8080` | Compose 내부 DNS |
 | Core API 컨테이너 | `http://ai-service:8000` | Compose 내부 DNS |
+| Core API 컨테이너 | `jdbc:mysql://mysql:3306/govbiz` | 지원사업 카탈로그 MySQL |
 | Core API 컨테이너 | `https://apis.data.go.kr` | 실제 기업마당 공고 upstream |
 | AI Service 컨테이너 | `https://api.openai.com` | 공고 후보 점수화 typed agent |
 | Host 터미널 | `http://127.0.0.1:8080` | Host에 공개된 Core API 포트 |
+| Host의 DB 도구 | `127.0.0.1:3306` | loopback으로만 공개한 MySQL 포트 |
 
-`core-api`와 `ai-service`는 컨테이너 네트워크 안에서만 해석되는 이름입니다. 브라우저 JavaScript가
-`http://core-api:8080`을 직접 호출하면 실패합니다.
+`core-api`, `ai-service`, `mysql`은 컨테이너 네트워크 안에서만 해석되는 이름입니다. 브라우저
+JavaScript가 `http://core-api:8080`을 직접 호출하면 실패합니다.
 
 ## 실행
 
@@ -48,6 +51,11 @@ OPENAI_API_KEY=발급받은_OpenAI_API_키
 | `LLM_RUN_TIMEOUT_SECONDS` | `10.0` | 후보 점수 검증을 포함한 전체 agent run 제한시간(초) |
 | `AI_SERVICE_READ_TIMEOUT` | `12s` | Core API의 AI Service 읽기 제한시간 |
 | `APP_CORS_ALLOWED_ORIGIN` | `http://127.0.0.1:5173` | Compose에서 Core API가 허용할 브라우저 origin |
+| `MYSQL_DATABASE` | `govbiz` | MySQL 초기 데이터베이스 이름 |
+| `MYSQL_USER` | `govbiz` | Core API의 MySQL 사용자 |
+| `MYSQL_PASSWORD` | `govbiz-local` | Core API의 MySQL 비밀번호. 공유 환경에서는 secret으로 교체 |
+| `MYSQL_ROOT_PASSWORD` | `govbiz-root-local` | MySQL 초기 root 비밀번호. 공유 환경에서는 secret으로 교체 |
+| `MYSQL_HOST_PORT` | `3306` | Host loopback에 연결할 MySQL 포트 |
 
 OpenAI는 공식 공고 후보 점수화의 필수 의존성입니다. 키가 없으면 Compose 설정과 AI Service 시작이
 실패하고, 실행 중 OpenAI 평가가 실패하면 Core API가 안전한 502·503·504로 전달합니다. Kotlin의
@@ -77,6 +85,9 @@ docker compose --env-file .env --file infrastructure/compose.yaml up --build
 docker compose --file infrastructure/compose.yaml down --volumes --remove-orphans
 ```
 
+`mysql-data` volume도 함께 삭제되므로 위 명령은 로컬 지원사업 카탈로그를 초기화합니다. 데이터를
+유지하려면 `--volumes`를 빼고 중지하세요.
+
 ## 통합 smoke
 
 다음 스크립트는 별도 Compose 프로젝트를 사용해 이미지를 빌드하고 다음을 확인합니다.
@@ -91,7 +102,9 @@ docker compose --file infrastructure/compose.yaml down --volumes --remove-orphan
 루트 `.env`의 개인 키를 사용하거나 외부로 보내지 않고, 공공데이터포털의 네트워크 상태나 응답 변경에도
 영향받지 않습니다. 검증에서는 실제 OpenAI에 전송하지 않는 더미 키와 LLM 2.5초/Core 3초 제한을
 사용합니다. 빈 검색어로 공공데이터 adapter를 검증하고, AI Service 중지 중 자연어 검색이 503으로
-실패하는 필수 의존성 계약을 확인합니다. 일반 실행은 `.env`의 실제 OpenAI 설정을 사용합니다.
+실패하는 필수 의존성 계약을 확인합니다. 일반 실행은 `.env`의 실제 OpenAI 설정을 사용합니다. 검증용
+MySQL은 기본적으로 Host의 `13306` 포트를 사용하므로 로컬 `3306`과 충돌하지 않으며, 필요하면
+`VERIFY_COMPOSE_MYSQL_HOST_PORT`로 바꿀 수 있습니다.
 
 1. Vite Web 응답이 200인지 확인합니다.
 2. Vite 프록시를 거친 Core API Health가 200인지 확인합니다.

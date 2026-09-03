@@ -30,10 +30,12 @@ supportprogram/
 ├── service/
 │   ├── search/             # 검색 흐름과 검색 오류
 │   └── dto/                # 검증된 검색 실행 결과
+├── config/                 # 지원사업 공용 Spring 설정
 ├── facade/                 # 후보 조회·AI 점수화 Facade 계약과 구현
-│   ├── config/             # Facade 전용 설정
 │   └── exception/          # 상위 Service에 전달하는 Facade 실패 계약
 ├── domain/                 # 지원사업·정규화된 검색 후보 모델과 상태
+├── repository/             # MySQL 지원사업 카탈로그 저장·조회
+│   └── mapper/             # MyBatis SQL Mapper와 DB 행 타입
 └── client/
     ├── ai/                 # AI 점수화 Client
     │   └── dto/            # AI 내부 요청·응답 계약
@@ -99,6 +101,8 @@ Kotlin 기본 패키지는 `ai.govbiz.core`이고 Gradle 프로젝트명은 `gov
 | 공개 HTTP 진입점 | `Controller` | `SupportProgramController` |
 | 애플리케이션 흐름·업무 처리 | `Service` | `SupportProgramSearchService` |
 | 하위 기능의 호출·검증·변환을 단일 진입점으로 제공 | `Facade` | `BizInfoSupportProgramCatalogFacade`, `AiSupportProgramRankingFacade` |
+| 업무 모델을 데이터베이스에 저장·조회 | `Repository` | `SupportProgramRepository` |
+| MyBatis SQL 실행 계약 | `Mapper` | `SupportProgramMapper` |
 | 외부 시스템 HTTP 통신 | `Client` | `BizInfoClient`, `HttpAiSupportProgramRankingClient` |
 | 경계별 실패 분류 | `Exception` | `BizInfoClientException`, `AiServiceCallException` |
 | 외부 DTO를 내부 모델로 변환 | `Mapper` | `BizInfoProgramMapper` |
@@ -176,7 +180,7 @@ return AiServiceHealthResponse(result.status, result.service)
 유지됩니다. 따라서 이 분리는 코드 중복을 위한 것이 아니라 외부 입력, 검증된 내부 결과, 공개 응답의
 서로 다른 계약을 독립적으로 변경하기 위한 경계입니다.
 
-지원사업 검색 관련 코드는 `supportprogram` 기능 디렉터리에서 함께 관리합니다. `service/search`는 검색 흐름과 검색 오류를 소유합니다. `facade`는 `SupportProgramCatalogFacade`·`SupportProgramRankingFacade` 계약과 그 구현을 함께 관리하고, 하위 `config`에는 Facade 전용 설정을, `exception`에는 상위 Service에 전달하는 안정적인 Facade 실패 계약을 둡니다. `BizInfoSupportProgramCatalogFacade`는 기업마당 조회·오류 변환·검색 후보 정규화를 `load` 하나로 감추고, `AiSupportProgramRankingFacade`는 AI 요청 생성·호출·응답 검증·도메인 변환을 `rank` 하나로 감춥니다. 모든 전송 객체를 프로젝트 전체의 한 DTO 폴더에 모으지 않습니다. 브라우저 공개 응답은 `supportprogram/controller/dto`, AI Service 요청·응답은 `supportprogram/client/ai/dto`, 기업마당 응답은 `supportprogram/client/bizinfo/dto`, 검증된 검색 결과는 `supportprogram/service/dto`가 각각 소유합니다. `BizInfoClient`는 인증키·pagination·공공데이터포털 HTTP 전송을 담당하고, `BizInfoPageDecoderHelper`가 허용된 JSON 구조만 DTO로 변환합니다. `client/bizinfo/mapper`의 `BizInfoProgramMapper`는 그 DTO를 검색 후보로 정규화합니다. Client 설정과 속성은 `client/bizinfo/config`, 전용 실패 계약은 `client/bizinfo/exception`, 전용 보조 코드는 `client/bizinfo/helper`에서 관리하고, 접수 상태 계산용 서울 기준 시계는 `supportprogram/facade/config`에 둡니다. Kotlin 단어 사전과 고정 관련도 가중치는 사용하지 않습니다.
+지원사업 검색 관련 코드는 `supportprogram` 기능 디렉터리에서 함께 관리합니다. `service/search`는 검색 흐름과 검색 오류를 소유합니다. `facade`는 `SupportProgramCatalogFacade`·`SupportProgramRankingFacade` 계약과 그 구현을 함께 관리하고, 하위 `exception`에는 상위 Service에 전달하는 안정적인 Facade 실패 계약을 둡니다. `BizInfoSupportProgramCatalogFacade`는 기업마당 조회·오류 변환·검색 후보 정규화를 `load` 하나로 감추고, `AiSupportProgramRankingFacade`는 AI 요청 생성·호출·응답 검증·도메인 변환을 `rank` 하나로 감춥니다. `repository/SupportProgramRepository`는 현재 정규화된 기업마당 공고를 MySQL에 저장하고 읽으며, 저장된 신청 기간에서 현재 접수 상태를 다시 계산합니다. SQL은 `repository/mapper/SupportProgramMapper`와 `src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml`에 두어 Kotlin 업무 코드에서 분리합니다. 테이블의 `source_code`와 `source_program_id` 복합 식별자는 제공처별 원본 ID 충돌을 막지만, 두 번째 제공처의 정규화·표시 이름 매핑은 그 제공처를 실제로 추가하는 단계에서 결정합니다. 다음 단계의 정기 수집과 DB 검색 전환 전까지 현재 공개 검색 요청은 기존 기업마당 Facade를 그대로 사용합니다. 모든 전송 객체를 프로젝트 전체의 한 DTO 폴더에 모으지 않습니다. 브라우저 공개 응답은 `supportprogram/controller/dto`, AI Service 요청·응답은 `supportprogram/client/ai/dto`, 기업마당 응답은 `supportprogram/client/bizinfo/dto`, 검증된 검색 결과는 `supportprogram/service/dto`가 각각 소유합니다. `BizInfoClient`는 인증키·pagination·공공데이터포털 HTTP 전송을 담당하고, `BizInfoPageDecoderHelper`가 허용된 JSON 구조만 DTO로 변환합니다. `client/bizinfo/mapper`의 `BizInfoProgramMapper`는 그 DTO를 검색 후보로 정규화합니다. Client 설정과 속성은 `client/bizinfo/config`, 전용 실패 계약은 `client/bizinfo/exception`, 전용 보조 코드는 `client/bizinfo/helper`에서 관리하고, 접수 상태 계산용 서울 기준 시계는 `supportprogram/config`에 둡니다. Kotlin 단어 사전과 고정 관련도 가중치는 사용하지 않습니다.
 
 계층 연결 예제인 SampleItem도 `_sampleitem/controller → service → domain`으로 독립되어 있으며 공개 요청·응답 형식은 `_sampleitem/controller/dto`가 소유합니다.
 
@@ -282,6 +286,9 @@ HTTP 200을 받았더라도 body가 없으면 각 Client가 `INVALID_RESPONSE`�
 
 JDK 21이 필요합니다.
 
+Core API는 Flyway로 스키마를 적용하는 MySQL 연결이 필요합니다. 기본값은
+`jdbc:mysql://127.0.0.1:3306/govbiz`이며, Compose 실행에서는 내부 `mysql` 서비스 주소를 사용합니다.
+
 ```bash
 ./gradlew bootRun
 ```
@@ -301,9 +308,30 @@ Frontend 환경변수에 기록하지 마세요.
 | `AI_SERVICE_CONNECT_TIMEOUT` | `1s` | AI Service 연결 제한시간 |
 | `AI_SERVICE_READ_TIMEOUT` | `12s` | AI Service 응답 제한시간(LLM 전체 제한 10초 + 내부 응답 여유) |
 | `APP_CORS_ALLOWED_ORIGIN` | `http://localhost:5173` | 허용할 Web origin |
+| `SPRING_DATASOURCE_URL` | `jdbc:mysql://127.0.0.1:3306/govbiz` | MySQL JDBC 연결 주소 |
+| `SPRING_DATASOURCE_USERNAME` | `govbiz` | MySQL 연결 사용자 |
+| `SPRING_DATASOURCE_PASSWORD` | `govbiz-local` | MySQL 연결 비밀번호 |
 
-Compose 실행은 저장소 루트 `.env`의 `DATA_GO_KR_SERVICE_KEY`를 Core API에, `OPENAI_API_KEY`를 AI
-Service에만 전달합니다. 네이티브 실행에서는 각 프로세스 환경변수를 직접 설정해야 합니다.
+Compose 실행은 저장소 루트 `.env`의 `DATA_GO_KR_SERVICE_KEY`와 MySQL 연결 정보를 Core API에,
+`OPENAI_API_KEY`를 AI Service에만 전달합니다. 네이티브 실행에서는 각 프로세스 환경변수를 직접
+설정해야 합니다.
+
+### MySQL 카탈로그 1차 구현 범위
+
+앱 시작 시 Flyway가 [`V1__create_support_program.sql`](src/main/resources/db/migration/V1__create_support_program.sql)을
+한 번 적용해 `support_program` 테이블을 만듭니다. `SupportProgramRepository`는 현재 기업마당에서
+정규화된 공고를 `SupportProgramMapper`와
+[`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml)의 SQL로 저장·조회합니다.
+
+- `source_code`와 `source_program_id`를 함께 고유 식별자로 사용합니다.
+- 같은 공고를 다시 저장하면 `INSERT ... ON DUPLICATE KEY UPDATE`로 최신 값으로 갱신합니다.
+- `categories`, `regions`는 MySQL JSON으로 저장하고, 신청기간 원문과 해석된 날짜를 함께 보관합니다.
+- 접수 상태는 저장하지 않고 읽을 때 서울 날짜 기준으로 계산합니다. 날짜가 지나도 DB 값을 수정하지 않아도 됩니다.
+- SQL은 MyBatis Mapper XML에, JSON 변환·접수 상태 계산은 Kotlin Repository에 둡니다.
+
+이 단계에는 정기 수집과 DB 검색 전환이 포함되지 않습니다. 따라서 현재
+`GET /api/v1/support-programs/search`는 여전히 기업마당 API를 직접 호출합니다. 다음 단계의 흐름은
+`정기 수집 → SupportProgramRepository → MySQL → 검색 Service 조회`입니다.
 
 ## 지원사업 검색 동작
 
