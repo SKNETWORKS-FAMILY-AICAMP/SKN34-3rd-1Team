@@ -1,0 +1,11 @@
+{
+  "intellij.projects": [
+    {
+      "type": "gradle",
+      "path": "file:///$PROJECT_DIR$/backend/core-api/build.gradle"
+    }
+  ],
+  "[kotlin]": {
+    "editor.semanticHighlighting.enabled": true
+  }
+}
