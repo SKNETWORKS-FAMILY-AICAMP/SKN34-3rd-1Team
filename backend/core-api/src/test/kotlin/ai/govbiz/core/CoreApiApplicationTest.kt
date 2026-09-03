@@ -1,7 +1,9 @@
 package ai.govbiz.core
 
+import ai.govbiz.core._common.test.MySqlTestContainerConfig
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.context.annotation.Import
 
 @SpringBootTest(
     properties = [
@@ -10,6 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest
         "app.ai-service.read-timeout=10ms",
     ],
 )
+@Import(MySqlTestContainerConfig::class)
 class CoreApiApplicationTest {
 
     @Test

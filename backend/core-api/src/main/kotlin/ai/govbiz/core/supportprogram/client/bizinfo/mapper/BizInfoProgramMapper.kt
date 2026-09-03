@@ -2,8 +2,8 @@ package ai.govbiz.core.supportprogram.client.bizinfo.mapper
 
 import ai.govbiz.core.supportprogram.client.bizinfo.dto.BizInfoProgramPayload
 import ai.govbiz.core.supportprogram.domain.SupportProgram
-import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
 import java.net.URI
 import java.net.URISyntaxException
 import java.text.Normalizer
@@ -83,7 +83,12 @@ internal object BizInfoProgramMapper {
                 applicationPeriod = applicationPeriod,
                 applicationStartDate = dates.start,
                 applicationEndDate = dates.end,
-                status = determineStatus(applicationPeriod, dates, today),
+                status = SupportProgramStatusResolver.resolve(
+                    applicationPeriod = applicationPeriod,
+                    applicationStartDate = dates.start,
+                    applicationEndDate = dates.end,
+                    today = today,
+                ),
                 sourceName = "기업마당",
                 sourceUrl = sourceUrl,
                 matchedReasons = emptyList(),
@@ -107,50 +112,15 @@ internal object BizInfoProgramMapper {
         if (dates.size >= 2) return DateRange(dates[0], dates[1])
         if (dates.size == 1) {
             val normalized = normalize(applicationPeriod)
-            if ("까지" in normalized && !isRollingPeriod(normalized)) {
+            if ("까지" in normalized && !SupportProgramStatusResolver.isRollingPeriod(normalized)) {
                 return DateRange(null, dates[0])
             }
-            if ("부터" in normalized || isRollingPeriod(normalized)) {
+            if ("부터" in normalized || SupportProgramStatusResolver.isRollingPeriod(normalized)) {
                 return DateRange(dates[0], null)
             }
         }
         return DateRange(null, null)
     }
-
-    private fun determineStatus(
-        applicationPeriod: String,
-        dates: DateRange,
-        today: LocalDate,
-    ): SupportProgramStatus {
-        if (dates.start != null && today.isBefore(dates.start)) {
-            return SupportProgramStatus.UPCOMING
-        }
-        if (dates.end != null && today.isAfter(dates.end)) {
-            return SupportProgramStatus.CLOSED
-        }
-        if (dates.start != null && dates.end != null) return SupportProgramStatus.OPEN
-
-        val normalized = normalize(applicationPeriod)
-        if (containsAny(normalized, "추후 공지", "추후공지", "접수 예정", "접수예정")) {
-            return SupportProgramStatus.UPCOMING
-        }
-        if (isRollingPeriod(normalized)) return SupportProgramStatus.OPEN
-        if (dates.end != null) return SupportProgramStatus.OPEN
-        if (containsAny(normalized, "접수 종료", "접수종료", "모집 종료", "모집종료", "마감 완료")) {
-            return SupportProgramStatus.CLOSED
-        }
-        return SupportProgramStatus.UNKNOWN
-    }
-
-    private fun isRollingPeriod(value: String): Boolean = containsAny(
-        value,
-        "예산 소진", "예산소진", "상시", "선착순", "모집 완료시", "모집완료시",
-        "모집 마감시", "모집마감시", "수시", "정원 마감", "정원마감",
-        "규모 마감", "규모마감", "소진시", "완료시",
-    )
-
-    private fun containsAny(value: String, vararg candidates: String): Boolean =
-        candidates.any(value::contains)
 
     private fun categories(category: String?): List<String> {
         val value = category ?: return emptyList()
