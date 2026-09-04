@@ -1,6 +1,7 @@
 package ai.govbiz.core.supportprogram.client.bizinfo.mapper
 
 import ai.govbiz.core.supportprogram.client.bizinfo.dto.BizInfoProgramPayload
+import ai.govbiz.core.supportprogram.client.bizinfo.exception.BizInfoClientException
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
@@ -43,14 +44,20 @@ internal object BizInfoProgramMapper {
         "전국" to "전국",
     )
 
-    fun mapAndDeduplicate(
+    fun mapValidated(
         payloads: List<BizInfoProgramPayload?>,
         today: LocalDate,
     ): List<CatalogSupportProgram> {
         val programs = LinkedHashMap<String, CatalogSupportProgram>()
         for (payload in payloads) {
-            val program = toCatalogProgram(payload, today) ?: continue
-            programs.putIfAbsent(program.program.id, program)
+            val program = toCatalogProgram(payload, today)
+            val canonicalId = program.program.id.lowercase(Locale.ROOT)
+            if (programs.putIfAbsent(canonicalId, program) != null) {
+                throw BizInfoClientException.invalidResponse(
+                    "BizInfo API returned duplicate program IDs",
+                    null,
+                )
+            }
         }
         return java.util.List.copyOf(programs.values)
     }
@@ -58,16 +65,33 @@ internal object BizInfoProgramMapper {
     private fun toCatalogProgram(
         payload: BizInfoProgramPayload?,
         today: LocalDate,
-    ): CatalogSupportProgram? {
-        val id = payload?.id?.takeUnless { it.isBlank() } ?: return null
-        val title = payload.title?.takeUnless { it.isBlank() } ?: return null
-        val sourceUrl = officialSourceUrl(payload.sourceUrl) ?: return null
-        val applicationPeriod = firstPresent(payload.applicationPeriod, "정보 없음")
+    ): CatalogSupportProgram {
+        val requiredPayload = payload
+            ?: throw BizInfoClientException.invalidResponse(
+                "BizInfo API returned a null program",
+                null,
+            )
+        val id = requiredPayload.id?.takeUnless { it.isBlank() }
+            ?: throw BizInfoClientException.invalidResponse(
+                "BizInfo API returned a program without an ID",
+                null,
+            )
+        val title = requiredPayload.title?.takeUnless { it.isBlank() }
+            ?: throw BizInfoClientException.invalidResponse(
+                "BizInfo API returned a program without a title",
+                null,
+            )
+        val sourceUrl = officialSourceUrl(requiredPayload.sourceUrl)
+            ?: throw BizInfoClientException.invalidResponse(
+                "BizInfo API returned a program without an official source URL",
+                null,
+            )
+        val applicationPeriod = firstPresent(requiredPayload.applicationPeriod, "정보 없음")
         val dates = parseDates(applicationPeriod)
-        val summary = plainText(payload.summaryHtml)
+        val summary = plainText(requiredPayload.summaryHtml)
         val organization = firstPresent(
-            payload.executingOrganization,
-            payload.jurisdictionOrganization,
+            requiredPayload.executingOrganization,
+            requiredPayload.jurisdictionOrganization,
             "정보 없음",
         )
 
@@ -77,9 +101,9 @@ internal object BizInfoProgramMapper {
                 title = title.trim(),
                 organization = organization,
                 summary = if (summary.isBlank()) "정보 없음" else summary,
-                categories = categories(payload.category),
-                regions = regions(payload.hashtags),
-                targetDescription = firstPresent(payload.target, "정보 없음"),
+                categories = categories(requiredPayload.category),
+                regions = regions(requiredPayload.hashtags),
+                targetDescription = firstPresent(requiredPayload.target, "정보 없음"),
                 applicationPeriod = applicationPeriod,
                 applicationStartDate = dates.start,
                 applicationEndDate = dates.end,
@@ -93,7 +117,7 @@ internal object BizInfoProgramMapper {
                 sourceUrl = sourceUrl,
                 matchedReasons = emptyList(),
             ),
-            sortTimestamp = firstPresent(payload.updatedAt, payload.createdAt, ""),
+            sortTimestamp = firstPresent(requiredPayload.updatedAt, requiredPayload.createdAt, ""),
         )
     }
 

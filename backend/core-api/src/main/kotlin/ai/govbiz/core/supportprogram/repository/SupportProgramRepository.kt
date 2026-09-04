@@ -26,6 +26,15 @@ class SupportProgramRepository(
         supportProgramMapper.upsert(catalogProgram.toDbRow())
     }
 
+    /** 기업마당의 완전한 최신 목록으로 기존 기업마당 데이터의 노출 상태와 내용을 원자적으로 갱신합니다. */
+    @Transactional
+    fun synchronizeBizInfo(programs: List<CatalogSupportProgram>) {
+        supportProgramMapper.markAllNotPresentBySourceCode(BIZINFO_SOURCE_CODE)
+        programs.forEach { program ->
+            supportProgramMapper.upsert(program.toDbRow())
+        }
+    }
+
     fun findByProgramId(programId: String): CatalogSupportProgram? =
         supportProgramMapper.findBySourceAndProgramId(BIZINFO_SOURCE_CODE, programId)
             ?.toCatalogProgram()
