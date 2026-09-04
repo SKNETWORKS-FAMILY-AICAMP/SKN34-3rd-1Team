@@ -78,9 +78,9 @@ Repository, UseCase와 외부 서비스 역할별 모듈로 분리해 관리합�
 
 현재는 대화와 검색 결과를 브라우저 메모리에 보관합니다. Core API는 검색 요청마다 외부 공고를
 조회하며 별도 메모리 캐시를 두지 않습니다. MySQL 카탈로그의 테이블·저장·조회와 기업마당 전체
-목록을 원자적으로 동기화하는 핵심 Service는 구현했습니다. 아직 자동 실행 스케줄과 검색 경로에는
-연결하지 않았으며, 다음 단계에서는 동기화를 주기적으로 실행하고 사용자 검색은 DB만 조회하도록
-전환합니다.
+목록을 원자적으로 동기화하는 핵심 Service와 정기 실행 스케줄러를 구현했습니다. 기본 설정에서는
+앱 준비 뒤 즉시 한 번 동기화하고, 이후 이전 동기화가 끝난 시점부터 6시간마다 다시 실행합니다.
+검색 경로는 아직 기업마당을 직접 조회하며, 다음 단계에서 사용자 검색을 DB 조회로 전환합니다.
 현재 구현 평가와 구체적인 확장 원칙은
 [Frontend 상태 관리 설계](frontend/README.md#상태-관리-설계와-확장-원칙)와
 [Provider와 Service Locator에서 ViewModel까지 전달](frontend/README.md#redux-provider와-service-locator에서-viewmodel까지-전달)을
@@ -109,12 +109,14 @@ Repository, UseCase와 외부 서비스 역할별 모듈로 분리해 관리합�
 앱 시작
   → Flyway가 support_program 테이블 생성
 
-동기화 Service 호출
-  → 기업마당 전체 목록 수집·검증
-  → SupportProgramRepository가 하나의 DB transaction으로 반영
-      → 기존 BIZINFO 공고를 미노출 처리
-      → 이번 목록을 UPSERT하며 다시 노출 처리
-      → SupportProgramMapper.xml의 SQL로 MySQL 저장
+BizInfoSupportProgramCatalogSyncScheduler
+  → 기본 설정: 앱 준비 뒤 즉시 한 번, 이후 완료 시점부터 6시간마다 실행
+  → 동기화 Service 호출
+      → 기업마당 전체 목록 수집·검증
+      → SupportProgramRepository가 하나의 DB transaction으로 반영
+          → 기존 BIZINFO 공고를 미노출 처리
+          → 이번 목록을 UPSERT하며 다시 노출 처리
+          → SupportProgramMapper.xml의 SQL로 MySQL 저장
 ```
 
 - 공고의 원본 제공처와 원본 ID를 함께 저장해, 다른 제공처의 ID가 같아도 충돌하지 않습니다.
@@ -124,11 +126,12 @@ Repository, UseCase와 외부 서비스 역할별 모듈로 분리해 관리합�
 - 수집이나 정규화가 하나라도 실패하면 DB 반영을 시작하지 않습니다.
 - DB 반영 중 오류가 나면 비활성화와 UPSERT를 모두 롤백해 이전 카탈로그를 유지합니다.
 - 긴 UPSERT·SELECT SQL은 Kotlin 코드가 아니라 MyBatis Mapper XML에서 관리합니다.
+- 자동 동기화가 실패해도 Core API는 계속 실행하며 이전 MySQL 카탈로그를 유지합니다.
 
 아직은 `GET /api/v1/support-programs/search`가 MySQL을 읽지 않습니다. 실제 흐름은 여전히
-`검색 요청 → 기업마당 API → AI 점수화 → 응답`입니다. 동기화 Service를 자동으로 호출하는 스케줄도
-아직 없으며, 다음 단계에서 `정기 실행 → MySQL 최신화 → DB 검색`으로 전환합니다. 세부 실행 방법과
-환경변수는 [Core API README](backend/core-api/README.md)를 참고하세요.
+`검색 요청 → 기업마당 API → AI 점수화 → 응답`입니다. 다음 단계에서 `MySQL 조회 → AI 점수화 → 응답`으로
+전환합니다. 자동 동기화는 `BIZINFO_SYNC_ENABLED=false`로 끌 수 있으며, 세부 실행 방법과 환경변수는
+[Core API README](backend/core-api/README.md)를 참고하세요.
 
 ## SampleItem 예제
 
