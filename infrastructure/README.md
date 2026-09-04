@@ -45,6 +45,9 @@ OPENAI_API_KEY=발급받은_OpenAI_API_키
 | `BIZINFO_API_BASE_URL` | `https://apis.data.go.kr` | 공고 API origin. 로컬 스텁 검증 외에는 변경하지 않음 |
 | `BIZINFO_API_CONNECT_TIMEOUT` | `2s` | 외부 API 연결 제한시간 |
 | `BIZINFO_API_READ_TIMEOUT` | `10s` | 외부 API 응답 제한시간 |
+| `BIZINFO_SYNC_ENABLED` | `true` | `false`이면 기업마당 공고 자동 동기화를 실행하지 않음 |
+| `BIZINFO_SYNC_INITIAL_DELAY` | `PT0S` | 앱 준비 뒤 첫 동기화까지의 ISO-8601 기간. 기본값은 즉시 실행 |
+| `BIZINFO_SYNC_FIXED_DELAY` | `PT6H` | 이전 동기화가 끝난 뒤 다음 동기화까지의 ISO-8601 기간 |
 | `OPENAI_API_KEY` | 없음(필수) | AI Service만 사용하는 OpenAI 인증키 |
 | `OPENAI_MODEL` | [`gpt-5.6-luna`](https://developers.openai.com/api/docs/models/gpt-5.6-luna) | Agent의 Structured Output 모델 |
 | `LLM_MODEL_TIMEOUT_SECONDS` | `8.0` | OpenAI 모델 호출 한 번의 제한시간(초) |
@@ -61,6 +64,11 @@ OpenAI는 공식 공고 후보 점수화의 필수 의존성입니다. 키가 �
 실패하고, 실행 중 OpenAI 평가가 실패하면 Core API가 안전한 502·503·504로 전달합니다. Kotlin의
 단어 사전이나 고정 가중치로 성공을 가장하지 않습니다. Core API 읽기 제한시간 `12s`는 전체 agent
 run 제한시간 `10s`보다 길게 유지합니다.
+
+Core API는 기본 설정에서 앱 준비 뒤 기업마당 공고 동기화를 한 번 실행하고, 동기화 완료 시점부터
+6시간 뒤에 다시 실행합니다. 동기화 실패는 Core API를 중지시키지 않으며 이전 MySQL 카탈로그를
+유지한 채 다음 실행을 기다립니다. 로컬에서 자동 동기화를 끄려면 `.env`에
+`BIZINFO_SYNC_ENABLED=false`를 설정합니다.
 
 저장소 루트에서 실행합니다.
 

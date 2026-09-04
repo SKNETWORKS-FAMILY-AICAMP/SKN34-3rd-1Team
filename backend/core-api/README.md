@@ -29,7 +29,7 @@ supportprogram/
 │   └── dto/                # 지원사업 공개 요청·응답 계약
 ├── service/
 │   ├── search/             # 검색 흐름과 검색 오류
-│   ├── sync/               # 기업마당 전체 공고의 원자적 DB 동기화
+│   ├── sync/               # 기업마당 전체 공고 동기화와 정기 실행
 │   └── dto/                # 검증된 검색 실행 결과
 ├── config/                 # 지원사업 공용 Spring 설정
 ├── facade/                 # 후보 조회·AI 점수화 Facade 계약과 구현
@@ -305,6 +305,9 @@ Frontend 환경변수에 기록하지 마세요.
 | `BIZINFO_API_BASE_URL` | `https://apis.data.go.kr` | 공고 API origin |
 | `BIZINFO_API_CONNECT_TIMEOUT` | `2s` | 공고 API 연결 제한시간 |
 | `BIZINFO_API_READ_TIMEOUT` | `10s` | 공고 API 응답 제한시간 |
+| `BIZINFO_SYNC_ENABLED` | `true` | `false`이면 기업마당 공고 자동 동기화를 실행하지 않음 |
+| `BIZINFO_SYNC_INITIAL_DELAY` | `PT0S` | 앱 준비 뒤 첫 동기화까지의 ISO-8601 기간. 기본값은 즉시 실행 |
+| `BIZINFO_SYNC_FIXED_DELAY` | `PT6H` | 이전 동기화가 끝난 뒤 다음 동기화까지의 ISO-8601 기간 |
 | `AI_SERVICE_BASE_URL` | `http://127.0.0.1:8000` | 내부 AI Service 주소 |
 | `AI_SERVICE_CONNECT_TIMEOUT` | `1s` | AI Service 연결 제한시간 |
 | `AI_SERVICE_READ_TIMEOUT` | `12s` | AI Service 응답 제한시간(LLM 전체 제한 10초 + 내부 응답 여유) |
@@ -333,9 +336,14 @@ Compose 실행은 저장소 루트 `.env`의 `DATA_GO_KR_SERVICE_KEY`와 MySQL �
 - DB 반영 중 하나라도 실패하면 전체 transaction을 롤백해 이전 카탈로그를 유지합니다.
 - SQL은 MyBatis Mapper XML에, JSON 변환·접수 상태 계산은 Kotlin Repository에 둡니다.
 
-동기화 핵심 Service는 구현했지만 이를 자동 호출하는 스케줄러와 DB 검색 전환은 포함하지 않습니다.
+`BizInfoSupportProgramCatalogSyncScheduler`는 `app.bizinfo.sync.enabled`가 `true`일 때
+`BizInfoSupportProgramCatalogSyncService.sync()`를 자동 호출합니다. 기본값은 앱 준비 뒤 `PT0S`에
+한 번 실행하고, 동기화가 끝난 시점부터 `PT6H` 뒤에 다시 실행하는 것입니다. 실행 중 기업마당 호출이나
+DB 반영이 실패해도 Scheduler는 오류를 기록하고 다음 실행을 계속하며, 동기화 Service의 transaction이
+기존 카탈로그를 보존합니다.
+
 따라서 현재 `GET /api/v1/support-programs/search`는 여전히 기업마당 API를 직접 호출합니다. 다음 단계의
-흐름은 `스케줄러 → 동기화 Service → MySQL 최신화`와 `검색 Service → MySQL 조회`입니다.
+흐름은 `검색 Service → MySQL 조회`입니다.
 
 ## 지원사업 검색 동작
 
