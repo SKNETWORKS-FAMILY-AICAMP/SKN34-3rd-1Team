@@ -77,9 +77,10 @@ ViewModel은 Repository가 아니라 필요한 UseCase만 resolve합니다. DI �
 Repository, UseCase와 외부 서비스 역할별 모듈로 분리해 관리합니다.
 
 현재는 대화와 검색 결과를 브라우저 메모리에 보관합니다. Core API는 검색 요청마다 외부 공고를
-조회하며 별도 메모리 캐시를 두지 않습니다. MySQL 카탈로그의 테이블·저장·조회 기반은 구현했지만,
-아직 정기 수집 작업이나 검색 경로에는 연결하지 않았습니다. 다음 단계에서는 정기 수집 작업이 공고를
-DB에 저장하고 사용자 검색은 DB만 조회하도록 전환합니다.
+조회하며 별도 메모리 캐시를 두지 않습니다. MySQL 카탈로그의 테이블·저장·조회와 기업마당 전체
+목록을 원자적으로 동기화하는 핵심 Service는 구현했습니다. 아직 자동 실행 스케줄과 검색 경로에는
+연결하지 않았으며, 다음 단계에서는 동기화를 주기적으로 실행하고 사용자 검색은 DB만 조회하도록
+전환합니다.
 현재 구현 평가와 구체적인 확장 원칙은
 [Frontend 상태 관리 설계](frontend/README.md#상태-관리-설계와-확장-원칙)와
 [Provider와 Service Locator에서 ViewModel까지 전달](frontend/README.md#redux-provider와-service-locator에서-viewmodel까지-전달)을
@@ -95,30 +96,39 @@ DB에 저장하고 사용자 검색은 DB만 조회하도록 전환합니다.
 - OpenAI Agents SDK의 필수 typed agent를 사용하는 공고 후보 점수화
 - 공공데이터포털 응답을 GovBiz 공고 모델로 변환하는 외부 API adapter
 - MySQL 8.4·Flyway·MyBatis Mapper XML 기반의 `support_program` 카탈로그 스키마와 공고 UPSERT·조회 Repository
-- 실제 MySQL Testcontainers를 이용한 카탈로그 저장·갱신 통합 테스트
+- 전체 수집 성공 후에만 신규·변경·누락 공고를 하나의 트랜잭션으로 반영하는 기업마당 동기화 Service
+- 실제 MySQL Testcontainers를 이용한 카탈로그 저장·갱신·비활성화·롤백 통합 테스트
 - Tailwind CSS 유틸리티와 Vite 프록시를 사용하는 Docker Compose 개발 환경
 - 실제 키 없이 로컬 공공데이터 스텁을 사용하는 결정적 Compose smoke 검증
 
-### 지원사업 카탈로그 MySQL 1차 구현
+### 지원사업 카탈로그 MySQL과 안전한 동기화
 
-이번 단계에서는 “공고를 DB에 쌓고 나중에 검색에 쓰기 위한 창고”를 만들었습니다.
+기업마당 전체 페이지와 필수 공고 값을 먼저 검증하고, 완전한 목록만 MySQL에 반영합니다.
 
 ```text
 앱 시작
   → Flyway가 support_program 테이블 생성
-  → SupportProgramRepository가 SupportProgramMapper를 호출
-      → SupportProgramMapper.xml의 SQL로 MySQL에 저장·조회
+
+동기화 Service 호출
+  → 기업마당 전체 목록 수집·검증
+  → SupportProgramRepository가 하나의 DB transaction으로 반영
+      → 기존 BIZINFO 공고를 미노출 처리
+      → 이번 목록을 UPSERT하며 다시 노출 처리
+      → SupportProgramMapper.xml의 SQL로 MySQL 저장
 ```
 
 - 공고의 원본 제공처와 원본 ID를 함께 저장해, 다른 제공처의 ID가 같아도 충돌하지 않습니다.
 - 카테고리·지역은 JSON 배열로 저장하고, 신청기간 원문과 해석된 시작·마감일을 함께 보관합니다.
 - `OPEN`·`CLOSED` 같은 접수 상태는 DB에 고정하지 않고, 조회 시 서울 날짜 기준으로 다시 계산합니다.
 - 같은 기업마당 공고를 다시 저장하면 새 행을 만들지 않고 최신 내용으로 갱신합니다.
+- 수집이나 정규화가 하나라도 실패하면 DB 반영을 시작하지 않습니다.
+- DB 반영 중 오류가 나면 비활성화와 UPSERT를 모두 롤백해 이전 카탈로그를 유지합니다.
 - 긴 UPSERT·SELECT SQL은 Kotlin 코드가 아니라 MyBatis Mapper XML에서 관리합니다.
 
 아직은 `GET /api/v1/support-programs/search`가 MySQL을 읽지 않습니다. 실제 흐름은 여전히
-`검색 요청 → 기업마당 API → AI 점수화 → 응답`이고, 다음 단계에서 `정기 수집 → MySQL 저장 → DB 검색`으로
-전환합니다. 세부 실행 방법과 환경변수는 [Core API README](backend/core-api/README.md)를 참고하세요.
+`검색 요청 → 기업마당 API → AI 점수화 → 응답`입니다. 동기화 Service를 자동으로 호출하는 스케줄도
+아직 없으며, 다음 단계에서 `정기 실행 → MySQL 최신화 → DB 검색`으로 전환합니다. 세부 실행 방법과
+환경변수는 [Core API README](backend/core-api/README.md)를 참고하세요.
 
 ## SampleItem 예제
 
@@ -216,7 +226,7 @@ govBiz/
 ## 다음 단계
 
 1. 대표 검색 질문과 Top-5 관련성 기준으로 현재 검색 품질을 측정합니다.
-2. 외부 공고를 정기 수집해 DB에 저장하고 사용자 검색 경로에서 외부 API 호출을 제거합니다.
+2. 구현된 기업마당 동기화를 정기 실행하고 사용자 검색 경로에서 외부 API 호출을 제거합니다.
 3. 데이터가 부족하다는 근거가 생기면 K-Startup 등 두 번째 공식 소스를 추가합니다.
 4. 이후 기업정보 기반 추천과 GovClause의 PDF·조건 판정을 결합합니다.
 

@@ -1,6 +1,6 @@
 package ai.govbiz.core.supportprogram.facade.exception
 
-/** 공고 후보 조회 Facade가 상위 검색 Service에 전달하는 안정적인 실패 계약입니다. */
+/** 공고 목록 조회 Facade가 상위 Service에 전달하는 안정적인 실패 계약입니다. */
 class SupportProgramCatalogFacadeException private constructor(
     val failure: Failure,
     message: String?,

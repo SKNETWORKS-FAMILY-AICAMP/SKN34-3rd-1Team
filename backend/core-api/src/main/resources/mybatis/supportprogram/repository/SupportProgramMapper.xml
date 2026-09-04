@@ -70,6 +70,13 @@
             last_seen_at = CURRENT_TIMESTAMP(6)
     </insert>
 
+    <update id="markAllNotPresentBySourceCode">
+        UPDATE support_program
+        SET is_source_present = FALSE
+        WHERE source_code = #{sourceCode}
+          AND is_source_present = TRUE
+    </update>
+
     <select id="findBySourceAndProgramId" resultMap="supportProgramDbRow">
         SELECT
             source_code,

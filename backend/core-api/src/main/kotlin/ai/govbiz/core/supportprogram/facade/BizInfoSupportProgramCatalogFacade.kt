@@ -19,7 +19,7 @@ class BizInfoSupportProgramCatalogFacade(
 
     override fun load(): List<CatalogSupportProgram> =
         try {
-            BizInfoProgramMapper.mapAndDeduplicate(
+            BizInfoProgramMapper.mapValidated(
                 payloads = client.fetchAll(),
                 today = LocalDate.now(clock),
             )
