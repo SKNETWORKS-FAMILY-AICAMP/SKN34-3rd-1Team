@@ -6,6 +6,19 @@
     }
   ],
   "[kotlin]": {
-    "editor.semanticHighlighting.enabled": true
+    "editor.semanticHighlighting.enabled": true,
+    "editor.language.brackets": [
+      ["{", "}"],
+      ["[", "]"],
+      ["(", ")"]
+    ],
+    "editor.language.colorizedBracketPairs": [
+      ["{", "}"],
+      ["[", "]"],
+      ["(", ")"]
+    ],
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": true,
+    "editor.guides.bracketPairsHorizontal": false
   }
 }
