@@ -9,6 +9,7 @@ from app.support_program_ranking.models import (
     SCORING_VERSION,
     ScoredSupportProgram,
     SupportProgramCandidate,
+    SupportProgramEligibility,
     SupportProgramRankingOutput,
     SupportProgramRankingRequest,
 )
@@ -57,7 +58,9 @@ async def test_builds_and_wires_agent_in_the_composition_root(
                 programId="program-1",
                 semanticRelevance=40,
                 targetFit=25,
+                targetEligibility=SupportProgramEligibility.MATCH,
                 regionFit=15,
+                regionEligibility=SupportProgramEligibility.MATCH,
                 applicationStatusFit=10,
                 supportTypeFit=10,
                 totalScore=100,

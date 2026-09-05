@@ -48,7 +48,10 @@ class Handler(BaseHTTPRequestHandler):
                 relevant = topic(candidate["title"] + " " + candidate["summary"]) == topic(payload["originalQuery"])
                 rankings.append({
                     "programId": candidate["id"], "semanticRelevance": 40 if relevant else 0,
-                    "targetFit": 25 if relevant else 0, "regionFit": 15 if relevant else 0,
+                    "targetFit": 25 if relevant else 0,
+                    "targetEligibility": "MATCH" if relevant else "UNKNOWN",
+                    "regionFit": 15 if relevant else 0,
+                    "regionEligibility": "MATCH" if relevant else "UNKNOWN",
                     "applicationStatusFit": 10 if relevant else 0, "supportTypeFit": 10 if relevant else 0,
                     "totalScore": 100 if relevant else 0,
                     "recommendationReasons": [candidate["title"][:100]],

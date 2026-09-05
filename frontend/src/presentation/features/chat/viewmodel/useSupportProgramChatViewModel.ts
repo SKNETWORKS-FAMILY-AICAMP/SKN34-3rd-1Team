@@ -7,10 +7,12 @@ import type { SearchSupportProgramsUseCase } from '../../../../domain/usecases/S
 import {
   conversationReset,
   draftChanged,
+  maximumSupportProgramSearchQueryLength,
   searchCancelled,
   searchFailed,
   searchStarted,
   searchSucceeded,
+  searchValidationFailed,
   selectChatDraft,
   selectChatMessages,
   selectChatSearchError,
@@ -78,6 +80,10 @@ export function useSupportProgramChatViewModel(
 
       if (searchQuery.length === 0) return
       if (currentChatState.searchStatus === 'pending') return
+      if (searchQuery.length > maximumSupportProgramSearchQueryLength) {
+        dispatchAction(searchValidationFailed({ queryLength: searchQuery.length }))
+        return
+      }
 
       const searchStartedAction = searchStarted(searchQuery)
       const requestController = new AbortController()

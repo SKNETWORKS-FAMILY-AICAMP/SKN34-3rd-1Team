@@ -87,16 +87,19 @@ supportprogram/controller
 동기화 정기 실행
 └→ supportprogram/service/sync/BizInfoSupportProgramCatalogSyncScheduler
    └→ supportprogram/service/sync/BizInfoSupportProgramCatalogSyncService
+      ├→ Repository → MySQL에서 수집 시작 세대 발급
       ├→ supportprogram/facade/BizInfoSupportProgramCatalogFacade
       │   └→ supportprogram/client/bizinfo/BizInfoClient → 공공데이터포털
+      ├→ SupportProgramIndexSyncService.indexBizInfoSnapshot
+      │   └→ AiSupportProgramIndexClient → FastAPI → OpenAI 임베딩 → Qdrant (전체 준비)
       └→ supportprogram/repository
-          └→ MyBatis Mapper XML → MySQL 지원사업 카탈로그
+          └→ MyBatis Mapper XML → 최신 시작 세대만 MySQL 카탈로그 공개
 
-벡터 색인 정기 실행 (기본 PT1M, 기업마당 수집과 별도 스케줄러)
+누락 벡터 복구 정기 실행 (기본 PT1M, 기업마당 수집과 별도 스케줄러)
 └→ supportprogram/service/sync/SupportProgramIndexSyncScheduler
-   └→ SupportProgramIndexSyncService
+   └→ SupportProgramIndexSyncService.repair
       ├→ Repository → MySQL 전체 현재 공고
-      └→ AiSupportProgramIndexClient → FastAPI → OpenAI 임베딩 → Qdrant
+      └→ AiSupportProgramIndexClient → FastAPI → OpenAI 임베딩 → Qdrant (누락 복구, 삭제 없음)
 
 supportprogram/repository
 └→ supportprogram/repository/mapper/SupportProgramMapper
@@ -109,7 +112,7 @@ _health_ai_service/controller
 ```
 
 - **supportprogram/controller**는 HTTP 요청을 처리하고, 하위 `dto`는 브라우저 공개 요청·응답 계약을 소유합니다.
-- **supportprogram/service/search**는 MySQL 카탈로그 조회, 접수 상태 필터, 의미 후보 검색과 AI 점수화 순서를 소유합니다. 빈 질의만 최신 목록을 반환합니다. **supportprogram/service/detail**의 `SupportProgramDetailService`는 제공처 코드와 원본 ID를 별도로 받아 현재 노출된 공고만 Repository에서 조회하고, 없는·미노출 공고는 404로 분류합니다. **supportprogram/service/sync**의 `BizInfoSupportProgramCatalogSyncScheduler`는 `app.bizinfo.sync.enabled`가 `true`일 때 `BizInfoSupportProgramCatalogSyncService.sync()`를 호출합니다. 기본값은 앱 준비 뒤 `PT0S`에 한 번 실행하고, 이전 동기화가 끝난 뒤 `PT6H` 후 다시 실행하는 것입니다. Scheduler는 동기화 실패를 기록하되 Core API를 멈추지 않고 다음 실행을 계속합니다. `BizInfoSupportProgramCatalogSyncService`는 transaction 밖에서 기업마당 전체 수집·검증을 완료하고, 성공한 스냅샷만 Repository에 전달합니다. **supportprogram/facade**는 `SupportProgramCatalogFacade`·`SupportProgramRankingFacade` 계약과 구현을 관리하고, 하위 `exception`은 상위 Service에 전달할 안정적인 Facade 실패 계약을 소유합니다. `BizInfoSupportProgramCatalogFacade`는 동기화에 필요한 기업마당 조회·실패 변환·공고 정규화를 단일 `load` 진입점으로 제공하고, `AiSupportProgramRankingFacade`는 AI 요청 생성·Client 호출·응답 검증·도메인 변환을 단일 `rank` 진입점으로 제공합니다. `AiSupportProgramRetrievalFacade`는 현재 공고의 정확한 ID·해시로 의미 후보를 요청하고 응답을 도메인 공고로 변환합니다. `supportprogram/config`는 접수 상태 계산에 쓰는 서울 기준 시계를, `service/dto`는 이 흐름이 공유하는 검증된 실행 결과를 둡니다.
+- **supportprogram/service/search**는 MySQL 카탈로그 조회, 접수 상태 필터, 의미 후보 검색과 AI 점수화 순서를 소유합니다. 빈 질의만 최신 목록을 반환합니다. **supportprogram/service/detail**의 `SupportProgramDetailService`는 제공처 코드와 원본 ID를 별도로 받아 현재 노출된 공고만 Repository에서 조회하고, 없는·미노출 공고는 404로 분류합니다. **supportprogram/service/sync**의 `BizInfoSupportProgramCatalogSyncScheduler`는 `app.bizinfo.sync.enabled`가 `true`일 때 `BizInfoSupportProgramCatalogSyncService.sync()`를 호출합니다. 기본값은 앱 준비 뒤 `PT0S`에 한 번 실행하고, 이전 동기화가 끝난 뒤 `PT6H` 후 다시 실행하는 것입니다. Scheduler는 동기화 실패를 기록하되 Core API를 멈추지 않고 다음 실행을 계속합니다. `BizInfoSupportProgramCatalogSyncService`는 수집 전에 시작 세대를 발급하고 transaction 밖에서 기업마당 전체 수집·검증·색인 준비를 완료한 뒤, Repository에서 최신 시작 세대일 때만 스냅샷을 공개합니다. **supportprogram/facade**는 `SupportProgramCatalogFacade`·`SupportProgramRankingFacade` 계약과 구현을 관리하고, 하위 `exception`은 상위 Service에 전달할 안정적인 Facade 실패 계약을 소유합니다. `BizInfoSupportProgramCatalogFacade`는 동기화에 필요한 기업마당 조회·실패 변환·공고 정규화를 단일 `load` 진입점으로 제공하고, `AiSupportProgramRankingFacade`는 AI 요청 생성·Client 호출·응답 검증·도메인 변환을 단일 `rank` 진입점으로 제공합니다. `AiSupportProgramRetrievalFacade`는 현재 공고의 정확한 ID·해시로 의미 후보를 요청하고 응답을 도메인 공고로 변환합니다. `supportprogram/config`는 접수 상태 계산에 쓰는 서울 기준 시계를, `service/dto`는 이 흐름이 공유하는 검증된 실행 결과를 둡니다.
 - **supportprogram/domain**은 프레임워크에 의존하지 않는 지원사업 모델과 상태를 둡니다. `SupportProgramStatusResolver`는 저장된 신청 기간과 서울 기준 날짜로 현재 접수 상태를 계산합니다.
 - **supportprogram/repository**는 MySQL의 지원사업 카탈로그 저장·조회와 JSON 배열 복원을 담당합니다. `repository/mapper/SupportProgramMapper`는 SQL 실행 계약이고, 실제 UPDATE·UPSERT·SELECT는 `src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml`에 둡니다. 검색 Service는 현재 노출된 BIZINFO 공고만 Repository에서 읽고, Repository는 저장된 신청 기간과 서울 날짜로 접수 상태를 다시 계산합니다. 기업마당 동기화는 BIZINFO 범위의 기존 행 미노출 처리와 이번 스냅샷 UPSERT를 하나의 transaction으로 수행하고, 중간 오류 시 전부 롤백합니다. 테이블은 `source_code`와 `source_program_id` 복합 식별자로 제공처별 원본 ID 충돌을 막습니다. 공개 검색·상세 응답은 원본 `id`와 `sourceCode`를 함께 노출하며, 상세 Repository 조회도 두 값을 사용합니다. 따라서 두 번째 제공처가 같은 원본 ID를 사용해도 식별 충돌 없이 조회할 수 있습니다. 제공처 표시 이름과 전체 검색·벡터 색인 범위 확장은 실제 제공처를 추가할 때 함께 결정합니다.
 - **supportprogram/client/bizinfo**는 기업마당 HTTP·pagination을 담당하며, 하위 `mapper`의 `BizInfoProgramMapper`는 외부 DTO를 검색 후보로 정규화합니다. 하위 `config`는 전용 Client 설정·속성을, `dto`는 응답 전송 객체를, `exception`은 기업마당 전용 실패 계약을, `helper`는 기업마당 전용 HTTP 예외 변환을 관리합니다. 기업마당 Client 오류는 동기화 Scheduler가 기록하고 다음 주기에 재시도하며, 기존 MySQL 스냅샷 검색에는 영향을 주지 않습니다.
@@ -129,17 +132,20 @@ Core API는 공개 검색 요청을 받으면 AI Service에 다음 내부 요청
 POST /internal/v1/support-program-rankings/rank
 Content-Type: application/json
 
-{"originalQuery":"서울 AI 창업지원 찾아줘","scoringVersion":"govbiz-support-program-ranking-v1","resultLimit":5,"candidates":["Core가 검증한 공식 공고 후보"]}
+{"originalQuery":"서울 AI 창업지원 찾아줘","scoringVersion":"govbiz-support-program-ranking-v2","resultLimit":5,"candidates":["Core가 검증한 공식 공고 후보"]}
 ```
 
 AI Service는 필수 [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)의 단일 typed
 agent를 실행합니다. 프롬프트의 버전된 100점 기준에 따라 모든 후보의 의미 관련성·대상·지역·접수
-상태·지원 유형을 점수화하고 추천 이유를 반환합니다. 공고에 없는 사실은 생성하지 않습니다. 점수화 뒤에는
-의미 관련성 20점 이상과 총점 60점 이상을 모두 통과한 공고만 최종 추천으로 남깁니다.
+상태·지원 유형을 점수화하고 추천 이유를 반환합니다. 프롬프트는 공고에 없는 사실의 생성을 금지합니다.
+v2 응답에는 `targetEligibility`와 `regionEligibility`가 필수이며 각 값은 `MATCH`, `INCOMPATIBLE`,
+`UNKNOWN` 중 하나입니다. 명백한 지원대상·지역 불일치인 `INCOMPATIBLE`은 높은 총점이어도 제외합니다.
+정보 부족인 `UNKNOWN`은 자동 제외하지 않으며 신청 자격을 확정하는 값도 아닙니다. 자격 조건과
+의미 관련성 20점 이상·총점 60점 이상을 모두 통과한 공고만 최종 추천으로 남기고 Core도 이를 재검증합니다.
 
 ```text
 AI Service
-  ├→ Agent + Runner 성공 + schema 검증 성공 → 후보별 세부 점수·총점·추천 이유
+  ├→ Agent + Runner 성공 + schema 검증 성공 → 후보별 자격 판정·세부 점수·총점·추천 이유
   └→ 키 누락은 시작 실패, 실행·검증 실패는 안전한 HTTP 503
 
 Core API
@@ -191,17 +197,27 @@ MySQL의 현재 공고 전체를 읽고 서울 날짜 기준 상태를 적용한
 내부 식별자는 `BIZINFO:원본ID`이며, Qdrant point는 ID·내용 해시로 결정됩니다. 모델·차원·색인 규격에
 따라 컬렉션을 분리하여 호환되지 않는 벡터를 함께 검색하지 않습니다. 공개 공고 ID 계약은 그대로입니다.
 
-색인 스케줄러는 현재 공고를 16개씩 전송합니다. AI Service는 이미 존재하는 버전의 벡터는 재사용하고,
-없는 버전만 임베딩하여 저장합니다. 전체 배치 성공 후 현재 버전 목록을 `prune`에 전달해 해당 제공처의
-이전 버전·미노출 벡터를 정리합니다. 실패 시 다음 스케줄이 MySQL에서 필요한 버전을 다시 계산하므로
-프로세스 재시작 후에도 미완료 벡터를 재처리할 수 있습니다. 외부 HTTP 작업은 MySQL 트랜잭션 밖에서 실행합니다.
+카탈로그 동기화는 기업마당 수집 전에 MySQL에서 시작 세대를 발급하고, 들어온 전체 공고를 16개씩
+색인합니다. AI Service는 이미 존재하는 ID·해시의 벡터는 재사용하고 없는 버전만 임베딩하여 저장합니다.
+모든 배치 성공 후 Repository의 공개 transaction에서 최신 시작 세대인지 확인해 해당 세대만 반영합니다.
+수집·검증·색인이 실패하거나 더 최근에 시작한 세대가 있으면 이전 공개 카탈로그를 유지합니다.
+V2 migration의 `support_program_sync_generation`이 제공처별 최신 시작 세대를 관리하며, 시작 세대 발급과
+공개는 각각 짧은 DB transaction입니다. 외부 HTTP 작업은 MySQL transaction 밖에서 실행합니다.
 
-검색은 현재 DB에 맞는 정확한 point ID 목록으로 Qdrant를 필터링합니다. 따라서 정리 전에 남아 있는
-미노출·이전 버전도 검색되지 않습니다. 허용 공고 중 하나라도 벡터가 없으면 일부 공고만으로 성공하지 않고
+별도 `PT1M` 스케줄러는 `repair()`로 현재 공개된 MySQL 공고의 누락 벡터를 복구합니다. 프로세스가
+재시작돼도 현재 DB에서 필요한 버전을 다시 계산할 수 있습니다. 공개 준비와 복구 모두 `prune`을 호출하지
+않습니다. 이전 스냅샷 기준의 정리가 아직 공개하지 않은 새 벡터를 지우지 않도록 삭제를 보류한 것입니다.
+
+검색은 현재 DB에 맞는 정확한 ID·내용 해시로 결정된 point ID 목록으로 Qdrant를 필터링합니다. 따라서
+미노출·이전 버전·미공개 세대의 벡터는 검색되지 않습니다. 공개 후 벡터 유실 등으로 허용 공고 중 하나라도
+벡터가 없으면 일부 공고만으로 성공하지 않고
 명시적인 503을 반환합니다. AI Service/Qdrant 장애도 최신 목록 fallback 없이 공개 오류로 전달합니다.
 
-이는 단일 Core 인스턴스의 현재 카탈로그(최대 20,000건)를 대상으로 한 구현입니다. 매 검색의 전체 DB 조회와
-허용 ID 전송, 여러 인스턴스의 색인 작업 조정, 이전 임베딩 모델 컬렉션의 보존 정책은 이후 최적화 범위입니다.
+현재 카탈로그 상한은 20,000건입니다. 매 검색의 전체 DB 조회와 허용 ID 전송은 이후 최적화 범위입니다.
+이전 버전·미공개 세대의 벡터와 이전 모델 collection의 저장 공간 정리도 후속 과제입니다. 진행 중인
+작업·검색을 보호하는 보존·삭제 수명주기 없이 `prune`을 연결하지 않으며, 현재 `prune` API 자체는
+다중 인스턴스·동시 실행의 안전한 삭제를 보장하지 않습니다. 시작 세대 비교는 카탈로그 공개 순서를
+보호하지만 전체 다중 인스턴스 운영 검증을 대체하지 않습니다.
 조회 때 계산하는 `OPEN` 상태는 벡터에 고정하지 않습니다. 검색 텍스트 해시는 요청에서 계산하며 기존 DB의
 `content_hash` 컬럼을 영속 색인 완료 기록으로 사용하지 않습니다.
 

@@ -4,6 +4,7 @@ from .agent import SupportProgramRecommendationAgent
 from .models import (
     SupportProgramRankingRequest,
     SupportProgramRankingResponse,
+    SupportProgramEligibility,
 )
 
 
@@ -45,6 +46,8 @@ class SupportProgramRankingService:
             for ranking in sorted_rankings
             if ranking.semantic_relevance >= MIN_SEMANTIC_RELEVANCE_SCORE
             and ranking.total_score >= MIN_TOTAL_RECOMMENDATION_SCORE
+            and ranking.target_eligibility is not SupportProgramEligibility.INCOMPATIBLE
+            and ranking.region_eligibility is not SupportProgramEligibility.INCOMPATIBLE
         ]
         return SupportProgramRankingResponse(
             original_query=request.original_query,

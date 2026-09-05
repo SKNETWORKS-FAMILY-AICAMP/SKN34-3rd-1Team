@@ -55,6 +55,7 @@
             TRUE
         )
         ON DUPLICATE KEY UPDATE
+            source_program_id = #{sourceProgramId},
             title = #{title},
             organization = #{organization},
             summary = #{summary},
@@ -117,4 +118,22 @@
         WHERE source_code = #{sourceCode}
           AND is_source_present = TRUE
     </select>
+
+    <insert id="insertSyncGenerationIfAbsent">
+        INSERT IGNORE INTO support_program_sync_generation (source_code)
+        VALUES (#{sourceCode})
+    </insert>
+
+    <select id="lockLatestStartedGeneration" resultType="long">
+        SELECT latest_started_generation
+        FROM support_program_sync_generation
+        WHERE source_code = #{sourceCode}
+        FOR UPDATE
+    </select>
+
+    <update id="updateLatestStartedGeneration">
+        UPDATE support_program_sync_generation
+        SET latest_started_generation = #{generation}
+        WHERE source_code = #{sourceCode}
+    </update>
 </mapper>

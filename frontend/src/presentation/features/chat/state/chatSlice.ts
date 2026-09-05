@@ -20,6 +20,9 @@ type ChatState = {
   searchStatus: ChatSearchStatus
 }
 
+/** Core API의 query 최대 길이 계약과 일치합니다. */
+export const maximumSupportProgramSearchQueryLength = 500
+
 const initialState: ChatState = createInitialState()
 
 const chatSlice = createSlice({
@@ -49,6 +52,11 @@ const chatSlice = createSlice({
       state.activeRequestId = null
       state.searchError = '지원사업을 검색하지 못했습니다. 잠시 후 다시 시도해 주세요.'
       state.searchStatus = 'failed'
+    },
+    searchValidationFailed(state, action: PayloadAction<{ queryLength: number }>) {
+      if (state.searchStatus === 'pending') return
+      state.searchError = `검색어는 ${maximumSupportProgramSearchQueryLength}자 이하로 입력해 주세요. 현재 ${action.payload.queryLength}자입니다.`
+      state.searchStatus = 'idle'
     },
     searchStarted: {
       reducer(
@@ -115,6 +123,7 @@ export const {
   searchFailed,
   searchStarted,
   searchSucceeded,
+  searchValidationFailed,
 } = chatSlice.actions
 
 export const selectChatState = (state: RootState) => state.chat

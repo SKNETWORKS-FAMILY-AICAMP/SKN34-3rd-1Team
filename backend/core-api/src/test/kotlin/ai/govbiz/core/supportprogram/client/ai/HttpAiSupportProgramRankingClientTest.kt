@@ -3,6 +3,7 @@ package ai.govbiz.core.supportprogram.client.ai
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramCandidateRequest
+import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEligibility
 import ai.govbiz.core.supportprogram.client.ai.dto.AiScoredSupportProgramPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingRequest
 import org.junit.jupiter.api.AfterEach
@@ -54,7 +55,7 @@ class HttpAiSupportProgramRankingClientTest {
                     """
                     {
                       "originalQuery":"서울 AI 스타트업 지원사업",
-                      "scoringVersion":"govbiz-support-program-ranking-v1",
+                      "scoringVersion":"govbiz-support-program-ranking-v2",
                       "resultLimit":1,
                       "candidates":[{
                         "id":"program-1",
@@ -78,6 +79,8 @@ class HttpAiSupportProgramRankingClientTest {
         assertEquals("서울 AI 스타트업 지원사업", response.originalQuery)
         assertEquals(95, response.rankings?.single()?.totalScore)
         assertEquals("program-1", response.rankings?.single()?.programId)
+        assertEquals(AiSupportProgramEligibility.MATCH, response.rankings?.single()?.targetEligibility)
+        assertEquals(AiSupportProgramEligibility.MATCH, response.rankings?.single()?.regionEligibility)
     }
 
     @Test
@@ -138,7 +141,7 @@ class HttpAiSupportProgramRankingClientTest {
 
     private fun rankingRequest() = AiSupportProgramRankingRequest(
         originalQuery = "서울 AI 스타트업 지원사업",
-        scoringVersion = "govbiz-support-program-ranking-v1",
+        scoringVersion = "govbiz-support-program-ranking-v2",
         resultLimit = 1,
         candidates = listOf(
             AiSupportProgramCandidateRequest(
@@ -162,12 +165,14 @@ class HttpAiSupportProgramRankingClientTest {
             """
             {
               "originalQuery":"서울 AI 스타트업 지원사업",
-              "scoringVersion":"govbiz-support-program-ranking-v1",
+              "scoringVersion":"govbiz-support-program-ranking-v2",
               "rankings":[{
                 "programId":"program-1",
                 "semanticRelevance":38,
                 "targetFit":24,
+                "targetEligibility":"MATCH",
                 "regionFit":15,
+                "regionEligibility":"MATCH",
                 "applicationStatusFit":10,
                 "supportTypeFit":8,
                 "totalScore":95,
@@ -179,7 +184,7 @@ class HttpAiSupportProgramRankingClientTest {
             """
             {
               "originalQuery":"서울 AI 스타트업 지원사업",
-              "scoringVersion":"govbiz-support-program-ranking-v1",
+              "scoringVersion":"govbiz-support-program-ranking-v2",
               "rankings":[]
             }
             """.trimIndent()

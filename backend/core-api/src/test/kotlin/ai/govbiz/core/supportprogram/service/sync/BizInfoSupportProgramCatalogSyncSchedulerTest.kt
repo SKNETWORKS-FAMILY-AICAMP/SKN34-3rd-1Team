@@ -25,6 +25,15 @@ class BizInfoSupportProgramCatalogSyncSchedulerTest {
     }
 
     @Test
+    fun acceptsASupersededSyncWithoutTreatingItAsAFailure() {
+        doReturn(null).`when`(syncService).sync()
+
+        scheduler().synchronize()
+
+        verify(syncService).sync()
+    }
+
+    @Test
     fun continuesWithTheNextScheduledRunAfterASyncFailure() {
         doThrow(IllegalStateException("sync failed"))
             .doReturn(2)

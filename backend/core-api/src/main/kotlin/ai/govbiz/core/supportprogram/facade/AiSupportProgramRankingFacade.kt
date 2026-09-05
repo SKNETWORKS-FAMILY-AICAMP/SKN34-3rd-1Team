@@ -2,6 +2,7 @@ package ai.govbiz.core.supportprogram.facade
 
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.supportprogram.client.ai.AiSupportProgramRankingClient
+import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEligibility
 import ai.govbiz.core.supportprogram.client.ai.dto.AiScoredSupportProgramPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramCandidateRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingPayload
@@ -67,6 +68,7 @@ class AiSupportProgramRankingFacade(
 
             val score = validatedScore(ranking) ?: return null
             if (!meetsRecommendationMinimum(ranking, score)) return null
+            if (!hasCompatibleEligibility(ranking)) return null
             if (score > previousScore) return null
             previousScore = score
             val reasons = validatedReasons(ranking.recommendationReasons) ?: return null
@@ -99,6 +101,19 @@ class AiSupportProgramRankingFacade(
         ranking.semanticRelevance != null &&
             ranking.semanticRelevance >= MIN_SEMANTIC_RELEVANCE_SCORE &&
             totalScore >= MIN_TOTAL_RECOMMENDATION_SCORE
+
+    /**
+     * AI Service는 명백히 불일치한 공고를 이미 제외해야 합니다. Core도 같은 계약을 검증해
+     * 잘못된 내부 응답이 공개 추천으로 이어지지 않게 합니다.
+     */
+    private fun hasCompatibleEligibility(ranking: AiScoredSupportProgramPayload): Boolean {
+        val targetEligibility = ranking.targetEligibility ?: return false
+        val regionEligibility = ranking.regionEligibility ?: return false
+        if (targetEligibility == AiSupportProgramEligibility.INCOMPATIBLE && ranking.targetFit != 0) return false
+        if (regionEligibility == AiSupportProgramEligibility.INCOMPATIBLE && ranking.regionFit != 0) return false
+        return targetEligibility != AiSupportProgramEligibility.INCOMPATIBLE &&
+            regionEligibility != AiSupportProgramEligibility.INCOMPATIBLE
+    }
 
     private fun validatedReasons(values: List<String?>?): List<String>? {
         if (values == null || values.size !in 1..MAX_REASONS) return null
@@ -140,7 +155,7 @@ class AiSupportProgramRankingFacade(
         )
 
     companion object {
-        const val SCORING_VERSION = "govbiz-support-program-ranking-v1"
+        const val SCORING_VERSION = "govbiz-support-program-ranking-v2"
         private const val MAX_TOTAL_SCORE = 100
         private const val MIN_SEMANTIC_RELEVANCE_SCORE = 20
         private const val MIN_TOTAL_RECOMMENDATION_SCORE = 60

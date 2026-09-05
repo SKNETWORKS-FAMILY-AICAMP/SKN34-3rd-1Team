@@ -2,18 +2,32 @@ package ai.govbiz.core.supportprogram.service.sync
 
 import ai.govbiz.core.supportprogram.facade.SupportProgramCatalogFacade
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
-/** 기업마당 지원사업 전체 목록을 수집한 뒤 MySQL에 하나의 스냅샷으로 반영합니다. */
+/**
+ * 기업마당 공고 전체의 벡터를 먼저 준비한 뒤, 검색 가능한 MySQL 스냅샷을 한 번에 공개합니다.
+ */
 @Service
 class BizInfoSupportProgramCatalogSyncService(
     private val catalogFacade: SupportProgramCatalogFacade,
     private val supportProgramRepository: SupportProgramRepository,
+    private val indexSyncService: SupportProgramIndexSyncService,
 ) {
-    fun sync(): Int {
+    /** 최신 실행에 의해 대체된 경우 null, 공개한 공고 수는 0 이상으로 반환합니다. */
+    fun sync(): Int? {
+        val generation = supportProgramRepository.startBizInfoSyncGeneration()
         val programs = catalogFacade.load()
-        supportProgramRepository.synchronizeBizInfo(programs)
+        indexSyncService.indexBizInfoSnapshot(programs)
+        if (!supportProgramRepository.publishBizInfoSnapshotIfCurrent(programs, generation)) {
+            logger.info("더 최근에 시작된 기업마당 동기화가 있어 이전 스냅샷 공개를 건너뜁니다.")
+            return null
+        }
 
         return programs.size
+    }
+
+    private companion object {
+        val logger = LoggerFactory.getLogger(BizInfoSupportProgramCatalogSyncService::class.java)
     }
 }
