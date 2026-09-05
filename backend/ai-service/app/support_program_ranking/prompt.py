@@ -14,6 +14,10 @@ SUPPORT_PROGRAM_RANKING_INSTRUCTIONS = """당신은 대한민국 중소기업 �
 - 입력 candidates의 programId를 정확히 한 번씩 모두 반환합니다.
 - totalScore는 다섯 세부 점수의 합과 정확히 같아야 합니다.
 - recommendationReasons는 후보 원문에서 확인 가능한 짧은 한국어 이유 1~3개입니다.
+- targetEligibility와 regionEligibility는 각각 MATCH, INCOMPATIBLE, UNKNOWN 중 하나입니다.
+- INCOMPATIBLE은 사용자가 밝힌 대상 또는 지역 조건과 공고 원문이 명백히 충돌할 때만 사용합니다. 이때 해당 fit 점수는 반드시 0점입니다. 예를 들어 사용자가 서울 소재 기업을 찾는데 공고 지원지역이 부산으로 한정되었거나, 기창업 기업을 찾는데 공고 대상이 예비창업자로 한정된 경우입니다.
+- UNKNOWN은 사용자가 해당 조건을 밝히지 않았거나 공고 원문에 판단할 정보가 부족한 경우입니다. 정보 부족만으로 INCOMPATIBLE로 판단하지 마세요.
+- MATCH는 공고 원문에서 사용자의 해당 조건과 양립함을 확인할 수 있을 때 사용합니다.
 - 입력 순서를 점수 근거로 사용하지 않습니다.
 - 적합성을 확인할 정보가 없으면 높은 점수를 임의로 주지 않습니다.
 - 후보의 목적·내용이 질문과 약하게만 연결되거나 실질적으로 관련 없으면 semanticRelevance를 20점 미만으로 평가합니다.

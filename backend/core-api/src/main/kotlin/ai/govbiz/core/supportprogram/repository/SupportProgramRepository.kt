@@ -29,13 +29,49 @@ class SupportProgramRepository(
     /** 기업마당의 완전한 최신 목록으로 기존 기업마당 데이터의 노출 상태와 내용을 원자적으로 갱신합니다. */
     @Transactional
     fun synchronizeBizInfo(programs: List<CatalogSupportProgram>) {
-        require(programs.all { it.program.sourceCode == BIZINFO_SOURCE_CODE }) {
-            "BizInfo synchronization accepts only BIZINFO source programs"
-        }
-        supportProgramMapper.markAllNotPresentBySourceCode(BIZINFO_SOURCE_CODE)
-        programs.forEach { program ->
-            supportProgramMapper.upsert(program.toDbRow())
-        }
+        requireBizInfoPrograms(programs)
+        replaceBizInfoSnapshot(programs)
+    }
+
+    /**
+     * 새 동기화 실행에 단조 증가하는 세대를 부여합니다.
+     *
+     * 외부 API와 AI 호출은 이 짧은 DB transaction 뒤에서 수행합니다. 이후 먼저 시작한 실행이 늦게
+     * 끝나더라도 최신 세대만 카탈로그를 공개하게 합니다.
+     */
+    @Transactional
+    fun startBizInfoSyncGeneration(): Long {
+        supportProgramMapper.insertSyncGenerationIfAbsent(BIZINFO_SOURCE_CODE)
+        val currentGeneration = requireNotNull(
+            supportProgramMapper.lockLatestStartedGeneration(BIZINFO_SOURCE_CODE),
+        ) { "BizInfo sync generation row was not created" }
+        check(currentGeneration < Long.MAX_VALUE) { "BizInfo sync generation overflow" }
+        val nextGeneration = currentGeneration + 1
+        check(
+            supportProgramMapper.updateLatestStartedGeneration(BIZINFO_SOURCE_CODE, nextGeneration) == 1,
+        ) { "BizInfo sync generation was not updated" }
+        return nextGeneration
+    }
+
+    /**
+     * 현재 실행 세대가 가장 최근에 시작된 경우에만 완성된 공고 스냅샷을 공개합니다.
+     *
+     * 행 잠금과 카탈로그 교체를 같은 짧은 transaction으로 묶어, 늦게 끝난 이전 수집 결과가
+     * 더 최신 실행의 결과를 덮어쓰지 못하게 합니다.
+     */
+    @Transactional
+    fun publishBizInfoSnapshotIfCurrent(
+        programs: List<CatalogSupportProgram>,
+        generation: Long,
+    ): Boolean {
+        requireBizInfoPrograms(programs)
+        val latestGeneration = requireNotNull(
+            supportProgramMapper.lockLatestStartedGeneration(BIZINFO_SOURCE_CODE),
+        ) { "BizInfo sync generation row does not exist" }
+        if (latestGeneration != generation) return false
+
+        replaceBizInfoSnapshot(programs)
+        return true
     }
 
     /** 현재 노출 중인 공고를 제공처 코드와 제공처 원본 ID 조합으로 조회합니다. */
@@ -112,6 +148,19 @@ class SupportProgramRepository(
 
     private fun sourceNameFor(sourceCode: String): String =
         if (sourceCode == BIZINFO_SOURCE_CODE) BIZINFO_SOURCE_NAME else sourceCode
+
+    private fun requireBizInfoPrograms(programs: List<CatalogSupportProgram>) {
+        require(programs.all { it.program.sourceCode == BIZINFO_SOURCE_CODE }) {
+            "BizInfo synchronization accepts only BIZINFO source programs"
+        }
+    }
+
+    private fun replaceBizInfoSnapshot(programs: List<CatalogSupportProgram>) {
+        supportProgramMapper.markAllNotPresentBySourceCode(BIZINFO_SOURCE_CODE)
+        programs.forEach { program ->
+            supportProgramMapper.upsert(program.toDbRow())
+        }
+    }
 
     private companion object {
         const val BIZINFO_SOURCE_CODE = "BIZINFO"

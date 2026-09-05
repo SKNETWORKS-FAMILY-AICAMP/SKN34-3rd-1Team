@@ -3,6 +3,7 @@ package ai.govbiz.core.supportprogram.facade
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.supportprogram.client.ai.AiSupportProgramRankingClient
+import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEligibility
 import ai.govbiz.core.supportprogram.client.ai.dto.AiScoredSupportProgramPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingRequest
@@ -108,6 +109,60 @@ class AiSupportProgramRankingFacadeTest {
     }
 
     @Test
+    fun rejectsAnIncompatibleTargetOrRegionEvenWhenTheTotalScoreIsHigh() {
+        val invalidPayloads = listOf(
+            response(
+                score(
+                    "first",
+                    semantic = 40,
+                    total = 65,
+                    reason = "서울 AI 공고",
+                    target = 0,
+                    targetEligibility = AiSupportProgramEligibility.INCOMPATIBLE,
+                ),
+            ),
+            response(
+                score(
+                    "first",
+                    semantic = 40,
+                    total = 75,
+                    reason = "AI 기업 지원",
+                    region = 0,
+                    regionEligibility = AiSupportProgramEligibility.INCOMPATIBLE,
+                ),
+            ),
+        )
+
+        invalidPayloads.forEach { payload ->
+            client.reset(payload)
+
+            assertInvalidResponse()
+        }
+    }
+
+    @Test
+    fun acceptsUnknownEligibilityWhenTheCandidateOtherwiseMeetsTheRecommendationMinimum() {
+        client.reset(
+            response(
+                score(
+                    "first",
+                    semantic = 40,
+                    total = 60,
+                    reason = "질의와 관련된 지원사업",
+                    target = 0,
+                    region = 5,
+                    applicationStatus = 10,
+                    supportType = 5,
+                    targetEligibility = AiSupportProgramEligibility.UNKNOWN,
+                    regionEligibility = AiSupportProgramEligibility.UNKNOWN,
+                ),
+            ),
+        )
+
+        assertEquals(listOf("first"), facade().rank(QUERY, candidates(), 5).map { it.id })
+    }
+
+    @Test
     fun rejectsWrongEchoVersionScoreSumAndReasons() {
         val validScores = arrayOf(
             score("second", 40, 85, "직접 관련"),
@@ -181,11 +236,15 @@ class AiSupportProgramRankingFacadeTest {
         region: Int = 10,
         applicationStatus: Int = 10,
         supportType: Int = 5,
+        targetEligibility: AiSupportProgramEligibility = AiSupportProgramEligibility.MATCH,
+        regionEligibility: AiSupportProgramEligibility = AiSupportProgramEligibility.MATCH,
     ) = AiScoredSupportProgramPayload(
         programId = id,
         semanticRelevance = semantic,
         targetFit = target,
+        targetEligibility = targetEligibility,
         regionFit = region,
+        regionEligibility = regionEligibility,
         applicationStatusFit = applicationStatus,
         supportTypeFit = supportType,
         totalScore = total,

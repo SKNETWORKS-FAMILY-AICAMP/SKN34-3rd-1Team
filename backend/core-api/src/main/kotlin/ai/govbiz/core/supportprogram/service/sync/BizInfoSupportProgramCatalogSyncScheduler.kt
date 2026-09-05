@@ -25,7 +25,11 @@ class BizInfoSupportProgramCatalogSyncScheduler(
     fun synchronize() {
         try {
             val synchronizedCount = syncService.sync()
-            logger.info("기업마당 지원사업 공고 {}건을 MySQL에 동기화했습니다.", synchronizedCount)
+            if (synchronizedCount == null) {
+                logger.info("더 최근에 시작된 기업마당 동기화가 있어 이번 스냅샷 공개를 건너뜁니다.")
+            } else {
+                logger.info("기업마당 지원사업 공고 {}건을 MySQL과 검색 색인에 동기화했습니다.", synchronizedCount)
+            }
         } catch (exception: SupportProgramCatalogFacadeException) {
             logger.error(
                 "기업마당 지원사업 공고 동기화에 실패했습니다. 실패 유형: {}. 다음 동기화에서 다시 시도합니다.",

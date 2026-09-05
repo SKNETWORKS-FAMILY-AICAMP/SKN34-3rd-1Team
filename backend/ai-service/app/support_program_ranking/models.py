@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-SCORING_VERSION = "govbiz-support-program-ranking-v1"
+SCORING_VERSION = "govbiz-support-program-ranking-v2"
 MAX_CANDIDATES = 20
 
 
@@ -12,6 +12,14 @@ class SupportProgramStatus(StrEnum):
     OPEN = "OPEN"
     UPCOMING = "UPCOMING"
     CLOSED = "CLOSED"
+    UNKNOWN = "UNKNOWN"
+
+
+class SupportProgramEligibility(StrEnum):
+    """질문에서 드러난 조건과 공고 원문의 관계를 나타낸다."""
+
+    MATCH = "MATCH"
+    INCOMPATIBLE = "INCOMPATIBLE"
     UNKNOWN = "UNKNOWN"
 
 
@@ -105,7 +113,9 @@ class ScoredSupportProgram(BaseModel):
     program_id: str = Field(alias="programId", min_length=1, max_length=200)
     semantic_relevance: int = Field(alias="semanticRelevance", ge=0, le=40)
     target_fit: int = Field(alias="targetFit", ge=0, le=25)
+    target_eligibility: SupportProgramEligibility = Field(alias="targetEligibility")
     region_fit: int = Field(alias="regionFit", ge=0, le=15)
+    region_eligibility: SupportProgramEligibility = Field(alias="regionEligibility")
     application_status_fit: int = Field(alias="applicationStatusFit", ge=0, le=10)
     support_type_fit: int = Field(alias="supportTypeFit", ge=0, le=10)
     total_score: int = Field(alias="totalScore", ge=0, le=100)
@@ -147,6 +157,16 @@ class ScoredSupportProgram(BaseModel):
         )
         if self.total_score != expected:
             raise ValueError("totalScore must equal the sum of all score dimensions")
+        if (
+            self.target_eligibility is SupportProgramEligibility.INCOMPATIBLE
+            and self.target_fit != 0
+        ):
+            raise ValueError("incompatible target eligibility must have targetFit of zero")
+        if (
+            self.region_eligibility is SupportProgramEligibility.INCOMPATIBLE
+            and self.region_fit != 0
+        ):
+            raise ValueError("incompatible region eligibility must have regionFit of zero")
         return self
 
 

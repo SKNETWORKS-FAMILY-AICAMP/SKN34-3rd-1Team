@@ -19,4 +19,13 @@ interface SupportProgramMapper {
     fun findPresentBySourceCode(
         @Param("sourceCode") sourceCode: String,
     ): List<SupportProgramDbRow>
+
+    fun insertSyncGenerationIfAbsent(@Param("sourceCode") sourceCode: String): Int
+
+    fun lockLatestStartedGeneration(@Param("sourceCode") sourceCode: String): Long?
+
+    fun updateLatestStartedGeneration(
+        @Param("sourceCode") sourceCode: String,
+        @Param("generation") generation: Long,
+    ): Int
 }

@@ -5,7 +5,12 @@ import java.time.LocalDate
 import java.util.Locale
 import java.util.regex.Pattern
 
-/** 신청 기간과 서울 기준 날짜로 공고의 현재 접수 상태를 계산합니다. */
+/**
+ * 신청 기간과 서울 기준 날짜로 공고의 현재 접수 상태를 계산합니다.
+ *
+ * 파싱된 날짜가 상태를 결정할 수 있으면 날짜를 우선합니다. 날짜만으로 결정할 수 없을 때는
+ * 명시적인 종료 표현이 상시 접수·예산 소진 같은 수시 접수 표현보다 우선합니다.
+ */
 object SupportProgramStatusResolver {
     private val WHITESPACE: Pattern = Pattern.compile("\\s+")
 
@@ -29,11 +34,11 @@ object SupportProgramStatusResolver {
         if (containsAny(normalized, "추후 공지", "추후공지", "접수 예정", "접수예정")) {
             return SupportProgramStatus.UPCOMING
         }
-        if (isRollingPeriod(normalized)) return SupportProgramStatus.OPEN
         if (applicationEndDate != null) return SupportProgramStatus.OPEN
         if (containsAny(normalized, "접수 종료", "접수종료", "모집 종료", "모집종료", "마감 완료")) {
             return SupportProgramStatus.CLOSED
         }
+        if (isRollingPeriod(normalized)) return SupportProgramStatus.OPEN
         return SupportProgramStatus.UNKNOWN
     }
 

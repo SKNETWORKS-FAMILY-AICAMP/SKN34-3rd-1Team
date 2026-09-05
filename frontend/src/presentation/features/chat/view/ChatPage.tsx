@@ -28,6 +28,7 @@ export function ChatPage() {
     updateDraft,
   } = useSupportProgramChatViewModel()
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const isComposingInput = useRef(false)
   const timelineRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -213,7 +214,7 @@ export function ChatPage() {
           onSubmit={handleSubmit}
         >
           {searchError ? (
-            <p className={chatPageStyles.searchError}>
+            <p className={chatPageStyles.searchError} role="alert">
               {searchError}
             </p>
           ) : null}
@@ -221,7 +222,18 @@ export function ChatPage() {
             className={chatPageStyles.composerInput}
             value={draft}
             onChange={(event) => updateDraft(event.target.value)}
+            onCompositionStart={() => {
+              isComposingInput.current = true
+            }}
+            onCompositionEnd={() => {
+              isComposingInput.current = false
+            }}
             onKeyDown={(event) => {
+              if (
+                isComposingInput.current ||
+                event.nativeEvent.isComposing ||
+                event.nativeEvent.keyCode === 229
+              ) return
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
                 event.currentTarget.form?.requestSubmit()

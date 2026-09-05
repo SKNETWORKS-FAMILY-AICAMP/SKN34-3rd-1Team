@@ -13,6 +13,7 @@ from app.support_program_ranking.models import (
     SCORING_VERSION,
     ScoredSupportProgram,
     SupportProgramCandidate,
+    SupportProgramEligibility,
     SupportProgramRankingOutput,
     SupportProgramRankingRequest,
 )
@@ -49,7 +50,9 @@ def valid_output() -> SupportProgramRankingOutput:
                 programId="program-1",
                 semanticRelevance=38,
                 targetFit=24,
+                targetEligibility=SupportProgramEligibility.MATCH,
                 regionFit=15,
+                regionEligibility=SupportProgramEligibility.MATCH,
                 applicationStatusFit=10,
                 supportTypeFit=8,
                 totalScore=95,
@@ -63,6 +66,9 @@ def test_prompt_declares_the_recommendation_minimum_without_omitting_candidates(
     assert "semanticRelevance 20점 이상" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     assert "totalScore 60점 이상" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     assert "모든 후보를 점수화해야 합니다" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "targetEligibility" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "regionEligibility" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "정보 부족만으로 INCOMPATIBLE로 판단하지 마세요" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
 
 
 @pytest.mark.anyio

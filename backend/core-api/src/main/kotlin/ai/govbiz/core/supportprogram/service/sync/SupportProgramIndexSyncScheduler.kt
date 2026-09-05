@@ -15,10 +15,10 @@ class SupportProgramIndexSyncScheduler(private val syncService: SupportProgramIn
     )
     fun synchronize() {
         try {
-            val count = syncService.sync()
-            logger.info("지원사업 {}건의 벡터 색인을 동기화했습니다.", count)
+            val count = syncService.repair()
+            logger.info("지원사업 {}건의 누락 벡터 색인을 복구했습니다.", count)
         } catch (exception: RuntimeException) {
-            logger.error("지원사업 색인 동기화 실패: {}. 다음 실행에서 다시 시도합니다.", exception.javaClass.simpleName)
+            logger.error("지원사업 벡터 색인 복구 실패: {}. 다음 실행에서 다시 시도합니다.", exception.javaClass.simpleName)
         }
     }
 

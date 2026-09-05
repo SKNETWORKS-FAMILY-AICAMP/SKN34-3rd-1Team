@@ -13,7 +13,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAppStore } from '../../../../app/store'
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
 import type { SearchSupportProgramsUseCase } from '../../../../domain/usecases/SearchSupportProgramsUseCase'
-import { draftChanged } from '../state/chatSlice'
+import {
+  draftChanged,
+  maximumSupportProgramSearchQueryLength,
+} from '../state/chatSlice'
 import { useSupportProgramChatViewModel } from './useSupportProgramChatViewModel'
 
 afterEach(cleanup)
@@ -118,6 +121,23 @@ describe('Redux chat flow', () => {
     expect(chat.searchStatus).toBe('idle')
     expect(chat.draft).toBe('수출')
     expect(chat.messages.at(-1)?.programs?.[0]?.id).toBe('fixture-seoul-ai-business')
+  })
+
+  it('500자를 넘는 검색어는 요청하지 않고 입력값과 검증 메시지를 유지한다', async () => {
+    const execute = vi.fn()
+    const store = createAppStore()
+    const { result } = renderChatViewModel(store, createSearchUseCase(execute))
+    const overlongQuery = '가'.repeat(maximumSupportProgramSearchQueryLength + 1)
+
+    act(() => store.dispatch(draftChanged(overlongQuery)))
+    await act(async () => result.current.submitMessage())
+
+    const chat = store.getState().chat
+    expect(execute).not.toHaveBeenCalled()
+    expect(chat.draft).toBe(overlongQuery)
+    expect(chat.messages).toHaveLength(1)
+    expect(chat.searchStatus).toBe('idle')
+    expect(chat.searchError).toBe('검색어는 500자 이하로 입력해 주세요. 현재 501자입니다.')
   })
 
   it('stores a safe error when the search service fails', async () => {

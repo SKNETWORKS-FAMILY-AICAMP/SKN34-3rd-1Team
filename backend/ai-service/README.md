@@ -11,8 +11,8 @@ AI Service가 하는 일:
 - Core가 보낸 공고 검색 문서를 OpenAI로 임베딩하고 Qdrant에 색인
 - 현재 MySQL 공고 ID·내용 해시 목록 안에서 의미가 가까운 후보를 최대 20개 검색
 - 버전된 100점 평가 기준으로 모든 후보를 점수화
-- 의미 관련성·총점 최소 기준을 통과한 공고만 0~5개로 반환
-- 반환 공고의 세부 점수·총점·추천 이유를 strict structured output으로 제공
+- 지원대상·지역의 명백한 자격 불일치를 제외하고 의미 관련성·총점 최소 기준을 통과한 공고만 0~5개로 반환
+- 반환 공고의 자격 판정·세부 점수·총점·추천 이유를 strict structured output으로 제공
 
 AI Service가 하지 않는 일:
 
@@ -49,12 +49,15 @@ Qdrant point ID는 이 두 값에서 결정되므로 같은 문서를 반복 처
 | `POST .../search` | `query`: 공백 제외 1~500자, `eligibleDocuments: [{id, contentHash}]`, `limit`: 1~20 | `{query, matches: [{id, contentHash, score}]}` |
 
 ```text
-Core의 색인 스케줄러
+Core의 기업마당 동기화: 시작 세대 발급 → 전체 수집·검증
 → HTTP batch API → SupportProgramIndexService
 → Qdrant에서 동일 ID·해시 존재 여부 확인
 → 누락·변경 문서만 OpenAI Embeddings API 호출
 → 차원·유한 숫자·응답 인덱스·건수 검증 → Qdrant UPSERT → Response
-→ 모든 batch 성공 후 HTTP prune API → 현재 제공처의 이전 버전·누락 공고 정리
+→ 모든 batch 성공 후 Core가 최신 시작 세대인지 확인 → 해당 세대만 MySQL에 공개
+
+Core의 별도 색인 스케줄러 (기본 PT1M)
+→ 이미 공개된 MySQL 공고 조회 → 같은 batch API로 누락 벡터 복구 (prune 호출 없음)
 
 사용자 검색 → Core가 현재 검색 가능한 MySQL 공고 ID·해시 전달
 → HTTP search API → SupportProgramIndexService
@@ -74,16 +77,22 @@ ID·해시 목록만 검색하여 이전 버전이 추천 후보로 섞이지 �
 가능 목록은 외부 호출 없이 빈 `matches`를 반환합니다.
 
 모델·차원·문서 처리 버전은 collection 이름에 반영합니다. 모델 또는 차원을 바꾸면 새 collection에
-전체 재색인이 필요하며, 기존 collection은 자동 삭제하지 않습니다. 현재 구현은 단일 Core 색인
-스케줄러를 전제로 합니다. 다중 인스턴스의 오래된 snapshot이 최신 snapshot을 prune하지 않도록
-분산 잠금이나 snapshot 버전 비교가 필요하므로 다중 스케줄러 배포는 지원 범위에 포함하지 않습니다.
+전체 재색인이 필요하며, 기존 collection은 자동 삭제하지 않습니다. Core는 MySQL의 시작 세대로
+카탈로그 공개 순서를 확인하고, 전체 벡터가 준비된 최신 시작 세대만 공개합니다. 이미 공개된 공고의
+누락 벡터를 복구하는 별도 스케줄러도 벡터를 삭제하지 않습니다.
+
+내부 `prune` API는 남아 있지만 현재 Core 동기화·복구 경로에서는 호출하지 않습니다. 정확한 현재
+ID·해시 필터가 오래된 벡터를 검색에서 제외하므로 새 스냅샷 준비 중인 벡터를 삭제할 필요가 없습니다.
+이전 버전·미공개 세대·이전 모델 collection의 저장 공간 정리는 후속 과제입니다. 진행 중인 작업과
+검색을 보호하는 보존·삭제 수명주기가 필요하며, 현재 `prune` API 자체가 다중 인스턴스나 동시 실행에
+안전한 것은 아닙니다.
 
 이번 단계는 공고 단위 후보 검색입니다. 첨부문서의 문단 검색이나 원문 인용 답변을 제공하는
 RAG는 아직 구현하지 않았습니다. 벡터 유사도는 신청 자격 충족률이나 선정 확률이 아닙니다.
 
 ## 평가 기준
 
-`govbiz-support-program-ranking-v1`은 다음 배점을 사용합니다.
+`govbiz-support-program-ranking-v2`는 다음 배점을 사용합니다.
 
 | 항목 | 배점 |
 |---|---:|
@@ -98,14 +107,18 @@ RAG는 아직 구현하지 않았습니다. 벡터 유사도는 신청 자격 �
 
 ### 추천 반환 최소 기준
 
-Agent는 후보를 빠짐없이 점수화하지만, Service는 아래 두 조건을 모두 충족한 공고만 추천으로
+Agent는 후보를 빠짐없이 점수화하고 각 후보의 `targetEligibility`·`regionEligibility`를 반드시 반환합니다.
+두 값은 `MATCH`(제공된 정보와 일치), `INCOMPATIBLE`(명백한 조건 불일치), `UNKNOWN`(정보 부족) 중 하나입니다.
+`UNKNOWN`은 자동 탈락이나 자격 충족 확정을 뜻하지 않습니다. Service는 아래 조건을 모두 충족한 공고만 추천으로
 반환합니다.
 
+- `targetEligibility`와 `regionEligibility` 어느 쪽도 `INCOMPATIBLE`이 아님
 - `semanticRelevance >= 20`: 40점인 핵심 관련성 항목에서 절반 이상
 - `totalScore >= 60`: 전체 100점 기준 60점 이상
 
-지역·접수 상태만 맞는 공고가 추천되는 것을 막기 위해 의미 관련성 조건을 별도로 둡니다. 둘 중 하나라도
-충족하지 못하면 최종 결과에서 제외하며, 적격 공고가 없으면 빈 `rankings`를 정상 `200` 응답으로
+자격 불일치는 높은 총점으로 상쇄할 수 없습니다. 지역·접수 상태만 맞는 공고가 추천되는 것을 막기 위해
+의미 관련성 조건도 별도로 둡니다. 하나라도 충족하지 못하면 최종 결과에서 제외하며,
+적격 공고가 없으면 빈 `rankings`를 정상 `200` 응답으로
 반환합니다. 이 값은 실제 검색 평가 데이터가 쌓이면 조정할 초기 정책입니다. Core도 내부 HTTP 응답이 이
 정책을 어기지 않았는지 다시 검증하지만, 키워드 사전이나 항목별 가중치를 Kotlin에 구현하지 않습니다.
 
@@ -121,9 +134,10 @@ Core API
 → OpenAI Agents SDK Runner.run(max_turns=1)
    ├→ prompt.py의 평가 기준 사용
    ├→ 후보 문장을 지시가 아닌 데이터로 취급
-   └→ SupportProgramRankingOutput strict schema로 모든 후보 점수화
+   └→ SupportProgramRankingOutput strict schema로 모든 후보 점수화·지원대상·지역 자격 판정
 → Service가 입력 후보 ID exact set을 재검증
-→ 총점 내림차순 정렬 후 semanticRelevance 20점·totalScore 60점 기준 필터
+→ 총점 내림차순 정렬
+→ 자격 INCOMPATIBLE 제외 + semanticRelevance 20점·totalScore 60점 기준 필터
 → 적격 공고를 resultLimit까지 선택(0개 가능)
 → SupportProgramRankingResponse
 → Core API

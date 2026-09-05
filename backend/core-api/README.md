@@ -31,7 +31,7 @@ supportprogram/
 ├── service/
 │   ├── detail/             # 제공처·원본 ID로 현재 공고 상세를 조회
 │   ├── search/             # 전체 MySQL 공고의 의미 검색·점수화 흐름
-│   ├── sync/               # 기업마당→MySQL 및 MySQL→벡터 색인 동기화·정기 실행
+│   ├── sync/               # 기업마당→색인 준비→MySQL 공개 및 누락 벡터 복구·정기 실행
 │   └── dto/                # 검증된 검색 실행 결과
 ├── config/                 # 지원사업 공용 Spring 설정
 ├── facade/                 # 기업마당 수집·의미 검색·AI 점수화 경계
@@ -187,13 +187,14 @@ return AiServiceHealthResponse(result.status, result.service)
 
 지원사업 검색 관련 코드는 `supportprogram` 기능 디렉터리에서 함께 관리합니다. `service/search`는
 Repository에서 현재 노출된 기업마당 공고를 읽고 접수 상태 필터·전체 공고 의미 검색·AI 점수화를 연결합니다.
-`service/sync`는 기업마당 전체 공고 수집과 DB 반영, 독립적인 벡터 색인 갱신 순서를 소유합니다. `facade`는
+`service/sync`는 시작 세대 발급·기업마당 전체 공고 수집·색인 준비·DB 공개와 별도 누락 벡터 복구를 소유합니다. `facade`는
 `SupportProgramCatalogFacade`·`SupportProgramRankingFacade` 계약과 그 구현을 함께 관리하고, 하위
 `exception`에는 상위 Service에 전달하는 안정적인 Facade 실패 계약을 둡니다.
 `BizInfoSupportProgramCatalogFacade`는 동기화에 필요한 기업마당 조회·오류 변환·공고 정규화를 `load`
 하나로 감추고, `AiSupportProgramRankingFacade`는 AI 요청 생성·호출·응답 검증·도메인 변환을 `rank`
-하나로 감춥니다. `BizInfoSupportProgramCatalogSyncService`는 Facade가 전체 수집과 검증을 끝낸 뒤에만
-Repository의 짧은 DB transaction을 호출합니다. `repository/SupportProgramRepository`는 정규화된
+하나로 감춥니다. `BizInfoSupportProgramCatalogSyncService`는 수집 전에 Repository에서 시작 세대를 발급받고,
+Facade의 전체 수집·검증과 `SupportProgramIndexSyncService.indexBizInfoSnapshot()`의 전체 색인을 마친 뒤
+Repository의 짧은 DB transaction에서 최신 시작 세대일 때만 공개합니다. `repository/SupportProgramRepository`는 정규화된
 기업마당 공고를 MySQL에 저장하고 읽으며, 저장된 신청 기간에서 현재 접수 상태를 다시 계산합니다.
 기업마당 전체 동기화에서는 기존 BIZINFO 행을 미노출 처리하고 이번 목록 UPSERT를 하나의 transaction으로
 묶어, 중간 실패 시 이전 카탈로그를 보존합니다. SQL은 `repository/mapper/SupportProgramMapper`와
@@ -346,9 +347,9 @@ Core API가 외부 요청 전에 정확히 한 번 인코딩합니다. 키가 �
 | `AI_SERVICE_CONNECT_TIMEOUT` | `1s` | AI Service 연결 제한시간 |
 | `AI_SERVICE_READ_TIMEOUT` | `12s` | AI Service 응답 제한시간(LLM 전체 제한 10초 + 내부 응답 여유) |
 | `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | 의미 검색·문서 색인 HTTP 응답 제한시간 |
-| `SUPPORT_PROGRAM_INDEX_ENABLED` | `true` | MySQL 공고의 벡터 색인 자동 갱신 여부 |
-| `SUPPORT_PROGRAM_INDEX_INITIAL_DELAY` | `PT0S` | 첫 색인 갱신 실행까지의 기간 |
-| `SUPPORT_PROGRAM_INDEX_FIXED_DELAY` | `PT1M` | 이전 색인 갱신 종료 뒤 다음 실행까지의 기간 |
+| `SUPPORT_PROGRAM_INDEX_ENABLED` | `true` | 이미 공개된 MySQL 공고의 누락 벡터 자동 복구 여부. 새 카탈로그 공개 전 필수 색인은 별도 |
+| `SUPPORT_PROGRAM_INDEX_INITIAL_DELAY` | `PT0S` | 첫 누락 벡터 복구 실행까지의 기간 |
+| `SUPPORT_PROGRAM_INDEX_FIXED_DELAY` | `PT1M` | 이전 누락 벡터 복구 종료 뒤 다음 실행까지의 기간 |
 | `APP_CORS_ALLOWED_ORIGIN` | `http://localhost:5173` | 허용할 Web origin |
 | `SPRING_DATASOURCE_URL` | `jdbc:mysql://127.0.0.1:3306/govbiz` | MySQL JDBC 연결 주소 |
 | `SPRING_DATASOURCE_USERNAME` | `govbiz` | MySQL 연결 사용자 |
@@ -364,21 +365,26 @@ Core API에, `OPENAI_API_KEY`를 AI Service에만 전달합니다. 네이티브 
 한 번 적용해 `support_program` 테이블을 만듭니다. `SupportProgramRepository`는 현재 기업마당에서
 정규화된 공고를 `SupportProgramMapper`와
 [`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml)의 SQL로 저장·조회합니다.
+[`V2__add_support_program_sync_generation.sql`](src/main/resources/db/migration/V2__add_support_program_sync_generation.sql)은
+제공처별 최신 시작 세대를 관리하는 `support_program_sync_generation` 테이블을 추가합니다.
 
 - `source_code`와 `source_program_id`를 함께 고유 식별자로 사용합니다.
 - 같은 공고를 다시 저장하면 `INSERT ... ON DUPLICATE KEY UPDATE`로 최신 값으로 갱신합니다.
 - `categories`, `regions`는 MySQL JSON으로 저장하고, 신청기간 원문과 해석된 날짜를 함께 보관합니다.
 - 접수 상태는 저장하지 않고 읽을 때 서울 날짜 기준으로 계산합니다. 날짜가 지나도 DB 값을 수정하지 않아도 됩니다.
 - `BizInfoClient`가 전체 페이지와 건수를, `BizInfoProgramMapper`가 모든 공고의 필수 값을 검증합니다.
-- 전체 수집 성공 후 기존 BIZINFO 행의 미노출 처리와 이번 목록 UPSERT를 하나의 transaction으로 반영합니다.
+- 수집 전에 시작 세대를 발급하고, 전체 수집·검증·벡터 색인을 성공한 뒤에만 카탈로그 공개를 시도합니다.
+- 공개 transaction에서 최신 시작 세대인지 확인합니다. 더 최근에 시작한 작업이 있으면 이전 작업의 공개를 건너뜁니다.
+- 최신 시작 세대의 기존 BIZINFO 행 미노출 처리와 이번 목록 UPSERT를 하나의 transaction으로 반영합니다.
 - DB 반영 중 하나라도 실패하면 전체 transaction을 롤백해 이전 카탈로그를 유지합니다.
 - SQL은 MyBatis Mapper XML에, JSON 변환·접수 상태 계산은 Kotlin Repository에 둡니다.
 
 `BizInfoSupportProgramCatalogSyncScheduler`는 `app.bizinfo.sync.enabled`가 `true`일 때
 `BizInfoSupportProgramCatalogSyncService.sync()`를 자동 호출합니다. 기본값은 앱 준비 뒤 `PT0S`에
-한 번 실행하고, 동기화가 끝난 시점부터 `PT6H` 뒤에 다시 실행하는 것입니다. 실행 중 기업마당 호출이나
-DB 반영이 실패해도 Scheduler는 오류를 기록하고 다음 실행을 계속하며, 동기화 Service의 transaction이
-기존 카탈로그를 보존합니다.
+한 번 실행하고, 동기화가 끝난 시점부터 `PT6H` 뒤에 다시 실행하는 것입니다. 기업마당 호출·검증·전체
+색인이 실패하면 공개 전이므로 이전 카탈로그를 유지하고, DB 공개가 실패하면 transaction을 롤백합니다.
+Scheduler는 오류를 기록하고 다음 실행을 계속합니다. 후발 작업이 시작된 뒤 실패하더라도 이미 대체된
+이전 세대가 뒤늦게 공개되지는 않으며, 마지막으로 공개된 카탈로그를 다음 성공까지 유지합니다.
 
 `GET /api/v1/support-programs/search`는 `is_source_present = TRUE`인 현재 기업마당 공고를 MySQL에서
 읽습니다. 기업마당 API 호출은 Scheduler의 동기화 경로에만 있습니다.
@@ -397,10 +403,14 @@ ID·문서 해시를 `AiSupportProgramRetrievalFacade`가 AI Service에 전달�
 검증한 뒤 기존 LLM 점수화에 전달합니다. 응답은 적격 공고 수와 20 중 작은 수만큼 있어야 하며, 부족한
 성공 응답도 잘못된 내부 응답으로 처리합니다. 오래된 공고도 의미 검색 후보에 포함되며 최신 20개 절단은 없습니다.
 
-LLM 점수화에서는 AI Service가 모든 후보를 평가한 뒤 `semanticRelevance` 20점 이상(40점 중 절반)과
-`totalScore` 60점 이상(100점 기준)을 모두 통과한 공고만 최대 5개 반환합니다. 이 기준을 통과한 공고가
+LLM 점수화의 `govbiz-support-program-ranking-v2` 계약은 모든 후보의 `targetEligibility`·`regionEligibility`를
+필수로 반환합니다. 허용 값은 `MATCH`, `INCOMPATIBLE`, `UNKNOWN`이며 하나라도 `INCOMPATIBLE`이면
+총점과 관계없이 제외합니다. `UNKNOWN`은 정보 부족을 뜻해 자동 제외하지 않으며 신청 자격 확정도 아닙니다.
+이 조건과 `semanticRelevance` 20점 이상(40점 중 절반)·`totalScore` 60점 이상(100점 기준)을
+모두 통과한 공고만 최대 5개 반환합니다. 이 기준을 통과한 공고가
 없으면 빈 검색 결과는 정상 응답입니다. `AiSupportProgramRankingFacade`는 0~`resultLimit`개의 응답을 허용하되,
-반환된 공고가 이 최소 기준·후보 ID·점수 합계·내림차순 규칙을 모두 지키는지 다시 검증합니다. 이 초기 기준은
+반환된 공고가 자격 판정 필수 값·불일치 제외·최소 점수·후보 ID·점수 합계·내림차순 규칙을 모두 지키는지
+다시 검증합니다. 이 초기 점수 기준은
 실제 검색 평가 데이터가 쌓이면 조정합니다.
 
 검색어가 비어 있으면 의미 검색과 LLM을 호출하지 않고 최신 5개를 반환합니다. DB나 접수 필터 결과가
@@ -408,23 +418,30 @@ LLM 점수화에서는 AI Service가 모든 후보를 평가한 뒤 `semanticRel
 있으면 검색할 수 있습니다. 필요한 공고 버전의 색인이 아직 없거나 Qdrant가 불가하면 공개 API는
 `503 AI_SERVICE_UNAVAILABLE`을 반환합니다. 이 실패를 최신 공고나 빈 검색 결과로 숨기지 않습니다.
 
-### 벡터 색인 갱신
+### 공개 전 색인 준비와 누락 벡터 복구
 
-`SupportProgramIndexSyncScheduler`는 기업마당 수집과 별도 스레드에서 앱 시작 직후 및 이전 작업 종료
-1분 뒤마다 `SupportProgramIndexSyncService.sync()`를 호출합니다. 서비스는 현재 MySQL 공고를 읽어
-제목·기관·대상·분야·지역·신청기간·내용을 일정한 형식으로 구성하고, UTF-8 문서의 SHA-256을 계산합니다.
+기업마당 동기화는 `SupportProgramIndexSyncService.indexBizInfoSnapshot()`으로 들어온 전체 공고의 벡터를
+준비한 뒤 MySQL에 공개합니다. `SupportProgramIndexSyncScheduler`는 기업마당 수집과 별도 스레드에서
+앱 시작 직후 및 이전 작업 종료 1분 뒤마다 `SupportProgramIndexSyncService.repair()`를 호출해 이미 공개된
+MySQL 공고의 누락 벡터를 복구합니다. 두 경로는 제목·기관·대상·분야·지역·신청기간·내용을 같은 형식으로
+구성하고, UTF-8 문서의 SHA-256을 계산합니다.
 본문의 제어·형식 문자는 개행·탭을 제외하고 공백으로 정리한 후 Unicode 코드 포인트 기준 최대
 12,000자로 제한하며 오늘의 접수 상태는 해시에 넣지 않습니다.
 
 - `PUT /internal/v1/support-program-index/batch`: 16개씩 색인 요청. 동일 ID·해시의 벡터는 AI Service가 재사용합니다.
-- 모든 배치 성공 후에만 `POST /internal/v1/support-program-index/prune`으로 해당 제공처의 이전 버전을 정리합니다.
-- 배치 일부 실패나 건수 검증 실패 시 정리를 실행하지 않고 다음 예약 실행에서 전체 스냅샷을 재시도합니다.
-- 현재 DB 스냅샷이 비어 있으면 BIZINFO 색인만 비웁니다. 다른 제공처를 정리하지 않습니다.
-- 외부 색인 호출은 MySQL transaction 밖에서 실행합니다. DB 스키마 변경은 없습니다.
+- 공개 전 배치 일부 실패나 건수 검증 실패 시 새 카탈로그를 공개하지 않습니다. 이미 준비된 벡터는 재시도 시 재사용합니다.
+- 복구 스케줄러는 현재 공개된 공고의 누락 벡터만 채우며, 읽은 스냅샷이 비어 있어도 기존 벡터를 삭제하지 않습니다.
+- 두 경로 모두 `prune`을 호출하지 않습니다. 이전 스냅샷 기준의 정리가 공개 준비 중인 새 벡터를 지우지 않도록 합니다.
+- 외부 색인 호출은 MySQL transaction 밖에서 실행합니다. 시작 세대 발급과 카탈로그 공개는 각각 짧은 DB transaction입니다.
 
-현재 단일 Core 인스턴스용 구현입니다. 검색·색인은 MySQL 공고 전체를 읽고 검색 시 ID·해시 목록을
-전송하므로 최대 20,000개까지 지원합니다. 상한 초과를 임의 절단하지 않습니다. 여러 인스턴스로
-확장할 때는 색인 작업의 단일 실행 보장과 갱신 세대 관리가 필요합니다. 이 단계는 공고 요약 수준의
+현재 DB의 정확한 ID·해시 목록으로 검색하므로 이전 버전·미공개 세대의 벡터는 결과에 섞이지 않습니다.
+이 벡터들과 이전 모델 collection의 저장 공간 정리는 후속 과제입니다. 진행 중인 작업·검색을 보호하는
+보존·삭제 수명주기 없이 `prune`을 다시 연결하면 안 되며, 현재 내부 `prune` 자체의 다중 인스턴스 안전성은
+보장하지 않습니다. MySQL 시작 세대 비교는 카탈로그 공개 순서만 보호하며 전체 다중 인스턴스 운영 검증을
+대체하지 않습니다.
+
+검색·색인은 MySQL 공고 전체를 읽고 검색 시 ID·해시 목록을 전송하므로 최대 20,000개까지 지원합니다.
+상한 초과를 임의 절단하지 않습니다. 이 단계는 공고 요약 수준의
 의미 검색이며 상세 첨부문서 근거 답변 RAG는 아직 포함하지 않습니다.
 
 ## AI Service 오류 계약

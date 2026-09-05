@@ -151,6 +151,62 @@ describe('App navigation', () => {
     expect(screen.getByRole('heading', { name: 'GovBiz에게 물어보세요' })).toBeTruthy()
   })
 
+  it('한글 조합 중 Enter는 검색을 전송하지 않고 조합이 끝난 뒤 전송한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      query: '서울 AI',
+      programs: [supportPrograms[0]],
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore())
+
+    const chatInput = screen.getByPlaceholderText('예: 서울에서 AI 창업지원 사업을 찾아줘')
+    fireEvent.change(chatInput, { target: { value: '서울 AI' } })
+    fireEvent.compositionStart(chatInput)
+    fireEvent.keyDown(chatInput, { isComposing: true, key: 'Enter' })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect((chatInput as HTMLTextAreaElement).value).toBe('서울 AI')
+
+    fireEvent.compositionEnd(chatInput)
+    fireEvent.keyDown(chatInput, { key: 'Enter' })
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+  })
+
+  it('Safari가 한글 조합 완료 직후 보내는 Enter도 검색을 전송하지 않는다', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore())
+
+    const chatInput = screen.getByPlaceholderText('예: 서울에서 AI 창업지원 사업을 찾아줘')
+    fireEvent.change(chatInput, { target: { value: '서울 AI' } })
+    fireEvent.compositionStart(chatInput)
+    fireEvent.compositionEnd(chatInput)
+    fireEvent.keyDown(chatInput, { key: 'Enter', keyCode: 229 })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('500자를 넘는 검색어는 API를 호출하지 않고 이유를 안내한다', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore())
+
+    const overlongQuery = '가'.repeat(501)
+    const chatInput = screen.getByPlaceholderText('예: 서울에서 AI 창업지원 사업을 찾아줘')
+    fireEvent.change(chatInput, { target: { value: overlongQuery } })
+    fireEvent.submit(chatInput.closest('form')!)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect((chatInput as HTMLTextAreaElement).value).toBe(overlongQuery)
+    expect(screen.getByRole('alert').textContent).toBe(
+      '검색어는 500자 이하로 입력해 주세요. 현재 501자입니다.',
+    )
+  })
+
   it('새로고침 또는 공유 URL의 직접 진입도 Core API에서 상세 정보를 다시 조회한다', async () => {
     const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(detail))

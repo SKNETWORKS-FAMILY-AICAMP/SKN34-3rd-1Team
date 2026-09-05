@@ -1,6 +1,7 @@
 package ai.govbiz.core.supportprogram.repository
 
 import ai.govbiz.core._common.test.MySqlTestContainerConfig
+import ai.govbiz.core.supportprogram.client.ai.mapper.SupportProgramIndexDocumentMapper
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
@@ -118,6 +119,30 @@ class SupportProgramRepositoryIntegrationTest {
     }
 
     @Test
+    fun preservesTheLatestSourceProgramIdCasingWhenUpsertingTheSameIdentity() {
+        repository.synchronizeBizInfo(
+            listOf(catalogProgram(id = "PBLN_CASE", title = "변경 전 공고")),
+        )
+        val updated = catalogProgram(id = "pbln_case", title = "변경 후 공고")
+
+        repository.synchronizeBizInfo(listOf(updated))
+
+        assertEquals(1, countRows("BIZINFO"))
+        assertEquals(
+            updated,
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_CASE"),
+        )
+        val stored = requireNotNull(
+            repository.findPresentBySourceAndProgramId("BIZINFO", "pbln_case"),
+        )
+        assertEquals("pbln_case", stored.program.id)
+        assertEquals(
+            "BIZINFO:pbln_case",
+            SupportProgramIndexDocumentMapper.fromBizInfo(stored).id,
+        )
+    }
+
+    @Test
     fun returnsNullWhenProgramDoesNotExist() {
         assertNull(repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_NOT_FOUND"))
     }
@@ -202,6 +227,30 @@ class SupportProgramRepositoryIntegrationTest {
         assertEquals(
             snapshot[1],
             repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_SYNC_B"),
+        )
+    }
+
+    @Test
+    fun publishesOnlyTheMostRecentlyStartedBizInfoSyncGeneration() {
+        val original = catalogProgram(id = "PBLN_ORIGINAL", title = "기존 공개 공고")
+        val staleSnapshot = listOf(catalogProgram(id = "PBLN_STALE", title = "늦게 끝난 이전 수집"))
+        val currentSnapshot = listOf(catalogProgram(id = "PBLN_CURRENT", title = "최신 수집 공고"))
+        repository.synchronizeBizInfo(listOf(original))
+
+        val staleGeneration = repository.startBizInfoSyncGeneration()
+        val currentGeneration = repository.startBizInfoSyncGeneration()
+
+        assertFalse(repository.publishBizInfoSnapshotIfCurrent(staleSnapshot, staleGeneration))
+        assertEquals(
+            original,
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_ORIGINAL"),
+        )
+
+        assertTrue(repository.publishBizInfoSnapshotIfCurrent(currentSnapshot, currentGeneration))
+        assertNull(repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_ORIGINAL"))
+        assertEquals(
+            currentSnapshot.single(),
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_CURRENT"),
         )
     }
 

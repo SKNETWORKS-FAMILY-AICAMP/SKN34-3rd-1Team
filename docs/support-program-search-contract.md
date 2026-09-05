@@ -37,7 +37,7 @@ Content-Type: application/json
 
 {
   "originalQuery": "서울 AI 창업기업이 받을 사업",
-  "scoringVersion": "govbiz-support-program-ranking-v1",
+  "scoringVersion": "govbiz-support-program-ranking-v2",
   "resultLimit": 5,
   "candidates": [
     {
@@ -55,7 +55,7 @@ Content-Type: application/json
 }
 ```
 
-AI Service의 버전 `govbiz-support-program-ranking-v1`은 다음 100점 기준을 사용합니다.
+AI Service의 버전 `govbiz-support-program-ranking-v2`는 다음 100점 기준을 사용합니다.
 
 | 평가 항목 | 배점 | 의미 |
 |---|---:|---|
@@ -66,20 +66,26 @@ AI Service의 버전 `govbiz-support-program-ranking-v1`은 다음 100점 기준
 | `supportTypeFit` | 10 | 자금·기술·수출·교육 등 원하는 지원 유형의 적합성 |
 
 LLM은 입력 후보를 정확히 한 번씩 모두 평가합니다. 후보 문장은 데이터일 뿐 지시가 아니며,
-후보에 없는 자격·금액·상태를 만들어서는 안 됩니다. AI Service는 모든 후보를 점수화한 뒤
-`semanticRelevance` 20점 이상과 `totalScore` 60점 이상을 모두 통과한 공고만 점수순으로 Core에
-반환합니다. 적격 공고가 없으면 `rankings`는 빈 배열입니다.
+후보에 없는 자격·금액·상태를 만들어서는 안 됩니다. v2는 점수와 별도로 모든 후보의 `targetEligibility`와
+`regionEligibility`를 필수로 반환합니다. `MATCH`는 제공된 정보와 일치, `INCOMPATIBLE`은 명백한 조건
+불일치, `UNKNOWN`은 정보 부족입니다. 하나라도 `INCOMPATIBLE`이면 총점과 관계없이 추천에서 제외합니다.
+`UNKNOWN`은 자동 제외하지 않지만 신청 자격 충족을 확정하는 값도 아닙니다. 여기에 `semanticRelevance`
+20점 이상과 `totalScore` 60점 이상을 모두 통과한 공고만 점수순으로 Core에 반환합니다.
+적격 공고가 없으면 `rankings`는 빈 배열입니다. 자격 판정은 내부 AI 응답의 필수 필드이며 공개 검색 DTO에
+새 필드로 노출하지 않습니다.
 
 ```json
 {
   "originalQuery": "서울 AI 창업기업이 받을 사업",
-  "scoringVersion": "govbiz-support-program-ranking-v1",
+  "scoringVersion": "govbiz-support-program-ranking-v2",
   "rankings": [
     {
       "programId": "PBLN_001",
       "semanticRelevance": 38,
       "targetFit": 24,
+      "targetEligibility": "MATCH",
       "regionFit": 15,
+      "regionEligibility": "MATCH",
       "applicationStatusFit": 10,
       "supportTypeFit": 8,
       "totalScore": 95,
@@ -94,6 +100,7 @@ Core는 다음 불변식을 다시 검사합니다.
 - `originalQuery`와 `scoringVersion`이 요청과 정확히 일치
 - `programId`가 전달한 후보에 존재하고 중복되지 않음
 - 세부 점수가 각 배점 범위 안에 있음
+- `targetEligibility`·`regionEligibility`가 누락 없이 허용 값이며 어느 쪽도 `INCOMPATIBLE`이 아님
 - `totalScore`가 다섯 세부 점수의 합과 정확히 일치
 - 결과가 총점 내림차순이며 0~5개
 - 반환한 공고마다 `semanticRelevance >= 20`, `totalScore >= 60`을 충족
@@ -184,13 +191,21 @@ Accept: application/json
 12,000자로 제한하고 임베딩 입력은 모델 토큰 제한 내에서 잘라 사용합니다. 검색·정리 허용 목록은 최대 20,000개입니다.
 오늘 날짜에 따라 달라지는 상태는 텍스트에 고정하지 않고 Core가 조회 시 계산합니다.
 
+기업마당 동기화는 수집 전에 MySQL에서 시작 세대를 발급받고, 전체 수집·검증 및 모든 색인 배치를
+성공한 뒤 최신 시작 세대일 때만 새 MySQL 카탈로그를 공개합니다. 더 최근에 시작한 작업이 있으면
+이전 작업의 공개를 건너뜁니다. 별도 기본 `PT1M` 스케줄러는 이미 공개된 공고의 누락 벡터만 복구합니다.
+두 경로 모두 `prune`을 호출하지 않으며, 정확한 현재 ID·해시 필터가 오래된 벡터를 검색에서 제외합니다.
+`prune` API는 남아 있지만 다중 인스턴스·동시 실행의 안전한 정리를 보장하지 않습니다. 이전 버전·미공개
+세대의 벡터 정리는 진행 중인 작업과 검색을 보호하는 보존·삭제 수명주기를 마련한 뒤 구현할 후속 과제입니다.
+
 Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지, 중복·비정상 점수·질의 echo
 불일치가 없는지 검증합니다. 현재는 관련성 탈락 기준이 없으므로 결과 개수도 `min(20, 허용 공고 수)`와
 정확히 같아야 합니다. Qdrant 유사도 점수는 내부 후보 선정에만 사용하며, 공개 `recommendationScore`는
 기존 Agent 평가 점수입니다. 둘 다 선정 확률이 아닙니다.
 
 색인 누락·임베딩·Qdrant 장애는 정상 빈 결과나 최신 목록으로 대체하지 않고 오류로 반환합니다. AI 점수화는
-의미 관련성 20점·총점 60점 최소 기준을 통과한 공고를 최대 5개 반환하며, 적격 공고가 없을 때의 빈 목록은
+지원대상·지역의 명백한 불일치를 제외하고 의미 관련성 20점·총점 60점 최소 기준을 통과한 공고를
+최대 5개 반환하며, 적격 공고가 없을 때의 빈 목록은
 정상 성공 응답입니다. 상세 문서 RAG는 이번 범위에 포함하지 않습니다.
 후보 검색 비교를 위한 [가상 평가 자료와 실행 도구](../evaluation/support-program-search/README.md)를 추가했습니다.
 실제 공고·임베딩 모델을 사용한 추천 품질 측정은 아직 수행하지 않았습니다.
