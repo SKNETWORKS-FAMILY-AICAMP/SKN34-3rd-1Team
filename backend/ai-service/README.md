@@ -11,7 +11,8 @@ AI Service가 하는 일:
 - Core가 보낸 공고 검색 문서를 OpenAI로 임베딩하고 Qdrant에 색인
 - 현재 MySQL 공고 ID·내용 해시 목록 안에서 의미가 가까운 후보를 최대 20개 검색
 - 버전된 100점 평가 기준으로 모든 후보를 점수화
-- 공고별 세부 점수·총점·추천 이유를 strict structured output으로 반환
+- 의미 관련성·총점 최소 기준을 통과한 공고만 0~5개로 반환
+- 반환 공고의 세부 점수·총점·추천 이유를 strict structured output으로 제공
 
 AI Service가 하지 않는 일:
 
@@ -31,7 +32,8 @@ POST /internal/v1/support-program-index/prune
 POST /internal/v1/support-program-index/search
 ```
 
-점수화 요청은 최대 20개 후보와 상위 결과 개수 1~5개를 받습니다. 계약 예시는
+점수화 요청은 최대 20개 후보와 상위 결과 개수 1~5개를 받습니다. 응답 `rankings`는 적격 공고가
+없을 수 있으므로 0개부터 `resultLimit`개까지입니다. 계약 예시는
 [지원사업 검색·추천 HTTP 계약](../../docs/support-program-search-contract.md)에 있습니다.
 
 ## 전체 공고 의미 검색
@@ -94,6 +96,19 @@ RAG는 아직 구현하지 않았습니다. 벡터 유사도는 신청 자격 �
 평가 기준은 [prompt.py](app/support_program_ranking/prompt.py)에 한 번만 정의합니다. Kotlin에
 지역·카테고리 단어 사전이나 `지역 +12` 같은 점수표를 복제하지 않습니다.
 
+### 추천 반환 최소 기준
+
+Agent는 후보를 빠짐없이 점수화하지만, Service는 아래 두 조건을 모두 충족한 공고만 추천으로
+반환합니다.
+
+- `semanticRelevance >= 20`: 40점인 핵심 관련성 항목에서 절반 이상
+- `totalScore >= 60`: 전체 100점 기준 60점 이상
+
+지역·접수 상태만 맞는 공고가 추천되는 것을 막기 위해 의미 관련성 조건을 별도로 둡니다. 둘 중 하나라도
+충족하지 못하면 최종 결과에서 제외하며, 적격 공고가 없으면 빈 `rankings`를 정상 `200` 응답으로
+반환합니다. 이 값은 실제 검색 평가 데이터가 쌓이면 조정할 초기 정책입니다. Core도 내부 HTTP 응답이 이
+정책을 어기지 않았는지 다시 검증하지만, 키워드 사전이나 항목별 가중치를 Kotlin에 구현하지 않습니다.
+
 ## 수직 호출 흐름
 
 ```text
@@ -108,13 +123,15 @@ Core API
    ├→ 후보 문장을 지시가 아닌 데이터로 취급
    └→ SupportProgramRankingOutput strict schema로 모든 후보 점수화
 → Service가 입력 후보 ID exact set을 재검증
-→ 총점 내림차순 정렬 후 resultLimit만 선택
+→ 총점 내림차순 정렬 후 semanticRelevance 20점·totalScore 60점 기준 필터
+→ 적격 공고를 resultLimit까지 선택(0개 가능)
 → SupportProgramRankingResponse
 → Core API
 ```
 
 예를 들어 Core가 두 공고를 보내고 `resultLimit=1`을 지정하면 Agent는 두 후보를 모두 점수화합니다.
-Service는 누락·추가·중복 ID를 거부한 뒤 가장 높은 한 건만 Core에 반환합니다.
+Service는 누락·추가·중복 ID를 거부한 뒤 최소 기준을 통과한 공고 중 가장 높은 한 건만 Core에 반환합니다.
+두 공고가 모두 기준을 통과하지 못하면 빈 목록을 반환합니다.
 
 ## 파일별 책임
 
@@ -135,7 +152,7 @@ app/
     ├── models.py                   # 요청·출력·응답 Pydantic 계약
     ├── prompt.py                   # 버전된 100점 평가 기준
     ├── agent.py                    # Runner와 OpenAI 실행
-    ├── service.py                  # 후보 ID 검증·정렬·상위 선택
+    ├── service.py                  # 후보 ID 검증·정렬·최소 기준 필터
     └── errors.py                   # 안전한 기능 실패
 ```
 

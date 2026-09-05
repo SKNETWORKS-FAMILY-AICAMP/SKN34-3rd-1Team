@@ -275,13 +275,13 @@ function ProgramCard({ program }: { program: SupportProgram }) {
         ))}
       </div>
       <div className={chatPageStyles.programActions}>
-        <button
-          type="button"
+        <Link
           className={chatPageStyles.programDetailsButton}
-          onClick={() => window.alert('상세 화면은 다음 단계에서 연결됩니다.')}
+          to={`/support-programs/${encodeURIComponent(program.id)}`}
+          state={{ program }}
         >
           상세 조건 보기
-        </button>
+        </Link>
         <a
           href={program.sourceUrl}
           target="_blank"

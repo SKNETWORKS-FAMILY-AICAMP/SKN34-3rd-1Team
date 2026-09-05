@@ -10,7 +10,7 @@ support_program_ranking/
 ├── models.py   # 후보·점수 structured schema
 ├── prompt.py   # 평가 기준과 안전 지시
 ├── agent.py    # OpenAI Agents SDK Runner 실행
-├── service.py  # 후보 집합 검증과 상위 결과 선택
+├── service.py  # 후보 집합 검증과 최소 기준 필터
 └── errors.py   # 기능 실행 실패 경계
 ```
 
@@ -24,13 +24,13 @@ HTTP router
 → Runner.run(max_turns=1)
 → SupportProgramRankingOutput
 → exact candidate ID 검증
-→ 점수순 SupportProgramRankingResponse
+→ 의미 관련성 20점·총점 60점 기준 필터 후 점수순 SupportProgramRankingResponse
 ```
 
 ## 계층 규칙
 
 - `router`는 HTTP와 안전한 오류 변환만 담당합니다.
-- `service`는 Agent를 주입받고 후보 집합·정렬 규칙을 검증합니다.
+- `service`는 Agent를 주입받고 후보 집합·정렬 규칙을 검증한 뒤 최소 기준을 통과한 결과만 반환합니다.
 - `agent`는 SDK 실행·timeout·모델 오류 변환을 담당합니다.
 - `models`는 요청과 structured output 불변식을 담당합니다.
 - `prompt`는 LLM 평가 기준의 단일 원본입니다.

@@ -169,10 +169,10 @@ class SupportProgramRankingOutput(BaseModel):
 
 
 class SupportProgramRankingResponse(BaseModel):
-    """AI Service가 Core에 반환하는 검증·정렬된 상위 추천 계약."""
+    """AI Service가 Core에 반환하는 검증·정렬된 적격 추천 계약."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
     original_query: str = Field(alias="originalQuery")
     scoring_version: Literal[SCORING_VERSION] = Field(alias="scoringVersion")
-    rankings: list[ScoredSupportProgram] = Field(min_length=1, max_length=5)
+    rankings: list[ScoredSupportProgram] = Field(min_length=0, max_length=5)
