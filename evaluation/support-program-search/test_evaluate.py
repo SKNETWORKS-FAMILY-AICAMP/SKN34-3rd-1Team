@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 from pathlib import Path
 
@@ -18,10 +19,12 @@ from evaluate import (
 class RetrievalEvaluationTest(unittest.TestCase):
     def capture_fixture(self):
         docs = [
-            {"id": "BIZINFO:A", "contentHash": "a" * 64},
-            {"id": "BIZINFO:B", "contentHash": "b" * 64},
-            {"id": "OTHER:C", "contentHash": "c" * 64},
+            {"id": "BIZINFO:A", "text": "서울 AI 지원사업"},
+            {"id": "BIZINFO:B", "text": "부산 제조 혁신"},
+            {"id": "OTHER:C", "text": "전국 수출 지원"},
         ]
+        for doc in docs:
+            doc["contentHash"] = hashlib.sha256(doc["text"].encode("utf-8")).hexdigest()
         fixture = {
             "name": "capture-fixture-v1",
             "dataType": "real_labeled_catalog_snapshot",
@@ -184,7 +187,10 @@ class RetrievalEvaluationTest(unittest.TestCase):
                 self.observation(fixture, "Q2", [], []),
             ],
         )
-        fixture["docs"][0]["contentHash"] = "d" * 64
+        fixture["docs"][0]["text"] = "변경된 서울 AI 지원사업"
+        fixture["docs"][0]["contentHash"] = hashlib.sha256(
+            fixture["docs"][0]["text"].encode("utf-8"),
+        ).hexdigest()
 
         with self.assertRaisesRegex(ValueError, "does not match its document contentHash"):
             validate_capture(capture, fixture, fixture["cases"])
@@ -199,6 +205,24 @@ class RetrievalEvaluationTest(unittest.TestCase):
             ],
         )
         with self.assertRaisesRegex(ValueError, "entire eligible catalog"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_rejects_fixture_text_changed_without_changing_its_hash_or_catalog(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        original_content_hash = fixture["docs"][0]["contentHash"]
+        original_catalog = dict(fixture["catalog"])
+        fixture["docs"][0]["text"] = "변조된 검색 문서"
+
+        self.assertEqual(original_content_hash, fixture["docs"][0]["contentHash"])
+        self.assertEqual(original_catalog, fixture["catalog"])
+        with self.assertRaisesRegex(ValueError, "contentHash does not match its UTF-8 text"):
             validate_capture(capture, fixture, fixture["cases"])
 
     def test_eligible_catalog_fingerprint_is_sorted_by_canonical_id(self):

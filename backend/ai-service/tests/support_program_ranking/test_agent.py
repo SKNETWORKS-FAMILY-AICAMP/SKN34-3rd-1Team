@@ -69,6 +69,8 @@ def test_prompt_declares_the_recommendation_minimum_without_omitting_candidates(
     assert "targetEligibility" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     assert "regionEligibility" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     assert "정보 부족만으로 INCOMPATIBLE로 판단하지 마세요" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "candidates[].id" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "출력의 programId" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
 
 
 @pytest.mark.anyio

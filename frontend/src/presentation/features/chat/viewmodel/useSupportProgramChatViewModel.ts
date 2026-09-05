@@ -12,7 +12,9 @@ import {
   searchFailed,
   searchStarted,
   searchSucceeded,
+  searchTimedOut,
   searchValidationFailed,
+  selectCanRetryChatSearch,
   selectChatDraft,
   selectChatMessages,
   selectChatSearchError,
@@ -28,6 +30,9 @@ export const supportProgramChatSuggestions = [
   '제조기업 R&D 사업을 찾아줘',
 ]
 
+/** 브라우저가 응답을 무기한 기다리지 않도록 검색 요청 시간을 제한합니다. */
+export const supportProgramSearchTimeoutMilliseconds = 30_000
+
 type SupportProgramSearchUseCase = Pick<SearchSupportProgramsUseCase, 'execute'>
 
 export function useSupportProgramChatViewModel(
@@ -36,13 +41,16 @@ export function useSupportProgramChatViewModel(
   const dispatchToStore = useAppDispatch()
   const activeSearchRequest = useRef<{
     controller: AbortController
+    query: string
     requestId: string
+    timeoutId: ReturnType<typeof setTimeout>
   } | null>(null)
   const conversationCount = useAppSelector(selectConversationCount)
   const draft = useAppSelector(selectChatDraft)
   const isReadyToSubmit = useAppSelector(selectIsReadyToSubmit)
   const isSearching = useAppSelector(selectIsChatSearching)
   const messages = useAppSelector(selectChatMessages)
+  const canRetrySearch = useAppSelector(selectCanRetryChatSearch)
   const searchError = useAppSelector(selectChatSearchError)
 
   useEffect(() => () => {
@@ -50,15 +58,35 @@ export function useSupportProgramChatViewModel(
     activeSearchRequest.current = null
     if (!currentRequest) return
 
+    clearTimeout(currentRequest.timeoutId)
     currentRequest.controller.abort()
-    dispatchToStore(searchCancelled({ requestId: currentRequest.requestId }))
+    dispatchToStore(searchCancelled({
+      query: currentRequest.query,
+      requestId: currentRequest.requestId,
+    }))
   }, [dispatchToStore])
 
   function startNewConversation() {
     const currentRequest = activeSearchRequest.current
     activeSearchRequest.current = null
-    currentRequest?.controller.abort()
+    if (currentRequest) {
+      clearTimeout(currentRequest.timeoutId)
+      currentRequest.controller.abort()
+    }
     dispatchToStore(conversationReset())
+  }
+
+  function cancelSearch() {
+    const currentRequest = activeSearchRequest.current
+    activeSearchRequest.current = null
+    if (!currentRequest) return
+
+    clearTimeout(currentRequest.timeoutId)
+    currentRequest.controller.abort()
+    dispatchToStore(searchCancelled({
+      query: currentRequest.query,
+      requestId: currentRequest.requestId,
+    }))
   }
 
   function selectSuggestion(suggestion: string) {
@@ -90,9 +118,18 @@ export function useSupportProgramChatViewModel(
       const requestId = searchStartedAction.payload.requestId
 
       dispatchAction(searchStartedAction)
+      const timeoutId = setTimeout(() => {
+        if (activeSearchRequest.current?.requestId !== requestId) return
+
+        activeSearchRequest.current = null
+        dispatchAction(searchTimedOut({ query: searchQuery, requestId }))
+        requestController.abort()
+      }, supportProgramSearchTimeoutMilliseconds)
       activeSearchRequest.current = {
         controller: requestController,
+        query: searchQuery,
         requestId,
+        timeoutId,
       }
 
       try {
@@ -111,11 +148,12 @@ export function useSupportProgramChatViewModel(
       } catch {
         if (requestController.signal.aborted) return
 
-        const searchFailedAction = searchFailed({ requestId })
+        const searchFailedAction = searchFailed({ query: searchQuery, requestId })
         dispatchAction(searchFailedAction)
       } finally {
-        const isCurrentRequest = activeSearchRequest.current?.requestId === requestId
-        if (isCurrentRequest) {
+        const currentRequest = activeSearchRequest.current
+        if (currentRequest?.requestId === requestId) {
+          clearTimeout(currentRequest.timeoutId)
           activeSearchRequest.current = null
         }
       }
@@ -126,10 +164,12 @@ export function useSupportProgramChatViewModel(
 
   return {
     conversationCount,
+    canRetrySearch,
     draft,
     isReadyToSubmit,
     isSearching,
     messages,
+    cancelSearch,
     searchError,
     selectSuggestion,
     startNewConversation,

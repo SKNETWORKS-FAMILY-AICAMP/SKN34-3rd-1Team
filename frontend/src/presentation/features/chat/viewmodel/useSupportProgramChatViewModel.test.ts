@@ -17,9 +17,15 @@ import {
   draftChanged,
   maximumSupportProgramSearchQueryLength,
 } from '../state/chatSlice'
-import { useSupportProgramChatViewModel } from './useSupportProgramChatViewModel'
+import {
+  supportProgramSearchTimeoutMilliseconds,
+  useSupportProgramChatViewModel,
+} from './useSupportProgramChatViewModel'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 describe('Redux chat flow', () => {
   it('stores the user message and injected search service result in the chat slice', async () => {
@@ -150,8 +156,71 @@ describe('Redux chat flow', () => {
 
     const chat = store.getState().chat
     expect(chat.searchStatus).toBe('failed')
+    expect(chat.draft).toBe('서울')
     expect(chat.searchError).toBe('지원사업을 검색하지 못했습니다. 잠시 후 다시 시도해 주세요.')
     expect(chat.searchError).not.toContain('private server detail')
+  })
+
+  it('cancels a pending search, restores its query, and clears the pending state', async () => {
+    const pending = deferredSearchResult()
+    let requestSignal: AbortSignal | undefined
+    const execute = vi.fn((_query: string, signal?: AbortSignal) => {
+      requestSignal = signal
+      return pending.promise
+    })
+    const store = createAppStore()
+    const { result } = renderChatViewModel(store, createSearchUseCase(execute))
+
+    act(() => store.dispatch(draftChanged('수출')))
+    let search!: Promise<void>
+    act(() => {
+      search = result.current.submitMessage()
+    })
+    await waitFor(() => expect(execute).toHaveBeenCalledOnce())
+
+    act(() => result.current.cancelSearch())
+
+    expect(requestSignal?.aborted).toBe(true)
+    expect(store.getState().chat.searchStatus).toBe('idle')
+    expect(store.getState().chat.draft).toBe('수출')
+    expect(store.getState().chat.searchError).toBeNull()
+
+    pending.resolve({ query: '수출', programs: [supportPrograms[3]] })
+    await search
+    expect(store.getState().chat.messages).toHaveLength(2)
+  })
+
+  it('ends a request that exceeds the client timeout and restores the query for retry', async () => {
+    vi.useFakeTimers()
+    const pending = deferredSearchResult()
+    let requestSignal: AbortSignal | undefined
+    const execute = vi.fn((_query: string, signal?: AbortSignal) => {
+      requestSignal = signal
+      return pending.promise
+    })
+    const store = createAppStore()
+    const { result } = renderChatViewModel(store, createSearchUseCase(execute))
+
+    act(() => store.dispatch(draftChanged('창업')))
+    let search!: Promise<void>
+    act(() => {
+      search = result.current.submitMessage()
+    })
+    expect(execute).toHaveBeenCalledOnce()
+
+    act(() => {
+      vi.advanceTimersByTime(supportProgramSearchTimeoutMilliseconds)
+    })
+
+    const chat = store.getState().chat
+    expect(requestSignal?.aborted).toBe(true)
+    expect(chat.searchStatus).toBe('failed')
+    expect(chat.draft).toBe('창업')
+    expect(chat.searchError).toBe('검색 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.')
+
+    pending.resolve({ query: '창업', programs: [supportPrograms[1]] })
+    await search
+    expect(store.getState().chat.messages).toHaveLength(2)
   })
 
   it('aborts a pending request and clears pending state on unmount', async () => {
