@@ -28,6 +28,7 @@ class RetrievalEvaluationTest(unittest.TestCase):
         fixture = {
             "name": "capture-fixture-v1",
             "dataType": "real_labeled_catalog_snapshot",
+            "referenceDate": "2026-09-05",
             "docs": docs,
             "cases": [
                 {"id": "Q1", "query": "서울 AI", "split": "dev", "relevantIds": ["BIZINFO:A"]},
@@ -50,6 +51,7 @@ class RetrievalEvaluationTest(unittest.TestCase):
                 "sha256": query_set_sha256(fixture["cases"]),
             },
             "capturedAt": "2026-09-05T00:00:00Z",
+            "referenceDate": fixture["referenceDate"],
             "acceptingOnly": True,
             "catalog": dict(fixture["catalog"]),
             "search": {
@@ -163,6 +165,7 @@ class RetrievalEvaluationTest(unittest.TestCase):
         self.assertEqual(1.0, report["final"]["macroRecallAt5"])
         self.assertEqual(1.0, report["final"]["mrrAt5"])
         self.assertEqual(0.0, report["final"]["noMatchFalsePositiveRate"])
+        self.assertEqual("2026-09-05", report["referenceDate"])
 
     def test_capture_keeps_same_raw_id_from_different_sources_distinct(self):
         documents = [
@@ -174,6 +177,7 @@ class RetrievalEvaluationTest(unittest.TestCase):
         fixture = {
             "name": "shared-source-id-fixture-v1",
             "dataType": "real_labeled_catalog_snapshot",
+            "referenceDate": "2026-09-05",
             "docs": documents,
             "cases": [
                 {
@@ -226,6 +230,34 @@ class RetrievalEvaluationTest(unittest.TestCase):
         capture["catalog"]["presentProgramCount"] = 4
 
         with self.assertRaisesRegex(ValueError, "does not match the fixture catalog snapshot"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_rejects_a_different_reference_date(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        capture["referenceDate"] = "2026-09-06"
+
+        with self.assertRaisesRegex(ValueError, "referenceDate does not match"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_rejects_an_invalid_reference_date(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        capture["referenceDate"] = "2026/09/05"
+
+        with self.assertRaisesRegex(ValueError, "ISO-8601 date"):
             validate_capture(capture, fixture, fixture["cases"])
 
     def test_capture_requires_a_complete_fixture_catalog_with_matching_content_fingerprint(self):

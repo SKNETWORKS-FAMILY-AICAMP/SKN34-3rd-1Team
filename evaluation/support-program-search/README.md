@@ -70,12 +70,13 @@ python3 evaluation/support-program-search/evaluate.py --semantic-results /path/t
 ## 실제 데이터 fixture 초안 내보내기
 
 실데이터 평가를 시작할 때는 수작업으로 전체 공고를 복사하지 않고 `evaluation-fixture-export` Spring profile을
-실행한다. 이 비웹 profile은 현재 MySQL의 모든 제공처 공개 공고 중 `OPEN` 공고만 읽고, 운영 검색과 같은
+실행한다. 이 비웹 profile은 현재 MySQL의 모든 제공처 공개 공고 중 지정한 `referenceDate` 기준 `OPEN` 공고만 읽고, 운영 검색과 같은
 `SupportProgramIndexDocumentMapper`로 `id`·`contentHash`·`text`를 만든다. 따라서 생성 파일에는 전체 적격
 카탈로그의 공고 수·지문·검색 문서가 들어가며, 이후 캡처 파일과 같은 스냅샷인지 검증할 수 있다.
 
 이 profile은 웹 서버, 기업마당 동기화, 누락 색인 복구를 시작하지 않으며 Qdrant·AI Service·OpenAI도 호출하지
-않는다. `name`과 출력 경로는 실행 환경에서 반드시 지정한다.
+않는다. `name`, `referenceDate`, 출력 경로는 실행 환경에서 반드시 지정한다. `referenceDate`는 실행한 날의
+오늘이 아니라 저장된 신청 시작·종료일로 접수 상태를 다시 계산하는 평가 기준이다.
 
 ```bash
 cd backend/core-api
@@ -83,6 +84,7 @@ cd backend/core-api
 
 SPRING_PROFILES_ACTIVE=evaluation-fixture-export \
 APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_NAME=support-program-catalog-20260905-v1 \
+APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_REFERENCE_DATE=2026-09-05 \
 APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_OUTPUT_PATH=/absolute/path/support-program-fixture.json \
 java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ```
@@ -95,7 +97,7 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ## 실제 검색 흐름 캡처
 
 `evaluation-capture` Spring profile은 공개 HTTP endpoint를 추가하지 않는다. 이미 동기화되어 있는 MySQL
-공고를 읽어, 각 질문에 대해 실제 `검색 → Qdrant 후보 선정 → AI 최종 추천` 흐름을 한 번 실행하고 결과를
+공고를 읽어, 같은 `referenceDate`의 접수 상태로 각 질문에 대해 실제 `검색 → Qdrant 후보 선정 → AI 최종 추천` 흐름을 한 번 실행하고 결과를
 하나의 JSON 파일로 저장한다. profile 자체가 웹 서버와 두 동기화 스케줄러를 끄므로, 캡처 도중 새 스냅샷이
 공개되는 일을 이 프로세스가 만들지 않는다. 별도로 실행 중인 Core API가 카탈로그를 갱신할 수는 있으나,
 질문 하나라도 실패하거나 카탈로그 지문이 질문 사이에 바뀌면 기존 결과 파일을 교체하지 않는다.
@@ -120,7 +122,8 @@ fixture의 `name`에는 앞뒤 공백을 넣지 않는다. 공백이 있으면 �
 ```
 
 Core API JAR를 만든 뒤, 실제 MySQL과 AI Service에 연결되는 환경에서 다음처럼 실행한다. fixture 내보내기가
-`OPEN` 공고만 담으므로 캡처는 기본값인 `acceptingOnly=true`로 실행한다. 출력 경로는 입력 경로와 달라야 한다.
+지정 기준일의 `OPEN` 공고만 담으므로 캡처는 기본값인 `acceptingOnly=true`와 fixture의 같은
+`referenceDate`로 실행한다. 출력 경로는 입력 경로와 달라야 한다.
 
 ```bash
 cd backend/core-api
@@ -129,10 +132,11 @@ cd backend/core-api
 SPRING_PROFILES_ACTIVE=evaluation-capture \
 APP_SUPPORT_PROGRAM_SEARCH_CAPTURE_QUERY_SET_PATH=/absolute/path/queries.json \
 APP_SUPPORT_PROGRAM_SEARCH_CAPTURE_OUTPUT_PATH=/absolute/path/capture.json \
+APP_SUPPORT_PROGRAM_SEARCH_CAPTURE_REFERENCE_DATE=2026-09-05 \
 java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ```
 
-캡처에는 질문 묶음 지문, 실행 시각, 접수 중 필터 여부, 현재·적격 공고 수, 적격 공고의 ID·내용 해시 지문,
+캡처 v2에는 질문 묶음 지문, 실행 시각, 기준 날짜, 접수 중 필터 여부, 현재·적격 공고 수, 적격 공고의 ID·내용 해시 지문,
 후보 최대 20개와 최종 최대 5개의 제공처 포함 ID가 들어간다. 지문은 동일 공고 스냅샷에서 얻은 결과인지
 확인하기 위한 값이며 원문이나 비밀정보를 저장하지 않는다.
 
@@ -143,15 +147,18 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ID만 일부 담는 파일이 아니라 **캡처 시점의 전체 적격 공고 카탈로그**를 담아야 한다. 그래야 같은 ID가
 다른 내용으로 갱신된 경우에도 평가를 거부할 수 있다.
 
-실행 순서는 다음과 같다. (1) `evaluation-fixture-export`로 현재 카탈로그 초안을 만든다. (2) `cases: []`에
+실행 순서는 다음과 같다. (1) 평가 기준 날짜를 정하고 `evaluation-fixture-export`로 해당 날짜의 카탈로그 초안을 만든다. (2) `cases: []`에
 질문과 정답을 사람이 라벨링한다. (3) 같은 `name`·`id`·`query`·`split`의 질문 묶음을 만든다. (4) 기본
-`acceptingOnly=true`인 `evaluation-capture`로 실제 후보·최종 추천을 기록한다. (5) fixture와 capture를
+`acceptingOnly=true`와 **같은 `referenceDate`**의 `evaluation-capture`로 실제 후보·최종 추천을 기록한다. (5) fixture와 capture를
 `evaluate.py --fixture ... --capture ...`에 전달한다. `relevantIds: null`은 미라벨이므로 점수 계산에서 제외한다.
 
 - 내보내기 결과의 `dataType`은 `real_catalog_snapshot_unlabeled`이다. 라벨링이 끝난 파일은 예를 들어
   `real_labeled_catalog_snapshot`처럼 자료 성격을 명시한다.
 - `catalog`의 `presentProgramCount`, `eligibleProgramCount`, `eligibleCatalogFingerprint`은 capture 파일의
   `catalog`과 정확히 같아야 한다.
+- `referenceDate`는 `YYYY-MM-DD` 형식이어야 하며 fixture와 capture가 정확히 같아야 한다. 이전 v1 capture는
+  이 날짜를 기록하지 않았으므로 현재 평가기에 사용할 수 없다. 날짜가 바뀌면 접수 상태와 적격 공고 집합도
+  바뀔 수 있기 때문이다.
 - `docs` 수는 `eligibleProgramCount`와 같아야 한다. 각 `docs[].id`와 `relevantIds`는
   `{sourceCode}:{sourceProgramId}` 형식이다. 예를 들어 `BIZINFO:PBLN_123`와 `OTHER:PBLN_123`은 원본 ID가
   같아도 서로 다른 공고다. `sourceCode`는 `[A-Z][A-Z0-9_]{0,63}` 형태의 안정적인 제공처 코드이고, 원본 ID는
@@ -167,6 +174,7 @@ ID만 일부 담는 파일이 아니라 **캡처 시점의 전체 적격 공고 
 {
   "name": "support-program-catalog-20260905-v1",
   "dataType": "real_labeled_catalog_snapshot",
+  "referenceDate": "2026-09-05",
   "catalog": {
     "presentProgramCount": 2,
     "eligibleProgramCount": 2,
@@ -207,7 +215,7 @@ python3 evaluation/support-program-search/evaluate.py \
 ```
 
 질문 키가 빠진 것은 실행하지 않은 경우로 취급해 오류를 낸다. 실제 검색 결과가 비었을 때만 `[]`를 쓴다.
-알 수 없는 공고 ID, 중복 ID, 후보에 없던 최종 추천, 카탈로그 지문 형식 오류도 모두 오류다. `relevantIds: null`
+알 수 없는 공고 ID, 중복 ID, 후보에 없던 최종 추천, 카탈로그 지문 형식 오류, fixture·capture 기준 날짜 불일치도 모두 오류다. `relevantIds: null`
 은 미라벨이므로 점수에서 제외하며, 신청 가능 여부가 문서에서 확인되지 않으면 임의로 정답을 붙이지 않는다.
 개발용과 미사용 검증용은 분리하고, 원문 저장·이용 범위는 실제 제공처 조건을 따른다.
 
@@ -227,6 +235,7 @@ python3 evaluation/support-program-search/evaluate.py \
   `heldout`은 최종 확인에만 사용한다.
 - query set은 fixture와 `name`, 각 `id`·`query`·`split`, 그리고 순서까지 같아야 한다.
 
-실제 실행마다 [실행 기록 템플릿](run-manifest.example.md)을 복사해 모델·임베딩·컬렉션·커밋·파일
+실제 실행마다 [실행 기록 템플릿](run-manifest.example.md)을 복사해 모델·임베딩·컬렉션·커밋·기준 날짜·파일
 해시를 고정하고, [평가 보고서 템플릿](report-template.md)에 후보와 최종 추천 지표를 분리해 남긴다.
-템플릿은 평가 절차를 위한 예시이므로 실제 공고 fixture·capture 파일을 자동으로 커밋하지 않는다.
+실제 공고 fixture·capture·라벨·보고서는 [runs/](runs/README.md)의 실행별 폴더에 보관한다. 이 폴더의 실제
+산출물은 Git에서 제외되므로, 팀의 승인된 저장소나 백업 위치에도 별도로 보관해야 한다.

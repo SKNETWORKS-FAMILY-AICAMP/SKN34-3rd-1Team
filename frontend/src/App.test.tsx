@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -574,6 +574,7 @@ describe('App navigation', () => {
   })
 
   it('모바일 메뉴는 포커스를 사이드바에 가두고 닫을 때 메뉴 버튼으로 돌려준다', () => {
+    installMobileMediaQuery()
     renderApp(createAppStore())
 
     const sidebar = screen.getByLabelText('지원사업 검색 메뉴')
@@ -628,6 +629,28 @@ describe('App navigation', () => {
     fireEvent.click(backdrop!)
     expect(menuButton.getAttribute('aria-expanded')).toBe('false')
     expect(document.activeElement).toBe(menuButton)
+  })
+
+  it('모바일 메뉴를 연 뒤 데스크톱으로 전환하면 drawer 상태와 포커스를 정리한다', () => {
+    const mobileMediaQuery = installMobileMediaQuery()
+    renderApp(createAppStore())
+
+    const menuButton = screen.getByRole('button', { name: '메뉴 열기' })
+    const sidebar = screen.getByLabelText('지원사업 검색 메뉴')
+    const workspace = menuButton.closest('section')
+    const primarySidebarAction = within(sidebar).getByRole('button', { name: /새 대화 시작/ })
+
+    fireEvent.click(menuButton)
+    expect(sidebar.getAttribute('role')).toBe('dialog')
+    expect(workspace?.hasAttribute('inert')).toBe(true)
+
+    act(() => mobileMediaQuery.moveToDesktop())
+
+    expect(menuButton.getAttribute('aria-expanded')).toBe('false')
+    expect(sidebar.getAttribute('role')).toBeNull()
+    expect(sidebar.getAttribute('aria-modal')).toBeNull()
+    expect(workspace?.hasAttribute('inert')).toBe(false)
+    expect(document.activeElement).toBe(primarySidebarAction)
   })
 
   it('새로고침 또는 공유 URL의 직접 진입도 Core API에서 상세 정보를 다시 조회한다', async () => {
@@ -747,5 +770,26 @@ function createReadinessViewModel(overrides: Record<string, unknown> = {}) {
     canSearch: true,
     refetch: vi.fn(),
     ...overrides,
+  }
+}
+
+function installMobileMediaQuery() {
+  let listener: ((event: MediaQueryListEvent) => void) | undefined
+
+  vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+    addEventListener(_type: string, eventListener: EventListenerOrEventListenerObject | null) {
+      if (typeof eventListener === 'function') {
+        listener = eventListener as (event: MediaQueryListEvent) => void
+      }
+    },
+    removeEventListener() {
+      listener = undefined
+    },
+  }))
+
+  return {
+    moveToDesktop() {
+      listener?.({ matches: false } as MediaQueryListEvent)
+    },
   }
 }

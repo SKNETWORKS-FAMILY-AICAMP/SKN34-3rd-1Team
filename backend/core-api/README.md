@@ -31,12 +31,13 @@ cd backend/core-api
 ### 실제 공고 fixture 초안 내보내기
 
 실데이터 평가의 시작점은 `evaluation-fixture-export` 프로필입니다. 이 비웹 프로필은 현재 MySQL의 모든
-제공처 공개 공고 중 `OPEN` 공고만 읽고, 운영 색인과 같은 `SupportProgramIndexDocumentMapper.fromCatalog`로
+제공처 공개 공고 중 지정한 `referenceDate` 기준 `OPEN` 공고만 읽고, 운영 색인과 같은 `SupportProgramIndexDocumentMapper.fromCatalog`로
 `id`·`contentHash`·`text`를 만듭니다. 공고 수와 카탈로그 지문을 포함한 전체 fixture 초안을 기록하므로,
 이후 캡처 결과가 같은 공고 스냅샷에서 나왔는지 확인할 수 있습니다.
 
 이 프로필은 웹 서버·기업마당 동기화·누락 색인 복구를 끄며 Qdrant, AI Service, OpenAI를 호출하지 않습니다.
-`name`과 `output-path`는 반드시 지정해야 합니다.
+`name`, `reference-date`, `output-path`는 반드시 지정해야 합니다. 기준 날짜는 실행 시점의 오늘이 아니라
+저장된 신청 시작·종료일로 접수 상태를 다시 계산하는 기준입니다.
 
 ```bash
 cd backend/core-api
@@ -44,6 +45,7 @@ cd backend/core-api
 
 SPRING_PROFILES_ACTIVE=evaluation-fixture-export \
 APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_NAME=support-program-catalog-20260905-v1 \
+APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_REFERENCE_DATE=2026-09-05 \
 APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_OUTPUT_PATH=/absolute/path/support-program-fixture.json \
 java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ```
@@ -61,7 +63,8 @@ fixture와 순서·내용까지 같아야 합니다. 내보내기는 빈 적격 
 Qdrant 후보 최대 20개, AI 최종 추천 최대 5개라는 운영 검색 흐름에서 나온 ID를 그대로 JSON 파일에 기록합니다.
 
 질문 파일은 [예시](../../evaluation/support-program-search/query-set.example.json)를 복사해 준비합니다.
-fixture 내보내기는 `OPEN` 공고만 담으므로, 캡처도 기본값인 `acceptingOnly=true`로 실행해야 합니다.
+fixture 내보내기는 지정한 기준 날짜의 `OPEN` 공고만 담으므로, 캡처도 기본값인 `acceptingOnly=true`와
+**같은 기준 날짜**로 실행해야 합니다.
 실행 환경의 MySQL·AI Service·Qdrant는 실제 검색과 같은 상태여야 하며, AI 점수화 호출 비용이 발생할 수
 있으므로 기본 실행이나 CI에는 포함하지 않습니다.
 
@@ -71,13 +74,16 @@ cd backend/core-api
 SPRING_PROFILES_ACTIVE=evaluation-capture \
 APP_SUPPORT_PROGRAM_SEARCH_CAPTURE_QUERY_SET_PATH=/absolute/path/query-set.json \
 APP_SUPPORT_PROGRAM_SEARCH_CAPTURE_OUTPUT_PATH=/absolute/path/capture.json \
+APP_SUPPORT_PROGRAM_SEARCH_CAPTURE_REFERENCE_DATE=2026-09-05 \
 java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ```
 
 질문은 최대 100개이며, 하나라도 실패하거나 실행 중 카탈로그가 바뀌면 결과 파일을 쓰지 않습니다.
-성공한 캡처에는 공고 수·카탈로그 지문·후보 ID·최종 추천 ID가 포함됩니다. 사람이 검토한 정답 fixture와
-비교해 실제 지표를 계산하는 방법은 [검색 평가 자료](../../evaluation/support-program-search/README.md)를
-참고하세요.
+성공한 v2 캡처에는 기준 날짜·공고 수·카탈로그 지문·후보 ID·최종 추천 ID가 포함됩니다. 평가기는 fixture와
+capture의 기준 날짜가 다르면 점수 계산을 거부합니다. 실제 공고의 검색 문서가 들어갈 수 있는 파일은
+[평가 실행 보관 폴더](../../evaluation/support-program-search/runs/README.md)에 로컬로 보관하며 Git에는 올리지
+않습니다. 사람이 검토한 정답 fixture와 비교해 실제 지표를 계산하는 방법은
+[검색 평가 자료](../../evaluation/support-program-search/README.md)를 참고하세요.
 
 ## 공개 API
 

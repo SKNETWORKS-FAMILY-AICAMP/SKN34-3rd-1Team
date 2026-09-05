@@ -224,6 +224,46 @@ class SupportProgramSearchServiceTest {
     }
 
     @Test
+    fun usesTheEvaluationReferenceDateForTraceEligibility() {
+        val openOnReferenceDate = catalogProgram(
+            id = "PBLN_OPEN_ON_REFERENCE_DATE",
+            status = SupportProgramStatus.CLOSED,
+            applicationPeriod = "2026-09-01 ~ 2026-09-06",
+            applicationStartDate = LocalDate.of(2026, 9, 1),
+            applicationEndDate = LocalDate.of(2026, 9, 6),
+        )
+        val closedOnReferenceDate = catalogProgram(
+            id = "PBLN_CLOSED_ON_REFERENCE_DATE",
+            status = SupportProgramStatus.OPEN,
+            applicationPeriod = "2026-08-01 ~ 2026-09-04",
+            applicationStartDate = LocalDate.of(2026, 8, 1),
+            applicationEndDate = LocalDate.of(2026, 9, 4),
+        )
+        val expectedOpenOnReferenceDate = openOnReferenceDate.copy(
+            program = openOnReferenceDate.program.copy(status = SupportProgramStatus.OPEN),
+        )
+        Mockito.doReturn(listOf(openOnReferenceDate, closedOnReferenceDate))
+            .`when`(supportProgramRepository)
+            .findPresent()
+        Mockito.doReturn(listOf(expectedOpenOnReferenceDate))
+            .`when`(retrieval)
+            .retrieve("서울 AI", listOf(expectedOpenOnReferenceDate))
+        ranking.response = { candidates ->
+            candidates.map { candidate -> candidate.program.copy(recommendationScore = 90) }
+        }
+
+        val trace = service().searchWithTrace(
+            rawQuery = "서울 AI",
+            acceptingOnly = true,
+            referenceDate = LocalDate.of(2026, 9, 5),
+        )
+
+        assertEquals(listOf("BIZINFO:PBLN_OPEN_ON_REFERENCE_DATE"), trace.candidateIds)
+        assertEquals(SupportProgramStatus.OPEN, trace.result.programs.single().status)
+        assertEquals(1, trace.eligibleProgramCount)
+    }
+
+    @Test
     fun keepsSameRawIdsFromDifferentSourcesDistinctInSearchTrace() {
         val query = "서울 AI 지원"
         val bizInfo = catalogProgram(id = "SHARED", sourceCode = "BIZINFO")

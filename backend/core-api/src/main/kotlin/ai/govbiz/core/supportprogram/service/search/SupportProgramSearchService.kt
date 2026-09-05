@@ -3,12 +3,14 @@ package ai.govbiz.core.supportprogram.service.search
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
+import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramRetrievalFacade
 import ai.govbiz.core.supportprogram.helper.SupportProgramCatalogFingerprintHelper
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchResult
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchTrace
+import java.time.LocalDate
 import org.springframework.stereotype.Service
 
 /** 공식 공고 후보와 LLM 점수화를 연결하는 검색 유스케이스입니다. */
@@ -25,8 +27,17 @@ class SupportProgramSearchService(
      * 평가 전용 호출입니다. 공개 검색 응답에는 노출하지 않고, 비어 있지 않은 질문에서 실제 의미 검색 후보와
      * 최종 추천 공고의 제공처 포함 식별자를 남깁니다.
      */
-    fun searchWithTrace(rawQuery: String?, acceptingOnly: Boolean): SupportProgramSearchTrace {
-        val execution = execute(rawQuery, acceptingOnly)
+    fun searchWithTrace(rawQuery: String?, acceptingOnly: Boolean): SupportProgramSearchTrace =
+        trace(execute(rawQuery, acceptingOnly))
+
+    /** 평가 기준 날짜의 접수 상태로만 후보·최종 결과를 기록합니다. */
+    fun searchWithTrace(
+        rawQuery: String?,
+        acceptingOnly: Boolean,
+        referenceDate: LocalDate,
+    ): SupportProgramSearchTrace = trace(execute(rawQuery, acceptingOnly, referenceDate))
+
+    private fun trace(execution: SearchExecution): SupportProgramSearchTrace {
         require(execution.query.isNotBlank()) { "search trace requires a nonblank query" }
         return SupportProgramSearchTrace(
             result = execution.result,
@@ -38,9 +49,15 @@ class SupportProgramSearchService(
         )
     }
 
-    private fun execute(rawQuery: String?, acceptingOnly: Boolean): SearchExecution {
+    private fun execute(
+        rawQuery: String?,
+        acceptingOnly: Boolean,
+        referenceDate: LocalDate? = null,
+    ): SearchExecution {
         val query = rawQuery?.trim().orEmpty()
-        val presentPrograms = supportProgramRepository.findPresent()
+        val presentPrograms = supportProgramRepository.findPresent().let { programs ->
+            referenceDate?.let { date -> programs.map { it.withStatusAt(date) } } ?: programs
+        }
         val eligiblePrograms = presentPrograms
             .asSequence()
             .filter { !acceptingOnly || it.program.status == SupportProgramStatus.OPEN }
@@ -79,6 +96,18 @@ class SupportProgramSearchService(
 
     private fun immutableCanonicalIds(programs: List<SupportProgram>): List<String> =
         java.util.List.copyOf(programs.map(SupportProgram::sourceQualifiedId))
+
+    private fun CatalogSupportProgram.withStatusAt(referenceDate: LocalDate): CatalogSupportProgram =
+        copy(
+            program = program.copy(
+                status = SupportProgramStatusResolver.resolve(
+                    applicationPeriod = program.applicationPeriod,
+                    applicationStartDate = program.applicationStartDate,
+                    applicationEndDate = program.applicationEndDate,
+                    today = referenceDate,
+                ),
+            ),
+        )
 
     private data class SearchExecution(
         val query: String,

@@ -1,12 +1,14 @@
 package ai.govbiz.core.supportprogram.service.evaluation.config
 
 import java.nio.file.Path
+import java.time.LocalDate
 import org.springframework.boot.context.properties.ConfigurationProperties
 
-/** 평가용 실제 공고 스냅샷 파일의 식별자와 출력 위치입니다. */
+/** 평가용 실제 공고 스냅샷의 식별자·기준 날짜·출력 위치입니다. */
 @ConfigurationProperties(prefix = "app.support-program-search-fixture-export")
 data class SupportProgramSearchEvaluationFixtureExportProperties(
     val name: String,
+    val referenceDate: LocalDate,
     val outputPath: Path,
 ) {
     init {

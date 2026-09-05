@@ -334,8 +334,10 @@ Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지
 후보·최종 추천 비교를 위한 [검색 평가 자료와 실행 도구](../evaluation/support-program-search/README.md)를
 추가했습니다. `evaluation-fixture-export`는 공개 API가 아닌 비웹 실행 프로필이며, 현재 MySQL의 `OPEN`
 모든 제공처의 현재 `OPEN` 공고를 운영 색인과 같은 ID·내용 해시·검색 문서로 미라벨 fixture 초안에 기록합니다.
-`evaluation-capture`는 사람이 fixture에 질문·정답을 라벨링한 뒤 현재 Search Service가 만든 후보 최대 20개와
-최종 추천 최대 5개의 ID를 기록합니다. 실제 공고·임베딩 모델을 사용한 추천 품질의 **측정 결과**는 사람이
+`evaluation-capture`는 사람이 fixture에 질문·정답을 라벨링한 뒤 fixture와 같은 `referenceDate`에서 현재 Search
+Service가 만든 후보 최대 20개와 최종 추천 최대 5개의 ID를 기록합니다. 기준 날짜는 실행 시점의 오늘이 아니라
+신청 시작·종료일로 접수 상태를 다시 계산하는 날짜이며, fixture와 capture가 다르면 평가기가 거부합니다.
+실제 공고·임베딩 모델을 사용한 추천 품질의 **측정 결과**는 사람이
 검토한 정답 라벨을 아직 만들지 않았으므로 아직 없습니다.
 
 ## 비밀정보와 오류 처리

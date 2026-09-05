@@ -6,11 +6,11 @@ import hashlib
 import json
 import re
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 
-CAPTURE_SCHEMA_VERSION = "support-program-search-capture-v1"
+CAPTURE_SCHEMA_VERSION = "support-program-search-capture-v2"
 FINAL_RESULT_LIMIT = 5
 CATALOG_METADATA_FIELDS = {
     "presentProgramCount",
@@ -96,6 +96,16 @@ def _require_trimmed_nonempty_string(value, description):
         raise ValueError(f"{description} must not have surrounding whitespace")
 
 
+def _require_iso_date(value, description):
+    _require_trimmed_nonempty_string(value, description)
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"{description} must be an ISO-8601 date") from error
+    if value != parsed.isoformat():
+        raise ValueError(f"{description} must be an ISO-8601 date")
+
+
 def _is_canonical_document_id(identifier):
     if not isinstance(identifier, str) or identifier != identifier.strip():
         return False
@@ -165,6 +175,7 @@ def _validate_document_content_hashes(docs):
 
 def _validate_capture_fixture(fixture, capture_catalog):
     _validate_fixture_identity(fixture, require_data_type=True)
+    _require_iso_date(fixture.get("referenceDate"), "Fixture referenceDate")
     canonical_to_fixture_id = _canonical_document_ids(fixture["docs"])
     fixture_catalog = fixture.get("catalog")
     if fixture_catalog is None:
@@ -203,6 +214,7 @@ def _validate_capture_metadata(capture, fixture):
             "schemaVersion",
             "querySet",
             "capturedAt",
+            "referenceDate",
             "acceptingOnly",
             "catalog",
             "search",
@@ -233,6 +245,8 @@ def _validate_capture_metadata(capture, fixture):
     if parsed_captured_at.tzinfo is None:
         raise ValueError("Capture capturedAt must include a timezone")
 
+    _require_iso_date(capture["referenceDate"], "Capture referenceDate")
+
     if type(capture["acceptingOnly"]) is not bool:
         raise ValueError("Capture acceptingOnly must be a boolean")
 
@@ -260,6 +274,8 @@ def validate_capture(capture, fixture, selected_cases):
     _validate_fixture_identity(fixture, require_data_type=True)
     _validate_capture_metadata(capture, fixture)
     canonical_to_fixture_id = _validate_capture_fixture(fixture, capture["catalog"])
+    if capture["referenceDate"] != fixture["referenceDate"]:
+        raise ValueError("Capture referenceDate does not match the fixture")
     cases_by_id = {case["id"]: case for case in fixture["cases"]}
     required = {case["id"] for case in selected_cases if case["relevantIds"] is not None}
     seen = set()
@@ -420,6 +436,7 @@ def evaluate_capture(capture, fixture, selected_cases, candidate_k):
         "schemaVersion": capture["schemaVersion"],
         "querySet": capture["querySet"],
         "capturedAt": capture["capturedAt"],
+        "referenceDate": capture["referenceDate"],
         "acceptingOnly": capture["acceptingOnly"],
         "catalog": capture["catalog"],
         "search": capture["search"],
@@ -435,7 +452,7 @@ def main():
     parser.add_argument(
         "--capture",
         type=Path,
-        help="Saved support-program-search-capture-v1 candidate and final program IDs",
+        help="Saved support-program-search-capture-v2 candidate and final program IDs",
     )
     parser.add_argument("--split", choices=("all", "dev", "heldout"), default="all")
     parser.add_argument("--k", type=int, default=20)

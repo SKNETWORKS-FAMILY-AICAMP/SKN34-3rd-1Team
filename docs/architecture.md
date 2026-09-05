@@ -130,27 +130,30 @@ POST /api/v1/support-programs/detail/answers
 
 ```text
 evaluation-fixture-export profile (비웹 실행)
-  → MySQL의 현재 공개 공고 전체 조회 → OPEN 공고만 선정
+  → MySQL의 현재 공개 공고 전체 조회 → 지정한 referenceDate 기준 OPEN 공고만 선정
   → SupportProgramIndexDocumentMapper와 같은 ID·내용 해시·검색 문서 생성
-  → 전체 적격 카탈로그와 cases: []인 미라벨 fixture 초안을 원자적으로 JSON 기록
+  → 기준 날짜·전체 적격 카탈로그와 cases: []인 미라벨 fixture 초안을 원자적으로 JSON 기록
   → 사람이 질문·관련 공고를 라벨링
 
 evaluation-capture profile (비웹 실행)
   → 질문 묶음 JSON 검증
-  → SupportProgramSearchService.searchWithTrace
-      → MySQL 현재 공고 → Qdrant 후보 최대 20개 → AI 최종 추천 최대 5개
-  → 질문별 후보 ID·최종 ID·카탈로그 지문을 원자적으로 JSON 기록
+  → 같은 referenceDate로 SupportProgramSearchService.searchWithTrace
+      → MySQL 현재 공고 → 기준 날짜의 적격 공고 → Qdrant 후보 최대 20개 → AI 최종 추천 최대 5개
+  → 기준 날짜·질문별 후보 ID·최종 ID·카탈로그 지문을 원자적으로 JSON 기록
   → 별도 Python 평가 도구가 사람 라벨 fixture와 대조
 ```
 
 두 경로 모두 공개 Controller나 디버그 HTTP endpoint가 아닙니다. `evaluation-fixture-export`는 자신의 웹 서버와
 두 동기화 스케줄러를 끄고 공고 데이터는 MySQL에서만 조회합니다. 따라서 Qdrant·AI Service·OpenAI를 호출하지
-않으며, 전체 카탈로그 검증이 끝난 뒤에만 출력 파일을 원자적으로 교체합니다. 생성된 `cases: []`에는 사람이
+않으며, 전체 카탈로그 검증이 끝난 뒤에만 출력 파일을 원자적으로 교체합니다. `referenceDate`는 실행 시각의
+오늘이 아니라 신청 시작·종료일로 접수 상태를 다시 계산하는 평가 기준이며 생성 fixture에 함께 기록됩니다.
+생성된 `cases: []`에는 사람이
 `id`·`query`·`split`·`relevantIds`를 채워야 합니다. 그 뒤 질문 묶음의 `name`과 각 `id`·`query`·`split`을
 fixture의 `cases`와 같은 순서·내용으로 맞춥니다.
 
 `evaluation-capture` profile도 자신의 웹 서버와 두 동기화 스케줄러를 끄며, 모든 질문이 성공하고 캡처 중
-카탈로그 지문이 같을 때만 출력 파일을 교체합니다. 별도 Core API 인스턴스가 카탈로그를 갱신한 경우에는 지문
+카탈로그 지문이 같을 때만 출력 파일을 교체합니다. capture는 fixture와 같은 `referenceDate`를 명시해 같은
+접수 상태 집합을 검색하며, Python 평가기는 두 날짜가 다르면 평가를 거부합니다. 별도 Core API 인스턴스가 카탈로그를 갱신한 경우에는 지문
 변화로 결과 파일 기록을 거부합니다. 후보 ID는 `sourceCode:sourceProgramId` 형태이며, 첫 번째 `:` 앞의
 `[A-Z][A-Z0-9_]{0,63}` 제공처 코드와 뒤의 원본 ID를 함께 사용합니다. 같은 Search Service가 만든
 후보·최종 결과를 기록하므로 평가 코드가 운영 검색 흐름을 별도로 재현하지 않습니다. 실제 AI Service를

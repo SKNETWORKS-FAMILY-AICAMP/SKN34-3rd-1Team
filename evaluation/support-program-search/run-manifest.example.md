@@ -6,7 +6,7 @@ API 키, 비밀번호, 내부 URL, 개인 식별 정보는 기록하지 않는�
 
 ## 실행 식별
 
-- runId: `support-program-catalog-YYYYMMDD-v1`
+- runId: `support-program-catalog-YYYYMMDD-v2`
 - 실행 시각(KST):
 - 실행자:
 - 라벨 검토자 및 검토 시각(KST):
@@ -17,6 +17,7 @@ API 키, 비밀번호, 내부 URL, 개인 식별 정보는 기록하지 않는�
 ## 고정한 공고·질문
 
 - readiness 상태 및 확인 시각(KST):
+- `referenceDate` (fixture/capture 동일, YYYY-MM-DD):
 - fixture 파일명 및 SHA-256:
 - fixture catalog fingerprint:
 - 전체 공개 공고 수 / 평가 대상 OPEN 공고 수:
@@ -39,10 +40,10 @@ API 키, 비밀번호, 내부 URL, 개인 식별 정보는 기록하지 않는�
 ## 결과
 
 - capture 파일명 및 SHA-256:
+- capture schemaVersion: `support-program-search-capture-v2`
 - capture `capturedAt`:
 - 평가 명령:
 - dev 결과 파일:
 - heldout 결과 파일:
 - 실행 결과: `성공` / `실패`
 - 실패 또는 재실행 사유:
-
