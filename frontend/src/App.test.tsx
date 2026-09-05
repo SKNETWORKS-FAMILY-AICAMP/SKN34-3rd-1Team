@@ -207,6 +207,76 @@ describe('App navigation', () => {
     )
   })
 
+  it('검색 실패 시 검색어를 복구하고 다시 검색할 수 있다', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary network failure'))
+      .mockResolvedValueOnce(jsonResponse({
+        query: '서울 AI',
+        programs: [supportPrograms[0]],
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore())
+
+    const chatInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    fireEvent.change(chatInput, { target: { value: '서울 AI' } })
+    fireEvent.submit(chatInput.closest('form')!)
+
+    await screen.findByRole('alert')
+    expect((chatInput as HTMLTextAreaElement).value).toBe('서울 AI')
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 검색' }))
+
+    await screen.findByText('현재 접수 중인 관련 공고 1건을 찾았습니다. 공고를 선택하면 자세한 조건과 원문을 확인할 수 있어요.')
+    expect(screen.getByRole('status').textContent).toBe('지원사업 검색 결과 1건을 표시했습니다.')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('진행 중인 검색은 취소할 수 있고 검색어를 유지한다', async () => {
+    let requestSignal: AbortSignal | undefined
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>(
+      (_resolve, reject) => {
+        requestSignal = init?.signal ?? undefined
+        requestSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
+          once: true,
+        })
+      },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore())
+
+    const chatInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    fireEvent.change(chatInput, { target: { value: '수출' } })
+    fireEvent.submit(chatInput.closest('form')!)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+
+    fireEvent.click(screen.getByRole('button', { name: '취소' }))
+
+    expect(requestSignal?.aborted).toBe(true)
+    expect((chatInput as HTMLTextAreaElement).value).toBe('수출')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('모바일 메뉴와 아이콘 검색 제어는 키보드·스크린리더로 조작할 수 있다', () => {
+    renderApp(createAppStore())
+
+    const sidebar = screen.getByLabelText('지원사업 검색 메뉴')
+    expect(sidebar.className).toContain('max-chat:invisible')
+    expect(sidebar.className).toContain('max-chat:pointer-events-none')
+    expect(screen.getByText('추천 질문')).toBeTruthy()
+    expect(screen.getByRole('status')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '검색 전송' })).toBeTruthy()
+
+    const menuButton = screen.getByRole('button', { name: '메뉴 열기' })
+    expect(menuButton.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(menuButton)
+    expect(menuButton.getAttribute('aria-expanded')).toBe('true')
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(menuButton.getAttribute('aria-expanded')).toBe('false')
+  })
+
   it('새로고침 또는 공유 URL의 직접 진입도 Core API에서 상세 정보를 다시 조회한다', async () => {
     const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(detail))

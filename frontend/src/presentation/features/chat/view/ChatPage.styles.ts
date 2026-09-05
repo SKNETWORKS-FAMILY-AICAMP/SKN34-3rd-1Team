@@ -17,7 +17,8 @@ export const chatPageStyles = {
     'max-chat:transition-transform max-chat:duration-[180ms] max-chat:ease-[ease]',
   ),
   sidebarOpen: 'max-chat:translate-x-0',
-  sidebarClosed: 'max-chat:translate-x-[-102%]',
+  sidebarClosed:
+    'max-chat:invisible max-chat:pointer-events-none max-chat:translate-x-[-102%]',
   brand: 'flex items-center gap-3 border-b border-[rgb(219_227_255_/_12%)] px-[0.35rem] pt-1 pb-5',
   brandMark:
     'grid size-[2.35rem] place-items-center rounded-[0.8rem] bg-brand-accent text-[1.25rem] font-black text-[#17203d]',
@@ -91,10 +92,13 @@ export const chatPageStyles = {
   ),
   composer:
     'relative mx-auto w-[min(860px,calc(100%_-_2rem))] pb-6 max-chat:w-[calc(100%_-_1.2rem)]',
+  searchStatus: 'sr-only',
   searchError: classes(
-    'mt-0 mb-[0.55rem] rounded-[0.7rem] border px-[0.8rem] py-[0.65rem] text-[0.76rem]',
+    'mt-0 mb-[0.55rem] flex items-center justify-between gap-3 rounded-[0.7rem] border px-[0.8rem] py-[0.65rem] text-[0.76rem]',
     'border-[#f0cfd4] bg-[#fff5f6] text-[#9a3947]',
   ),
+  searchRetryButton:
+    'shrink-0 cursor-pointer rounded-[0.45rem] border border-[#dcaab2] bg-white px-2 py-[0.3rem] text-[0.72rem] font-bold text-[#8f3340]',
   composerInput: classes(
     'min-h-[3.25rem] w-full resize-none rounded-2xl border bg-white',
     'pt-[0.95rem] pr-[3.4rem] pb-[1.35rem] pl-4 text-[#1b2544]',
@@ -105,6 +109,10 @@ export const chatPageStyles = {
     'absolute top-[0.65rem] right-[0.65rem] grid size-[2.15rem] place-items-center',
     'cursor-pointer rounded-[0.7rem] border-0 bg-brand-primary text-[1.2rem] text-white',
     'disabled:cursor-not-allowed disabled:opacity-[0.35]',
+  ),
+  cancelSearchButton: classes(
+    'absolute top-[0.65rem] right-[0.65rem] rounded-[0.7rem] border-0 px-3 py-[0.58rem]',
+    'cursor-pointer bg-[#eef0fb] text-[0.75rem] font-bold text-[#49557a]',
   ),
   composerHint: 'mt-[0.45rem] ml-[0.35rem] block text-[0.68rem] text-[#8a94ae]',
   programCard:

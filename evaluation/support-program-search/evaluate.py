@@ -149,6 +149,19 @@ def eligible_catalog_fingerprint(docs):
     return hashlib.sha256("\n".join(sorted(entries)).encode("utf-8")).hexdigest()
 
 
+def _validate_document_content_hashes(docs):
+    """Ensure the persisted Core API content hash still represents each search document."""
+    for doc in docs:
+        text = doc.get("text")
+        if not isinstance(text, str):
+            raise ValueError(f"Capture evaluation requires document text for {doc['id']}")
+        expected_content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if doc.get("contentHash") != expected_content_hash:
+            raise ValueError(
+                f"Fixture document contentHash does not match its UTF-8 text for {doc['id']}",
+            )
+
+
 def _validate_capture_fixture(fixture, capture_catalog):
     _validate_fixture_identity(fixture, require_data_type=True)
     canonical_to_fixture_id = _canonical_document_ids(fixture["docs"])
@@ -158,6 +171,7 @@ def _validate_capture_fixture(fixture, capture_catalog):
     _validate_catalog_metadata(fixture_catalog, "Fixture")
     if len(fixture["docs"]) != fixture_catalog["eligibleProgramCount"]:
         raise ValueError("Capture fixture docs must represent the entire eligible catalog")
+    _validate_document_content_hashes(fixture["docs"])
     if eligible_catalog_fingerprint(fixture["docs"]) != fixture_catalog["eligibleCatalogFingerprint"]:
         raise ValueError("Fixture catalog eligibleCatalogFingerprint does not match its document contentHash values")
     if fixture_catalog != capture_catalog:

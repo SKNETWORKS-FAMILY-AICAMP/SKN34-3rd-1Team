@@ -41,16 +41,31 @@ const chatSlice = createSlice({
       state.draft = action.payload
       state.searchError = null
     },
-    searchCancelled(state, action: PayloadAction<{ requestId: string }>) {
+    searchCancelled(state, action: PayloadAction<{ query: string; requestId: string }>) {
       if (state.activeRequestId !== action.payload.requestId) return
       state.activeRequestId = null
+      if (state.draft.trim().length === 0) {
+        state.draft = action.payload.query
+      }
       state.searchError = null
       state.searchStatus = 'idle'
     },
-    searchFailed(state, action: PayloadAction<{ requestId: string }>) {
+    searchFailed(state, action: PayloadAction<{ query: string; requestId: string }>) {
       if (state.activeRequestId !== action.payload.requestId) return
       state.activeRequestId = null
+      if (state.draft.trim().length === 0) {
+        state.draft = action.payload.query
+      }
       state.searchError = '지원사업을 검색하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+      state.searchStatus = 'failed'
+    },
+    searchTimedOut(state, action: PayloadAction<{ query: string; requestId: string }>) {
+      if (state.activeRequestId !== action.payload.requestId) return
+      state.activeRequestId = null
+      if (state.draft.trim().length === 0) {
+        state.draft = action.payload.query
+      }
+      state.searchError = '검색 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
       state.searchStatus = 'failed'
     },
     searchValidationFailed(state, action: PayloadAction<{ queryLength: number }>) {
@@ -123,6 +138,7 @@ export const {
   searchFailed,
   searchStarted,
   searchSucceeded,
+  searchTimedOut,
   searchValidationFailed,
 } = chatSlice.actions
 
@@ -130,6 +146,7 @@ export const selectChatState = (state: RootState) => state.chat
 export const selectChatDraft = (state: RootState) => state.chat.draft
 export const selectChatMessages = (state: RootState) => state.chat.messages
 export const selectChatSearchError = (state: RootState) => state.chat.searchError
+export const selectCanRetryChatSearch = (state: RootState) => state.chat.searchStatus === 'failed'
 export const selectIsChatSearching = (state: RootState) => state.chat.searchStatus === 'pending'
 export const selectConversationCount = createSelector(
   [selectChatMessages],

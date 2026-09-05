@@ -16,7 +16,9 @@ import {
 
 export function ChatPage() {
   const {
+    canRetrySearch,
     conversationCount,
+    cancelSearch,
     draft,
     isReadyToSubmit,
     isSearching,
@@ -30,11 +32,28 @@ export function ChatPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const isComposingInput = useRef(false)
   const timelineRef = useRef<HTMLDivElement>(null)
+  const latestMessage = messages.at(-1)
+  const searchStatusAnnouncement = isSearching
+    ? '지원사업 공고를 검색하고 있습니다.'
+    : latestMessage?.role === 'assistant' && latestMessage.programs
+      ? `지원사업 검색 결과 ${latestMessage.programs.length}건을 표시했습니다.`
+      : ''
 
   useEffect(() => {
     const timeline = timelineRef.current
     if (timeline) timeline.scrollTop = timeline.scrollHeight
   }, [messages, isSearching])
+
+  useEffect(() => {
+    function closeSidebarOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsSidebarOpen(false)
+      }
+    }
+
+    window.addEventListener('keydown', closeSidebarOnEscape)
+    return () => window.removeEventListener('keydown', closeSidebarOnEscape)
+  }, [])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -56,11 +75,14 @@ export function ChatPage() {
       <button
         type="button"
         className={chatBackdropClassName(isSidebarOpen)}
+        aria-label="메뉴 닫기"
         onClick={() => setIsSidebarOpen(false)}
       />
 
       <aside
+        id="chat-sidebar"
         className={chatSidebarClassName(isSidebarOpen)}
+        aria-label="지원사업 검색 메뉴"
       >
         <div className={chatPageStyles.brand}>
           <span className={chatPageStyles.brandMark}>
@@ -94,7 +116,7 @@ export function ChatPage() {
 
         <div className={chatPageStyles.popularQuestions}>
           <p className={chatPageStyles.sidebarSectionTitle}>
-            인기 질문
+            추천 질문
           </p>
           {supportProgramChatSuggestions.map((suggestion) => (
             <button
@@ -134,6 +156,9 @@ export function ChatPage() {
           <button
             type="button"
             className={chatPageStyles.menuButton}
+            aria-controls="chat-sidebar"
+            aria-expanded={isSidebarOpen}
+            aria-label="메뉴 열기"
             onClick={() => setIsSidebarOpen(true)}
           >
             ☰
@@ -155,6 +180,14 @@ export function ChatPage() {
           className={chatPageStyles.timeline}
           ref={timelineRef}
         >
+          <p
+            className={chatPageStyles.searchStatus}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {searchStatusAnnouncement}
+          </p>
           {messages.map((message) => {
             const isUser = message.role === 'user'
 
@@ -214,12 +247,24 @@ export function ChatPage() {
           onSubmit={handleSubmit}
         >
           {searchError ? (
-            <p className={chatPageStyles.searchError} role="alert">
-              {searchError}
-            </p>
+            <div className={chatPageStyles.searchError} role="alert">
+              <span>{searchError}</span>
+              {canRetrySearch ? (
+                <button
+                  type="button"
+                  className={chatPageStyles.searchRetryButton}
+                  onClick={() => {
+                    void submitMessage()
+                  }}
+                >
+                  다시 검색
+                </button>
+              ) : null}
+            </div>
           ) : null}
           <textarea
             className={chatPageStyles.composerInput}
+            aria-label="지원사업 검색어"
             value={draft}
             onChange={(event) => updateDraft(event.target.value)}
             onCompositionStart={() => {
@@ -242,13 +287,24 @@ export function ChatPage() {
             placeholder="예: 서울에서 AI 창업지원 사업을 찾아줘"
             rows={1}
           />
-          <button
-            type="submit"
-            className={chatPageStyles.submitButton}
-            disabled={!isReadyToSubmit}
-          >
-            ↑
-          </button>
+          {isSearching ? (
+            <button
+              type="button"
+              className={chatPageStyles.cancelSearchButton}
+              onClick={cancelSearch}
+            >
+              취소
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className={chatPageStyles.submitButton}
+              aria-label="검색 전송"
+              disabled={!isReadyToSubmit}
+            >
+              ↑
+            </button>
+          )}
           <small className={chatPageStyles.composerHint}>
             Enter로 전송 · Shift+Enter로 줄바꿈
           </small>

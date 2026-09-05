@@ -155,8 +155,9 @@ ID만 일부 담는 파일이 아니라 **캡처 시점의 전체 적격 공고 
 - `docs` 수는 `eligibleProgramCount`와 같아야 한다. 각 `docs[].id`와 `relevantIds`는 제공처를 포함한
   `BIZINFO:PBLN_...` 형식이고, 각 행은 Core의 `SupportProgramIndexDocumentMapper`가 만든 검색 문서의
   `contentHash`(소문자 SHA-256)를 포함해야 한다.
-- 평가기는 `id:contentHash`를 ID 순서로 정렬해 만든 지문도 다시 계산한다. 즉 다른 날의 capture, 공고가
-  누락된 fixture, 바뀐 내용 해시는 모두 오류가 된다.
+- 평가기는 각 `docs[].text`의 UTF-8 SHA-256이 `contentHash`와 일치하는지 확인하고,
+  `id:contentHash`를 ID 순서로 정렬해 만든 지문도 다시 계산한다. 즉 다른 날의 capture, 공고가 누락된
+  fixture, 바뀐 공고 내용이나 내용 해시는 모두 오류가 된다.
 
 기존 가상 fixture의 `SYNTH_*` ID는 기존 `--semantic-results` 비교 전용으로 유지한다.
 
