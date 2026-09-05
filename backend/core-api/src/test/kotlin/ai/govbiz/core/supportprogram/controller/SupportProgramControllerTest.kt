@@ -2,17 +2,12 @@ package ai.govbiz.core.supportprogram.controller
 
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.ApiExceptionHandler
-import ai.govbiz.core.supportprogram.client.bizinfo.BizInfoClient
-import ai.govbiz.core.supportprogram.client.bizinfo.dto.BizInfoProgramPayload
-import ai.govbiz.core.supportprogram.client.bizinfo.exception.BizInfoClientException
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
-import ai.govbiz.core.supportprogram.facade.BizInfoSupportProgramCatalogFacade
+import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
+import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
-import java.time.Clock
-import java.time.Instant
-import java.time.ZoneId
 import java.util.stream.Stream
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
@@ -38,7 +33,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 class SupportProgramControllerTest {
 
     @Mock
-    private lateinit var client: BizInfoClient
+    private lateinit var supportProgramRepository: SupportProgramRepository
 
     private lateinit var ranking: StubSupportProgramRankingFacade
 
@@ -46,13 +41,9 @@ class SupportProgramControllerTest {
 
     @BeforeEach
     fun setUp() {
-        val clock = Clock.fixed(
-            Instant.parse("2026-08-24T03:00:00Z"),
-            ZoneId.of("Asia/Seoul"),
-        )
         ranking = StubSupportProgramRankingFacade()
         val service = SupportProgramSearchService(
-            BizInfoSupportProgramCatalogFacade(client, clock),
+            supportProgramRepository,
             ranking,
         )
         mockMvc = MockMvcBuilders
@@ -63,9 +54,9 @@ class SupportProgramControllerTest {
 
     @Test
     fun returnsTheStableFrontendContractIncludingNullableParsedDates() {
-        Mockito.doReturn(listOf(payload("상시 접수")))
-            .`when`(client)
-            .fetchAll()
+        Mockito.doReturn(listOf(catalogProgram()))
+            .`when`(supportProgramRepository)
+            .findPresentBizInfo()
         ranking.response = { candidates ->
             listOf(
                 candidates.single().program.copy(
@@ -93,21 +84,24 @@ class SupportProgramControllerTest {
             )
     }
 
-    @ParameterizedTest
-    @MethodSource("supportProgramProblemCases")
-    fun mapsEverySupportProgramFailureToAStableProblem(problemCase: ProblemCase) {
-        Mockito.doThrow(problemCase.exception).`when`(client).fetchAll()
+    @Test
+    fun returnsAnEmptyListWhenTheCurrentCatalogIsEmpty() {
+        Mockito.doReturn(emptyList<CatalogSupportProgram>())
+            .`when`(supportProgramRepository)
+            .findPresentBizInfo()
 
-        assertProblem(
-            mockMvc.perform(get(PATH).queryParam("query", "서울")),
-            problemCase,
-        )
+        mockMvc.perform(get(PATH).queryParam("query", "서울"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.query").value("서울"))
+            .andExpect(jsonPath("$.programs").isEmpty())
     }
 
     @ParameterizedTest
     @MethodSource("aiServiceProblemCases")
     fun mapsEveryDirectAiClientFailureToAStableProblem(problemCase: ProblemCase) {
-        Mockito.doReturn(listOf(payload("상시 접수"))).`when`(client).fetchAll()
+        Mockito.doReturn(listOf(catalogProgram()))
+            .`when`(supportProgramRepository)
+            .findPresentBizInfo()
         ranking.failure = problemCase.exception
 
         assertProblem(
@@ -150,22 +144,26 @@ class SupportProgramControllerTest {
             .andExpect(content().string(not(containsString(PRIVATE_DETAIL))))
     }
 
-    private fun payload(period: String) =
-        BizInfoProgramPayload(
-            "서울 AI 지원사업",
-            "https://www.bizinfo.go.kr/detail?id=PBLN_TEST",
-            "PBLN_TEST",
-            "중소벤처기업부",
-            "수행기관",
-            "<p>AI &amp; 기술 지원</p>",
-            "AI",
-            "2026-08-20 10:00:00",
-            period,
-            "2026-08-21 10:00:00",
-            "중소기업",
-            "AI,서울",
-            "온라인",
-        )
+    private fun catalogProgram() = CatalogSupportProgram(
+        program = SupportProgram(
+            id = "PBLN_TEST",
+            title = "서울 AI 지원사업",
+            organization = "수행기관",
+            summary = "AI 기술 지원",
+            categories = listOf("AI"),
+            regions = listOf("서울"),
+            targetDescription = "중소기업",
+            applicationPeriod = "상시 접수",
+            applicationStartDate = null,
+            applicationEndDate = null,
+            status = SupportProgramStatus.OPEN,
+            sourceName = "기업마당",
+            sourceUrl = "https://www.bizinfo.go.kr/detail?id=PBLN_TEST",
+            matchedReasons = emptyList(),
+            recommendationScore = null,
+        ),
+        sortTimestamp = "2026-08-21 10:00:00",
+    )
 
     private class StubSupportProgramRankingFacade : SupportProgramRankingFacade {
         var response: (List<CatalogSupportProgram>) -> List<SupportProgram> = { emptyList() }
@@ -229,57 +227,6 @@ class SupportProgramControllerTest {
                     "AI Service Gateway Timeout",
                     "AI Service did not respond within the configured timeout.",
                     "AI_SERVICE_TIMEOUT",
-                ),
-            )
-
-        @JvmStatic
-        fun supportProgramProblemCases(): Stream<ProblemCase> =
-            Stream.of(
-                ProblemCase(
-                    BizInfoClientException.notConfigured(),
-                    503,
-                    "urn:govbiz:problem:support-program-source-not-configured",
-                    "Support Program Search Unavailable",
-                    "The support program data source is not configured.",
-                    "SUPPORT_PROGRAM_SOURCE_NOT_CONFIGURED",
-                ),
-                ProblemCase(
-                    BizInfoClientException.upstreamError(
-                        PRIVATE_DETAIL,
-                        IllegalStateException(PRIVATE_DETAIL),
-                    ),
-                    502,
-                    "urn:govbiz:problem:support-program-source-error",
-                    "Support Program Source Error",
-                    "The support program data source returned an unexpected response.",
-                    "SUPPORT_PROGRAM_SOURCE_ERROR",
-                ),
-                ProblemCase(
-                    BizInfoClientException.invalidResponse(
-                        PRIVATE_DETAIL,
-                        IllegalArgumentException(PRIVATE_DETAIL),
-                    ),
-                    502,
-                    "urn:govbiz:problem:support-program-invalid-response",
-                    "Support Program Invalid Response",
-                    "The support program data source returned an invalid response.",
-                    "SUPPORT_PROGRAM_INVALID_RESPONSE",
-                ),
-                ProblemCase(
-                    BizInfoClientException.unavailable(IllegalStateException(PRIVATE_DETAIL)),
-                    503,
-                    "urn:govbiz:problem:support-program-source-unavailable",
-                    "Support Program Source Unavailable",
-                    "The support program data source is currently unavailable.",
-                    "SUPPORT_PROGRAM_SOURCE_UNAVAILABLE",
-                ),
-                ProblemCase(
-                    BizInfoClientException.timeout(IllegalStateException(PRIVATE_DETAIL)),
-                    504,
-                    "urn:govbiz:problem:support-program-source-timeout",
-                    "Support Program Source Timeout",
-                    "The support program data source did not respond in time.",
-                    "SUPPORT_PROGRAM_SOURCE_TIMEOUT",
                 ),
             )
     }

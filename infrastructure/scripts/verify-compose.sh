@@ -14,6 +14,9 @@ PROJECT_NAME="${VERIFY_COMPOSE_PROJECT_NAME:-govbiz-verify}"
 # precedence over a root .env file for every Compose command executed by this script.
 export BIZINFO_API_BASE_URL="http://bizinfo-stub:8001"
 export DATA_GO_KR_SERVICE_KEY="compose%2Bverification%2Fkey%3D"
+export BIZINFO_SYNC_ENABLED="true"
+export BIZINFO_SYNC_INITIAL_DELAY="PT0S"
+export BIZINFO_SYNC_FIXED_DELAY="PT2S"
 export OPENAI_API_KEY="compose-verification-key-never-sent"
 export LLM_MODEL_TIMEOUT_SECONDS="8.0"
 export LLM_RUN_TIMEOUT_SECONDS="10.0"
@@ -176,6 +179,29 @@ wait_for_ai_health_failure() {
   return 1
 }
 
+wait_for_synchronized_catalog_program() {
+  local deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
+  local actual_count="0"
+
+  while ((SECONDS < deadline)); do
+    actual_count="$(
+      "${COMPOSE[@]}" exec -T mysql sh -c \
+        'mysql --batch --skip-column-names --user="$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE" -e "SELECT COUNT(*) FROM support_program WHERE source_code = '\''BIZINFO'\'' AND source_program_id = '\''PBLN_COMPOSE_EXPORT'\'' AND is_source_present = TRUE" 2>/dev/null || true'
+    )"
+
+    if [[ "${actual_count}" == "1" ]]; then
+      echo "Verified BizInfo synchronization stored PBLN_COMPOSE_EXPORT in MySQL"
+      return 0
+    fi
+
+    echo "Waiting for synchronized MySQL catalog program: found ${actual_count:-no result} rows"
+    sleep "${WAIT_INTERVAL_SECONDS}"
+  done
+
+  echo "Timed out waiting for the synchronized MySQL catalog program" >&2
+  return 1
+}
+
 echo "Validating Compose configuration"
 "${COMPOSE[@]}" config --quiet
 
@@ -185,8 +211,13 @@ echo "Building and starting the GovBiz verification stack (${PROJECT_NAME})"
 wait_for_http "Vite web" "http://127.0.0.1:5173/" "200"
 wait_for_http "Vite-proxied Core API health" "http://127.0.0.1:5173/api/v1/health" "200" '"status"[[:space:]]*:[[:space:]]*"up".*"service"[[:space:]]*:[[:space:]]*"govbiz-core-api"'
 wait_for_http "Vite-proxied Core to AI Service health" "http://127.0.0.1:5173/api/v1/health/ai-service" "200" '"status"[[:space:]]*:[[:space:]]*"up".*"service"[[:space:]]*:[[:space:]]*"govbiz-ai-service"'
+wait_for_synchronized_catalog_program
+
+echo "Stopping BizInfo stub to prove that search reads MySQL instead of the upstream API"
+"${COMPOSE[@]}" stop bizinfo-stub
+
 wait_for_http \
-  "Vite-proxied blank catalog search through the Bizinfo adapter" \
+  "Vite-proxied blank catalog search after BizInfo stub is stopped" \
   "http://127.0.0.1:5173/api/v1/support-programs/search?query=&acceptingOnly=true" \
   "200" \
   '"query"[[:space:]]*:[[:space:]]*""' \
@@ -217,4 +248,4 @@ echo "Restarting AI Service to verify recovery without restarting Core API"
 
 wait_for_http "Core to AI Service recovery" "http://127.0.0.1:5173/api/v1/health/ai-service" "200" '"status"[[:space:]]*:[[:space:]]*"up".*"service"[[:space:]]*:[[:space:]]*"govbiz-ai-service"'
 
-echo "Compose verification passed: required AI failure, catalog search, startup, isolation, and recovery are valid."
+echo "Compose verification passed: MySQL catalog search, required AI failure, startup, isolation, and recovery are valid."

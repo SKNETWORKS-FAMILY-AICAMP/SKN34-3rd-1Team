@@ -39,6 +39,14 @@ class SupportProgramRepository(
         supportProgramMapper.findBySourceAndProgramId(BIZINFO_SOURCE_CODE, programId)
             ?.toCatalogProgram()
 
+    /** 현재 기업마당 스냅샷에 포함된 공고를 검색 후보로 반환합니다. */
+    fun findPresentBizInfo(): List<CatalogSupportProgram> =
+        java.util.List.copyOf(
+            supportProgramMapper
+                .findPresentBySourceCode(BIZINFO_SOURCE_CODE)
+                .map { it.toCatalogProgram() },
+        )
+
     private fun CatalogSupportProgram.toDbRow(): SupportProgramDbRow {
         val supportProgram = program
 

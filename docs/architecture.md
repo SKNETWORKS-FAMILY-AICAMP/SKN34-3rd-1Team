@@ -74,9 +74,8 @@ Health 조회처럼 업무 도메인이 아닌 연결 상태는 UseCase·Reposit
 ```text
 supportprogram/controller
 └→ supportprogram/service/search
-   ├→ supportprogram/facade/BizInfoSupportProgramCatalogFacade
-   │   ├→ supportprogram/client/bizinfo/BizInfoClient → 공공데이터포털
-   │   └→ supportprogram/client/bizinfo/mapper/BizInfoProgramMapper
+   ├→ supportprogram/repository
+   │   └→ MyBatis Mapper XML → MySQL 지원사업 카탈로그
    ├→ supportprogram/facade/AiSupportProgramRankingFacade
    │   └→ supportprogram/client/ai
    │       └→ HttpAiSupportProgramRankingClient → FastAPI → OpenAI
@@ -101,10 +100,10 @@ _health_ai_service/controller
 ```
 
 - **supportprogram/controller**는 HTTP 요청을 처리하고, 하위 `dto`는 브라우저 공개 요청·응답 계약을 소유합니다.
-- **supportprogram/service/search**는 검색 흐름과 공개 검색 오류를 소유합니다. **supportprogram/service/sync**의 `BizInfoSupportProgramCatalogSyncScheduler`는 `app.bizinfo.sync.enabled`가 `true`일 때 `BizInfoSupportProgramCatalogSyncService.sync()`를 호출합니다. 기본값은 앱 준비 뒤 `PT0S`에 한 번 실행하고, 이전 동기화가 끝난 뒤 `PT6H` 후 다시 실행하는 것입니다. Scheduler는 동기화 실패를 기록하되 Core API를 멈추지 않고 다음 실행을 계속합니다. `BizInfoSupportProgramCatalogSyncService`는 transaction 밖에서 기업마당 전체 수집·검증을 완료하고, 성공한 스냅샷만 Repository에 전달합니다. **supportprogram/facade**는 `SupportProgramCatalogFacade`·`SupportProgramRankingFacade` 계약과 구현을 관리하고, 하위 `exception`은 상위 Service에 전달할 안정적인 Facade 실패 계약을 소유합니다. `BizInfoSupportProgramCatalogFacade`는 기업마당 조회·실패 변환·검색 후보 정규화를 단일 `load` 진입점으로 제공하고, 검색 Service가 Facade 실패를 검색 오류로 변환합니다. `AiSupportProgramRankingFacade`는 AI 요청 생성·Client 호출·응답 검증·도메인 변환을 단일 `rank` 진입점으로 제공합니다. `supportprogram/config`는 접수 상태 계산에 쓰는 서울 기준 시계를, `service/dto`는 이 흐름이 공유하는 검증된 실행 결과를 둡니다.
+- **supportprogram/service/search**는 MySQL 카탈로그 조회, 접수 상태 필터, 최신 후보 선택과 AI 점수화 순서를 소유합니다. **supportprogram/service/sync**의 `BizInfoSupportProgramCatalogSyncScheduler`는 `app.bizinfo.sync.enabled`가 `true`일 때 `BizInfoSupportProgramCatalogSyncService.sync()`를 호출합니다. 기본값은 앱 준비 뒤 `PT0S`에 한 번 실행하고, 이전 동기화가 끝난 뒤 `PT6H` 후 다시 실행하는 것입니다. Scheduler는 동기화 실패를 기록하되 Core API를 멈추지 않고 다음 실행을 계속합니다. `BizInfoSupportProgramCatalogSyncService`는 transaction 밖에서 기업마당 전체 수집·검증을 완료하고, 성공한 스냅샷만 Repository에 전달합니다. **supportprogram/facade**는 `SupportProgramCatalogFacade`·`SupportProgramRankingFacade` 계약과 구현을 관리하고, 하위 `exception`은 상위 Service에 전달할 안정적인 Facade 실패 계약을 소유합니다. `BizInfoSupportProgramCatalogFacade`는 동기화에 필요한 기업마당 조회·실패 변환·공고 정규화를 단일 `load` 진입점으로 제공하고, `AiSupportProgramRankingFacade`는 AI 요청 생성·Client 호출·응답 검증·도메인 변환을 단일 `rank` 진입점으로 제공합니다. `supportprogram/config`는 접수 상태 계산에 쓰는 서울 기준 시계를, `service/dto`는 이 흐름이 공유하는 검증된 실행 결과를 둡니다.
 - **supportprogram/domain**은 프레임워크에 의존하지 않는 지원사업 모델과 상태를 둡니다. `SupportProgramStatusResolver`는 저장된 신청 기간과 서울 기준 날짜로 현재 접수 상태를 계산합니다.
-- **supportprogram/repository**는 MySQL의 지원사업 카탈로그 저장·조회와 JSON 배열 복원을 담당합니다. `repository/mapper/SupportProgramMapper`는 SQL 실행 계약이고, 실제 UPDATE·UPSERT·SELECT는 `src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml`에 둡니다. 기업마당 동기화는 BIZINFO 범위의 기존 행 미노출 처리와 이번 스냅샷 UPSERT를 하나의 transaction으로 수행하고, 중간 오류 시 전부 롤백합니다. 테이블은 `source_code`와 `source_program_id` 복합 식별자로 제공처별 원본 ID 충돌을 막으며, 추가 제공처의 정규화·표시 이름 매핑은 해당 제공처를 실제로 도입할 때 결정합니다. 검색 Service의 Repository 전환은 다음 단계입니다.
-- **supportprogram/client/bizinfo**는 기업마당 HTTP·pagination을 담당하며, 하위 `mapper`의 `BizInfoProgramMapper`는 외부 DTO를 검색 후보로 정규화합니다. 하위 `config`는 전용 Client 설정·속성을, `dto`는 응답 전송 객체를, `exception`은 기업마당 전용 실패 계약을, `helper`는 기업마당 전용 HTTP 예외 변환을 관리합니다. 기업마당 Client 오류를 검색 오류로 변환하는 책임은 `supportprogram/facade`의 기업마당 Facade가 소유합니다.
+- **supportprogram/repository**는 MySQL의 지원사업 카탈로그 저장·조회와 JSON 배열 복원을 담당합니다. `repository/mapper/SupportProgramMapper`는 SQL 실행 계약이고, 실제 UPDATE·UPSERT·SELECT는 `src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml`에 둡니다. 검색 Service는 현재 노출된 BIZINFO 공고만 Repository에서 읽고, Repository는 저장된 신청 기간과 서울 날짜로 접수 상태를 다시 계산합니다. 기업마당 동기화는 BIZINFO 범위의 기존 행 미노출 처리와 이번 스냅샷 UPSERT를 하나의 transaction으로 수행하고, 중간 오류 시 전부 롤백합니다. 테이블은 `source_code`와 `source_program_id` 복합 식별자로 제공처별 원본 ID 충돌을 막습니다. 현재 AI 후보와 공개 응답은 원본 ID만 사용하므로, 두 번째 제공처를 실제로 추가할 때는 제공처를 포함한 공고 식별자 규칙과 표시 이름 매핑을 함께 결정합니다.
+- **supportprogram/client/bizinfo**는 기업마당 HTTP·pagination을 담당하며, 하위 `mapper`의 `BizInfoProgramMapper`는 외부 DTO를 검색 후보로 정규화합니다. 하위 `config`는 전용 Client 설정·속성을, `dto`는 응답 전송 객체를, `exception`은 기업마당 전용 실패 계약을, `helper`는 기업마당 전용 HTTP 예외 변환을 관리합니다. 기업마당 Client 오류는 동기화 Scheduler가 기록하고 다음 주기에 재시도하며, 기존 MySQL 스냅샷 검색에는 영향을 주지 않습니다.
 - **supportprogram/client/ai**는 AI 점수화 Client 인터페이스·HTTP 구현을 관리하고, 하위 `dto`에 내부 요청과 응답 계약을 둡니다.
 - **_common/ai_config**는 두 AI HTTP 클라이언트가 공유하는 FastAPI 주소·timeout·`RestClient` 설정만 관리합니다.
 - **_common/helper**는 공용 `RestClient` 생성·설정 검증과 AI·기업마당 Client가 공유하는 Spring 연결 실패·timeout·응답 해석 실패 분류를 담당합니다. 각 외부 시스템은 이를 자기 예외 계약으로 변환하고, HTTP 상태의 업무상 의미는 해당 Client에 남깁니다. **_common/exception**은 공통 AI 호출 예외와 공개 ProblemDetail 변환을 관리합니다.
@@ -161,7 +160,7 @@ Browser (127.0.0.1:5173)
       → /api proxy
           → core-api:8080
               ├→ mysql:3306
-              ├→ https://apis.data.go.kr
+              ├→ https://apis.data.go.kr (백그라운드 동기화)
               └→ ai-service:8000
                     └→ https://api.openai.com (LLM 활성 시)
 ```

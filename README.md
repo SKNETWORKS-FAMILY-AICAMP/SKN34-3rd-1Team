@@ -2,13 +2,14 @@
 
 자연어로 정부지원사업을 검색하고, 공고의 출처와 마감일을 확인할 수 있는 채팅형 웹앱입니다.
 [공공데이터포털의 중소기업 지원사업 공고 조회 서비스](https://www.data.go.kr/data/15157820/openapi.do)에서
-기업마당 공고를 Core API로 조회하고, 브라우저에는 GovBiz의 안정적인 검색 계약만 공개합니다.
+기업마당 공고를 백그라운드에서 MySQL 카탈로그로 동기화하고, 사용자 검색은 이 카탈로그를 조회합니다.
+브라우저에는 GovBiz의 안정적인 검색 계약만 공개합니다.
 
 ```text
 React Web
   → Spring Boot Core API
-      ├→ MySQL 지원사업 카탈로그 (저장 기반, 검색 전환 예정)
-      ├→ 공공데이터포털 지원사업 공고 API
+      ├→ MySQL 지원사업 카탈로그 (사용자 검색)
+      ├→ 공공데이터포털 지원사업 공고 API (백그라운드 동기화)
       └→ FastAPI AI Service
           └→ OpenAI Agents SDK typed agent (설정된 경우)
 ```
@@ -38,7 +39,7 @@ React Web
               → SearchSupportProgramsUseCase.execute
                   → SupportProgramRepository
                       → GET /api/v1/support-programs/search
-                          → 공공데이터포털 기업마당 공고 조회·검증
+                          → MySQL에서 현재 노출된 기업마당 공고 조회
                           → 접수 상태 필터와 최신 후보 최대 20개 선정
                           → POST /internal/v1/support-program-rankings/rank
                               → OpenAI typed agent가 버전된 기준으로 후보별 점수화
@@ -76,11 +77,11 @@ Repository와 UseCase의 생성·연결·앱 단위 singleton 수명주기는 Aw
 ViewModel은 Repository가 아니라 필요한 UseCase만 resolve합니다. DI 등록은 `frontend/src/app/di`에서
 Repository, UseCase와 외부 서비스 역할별 모듈로 분리해 관리합니다.
 
-현재는 대화와 검색 결과를 브라우저 메모리에 보관합니다. Core API는 검색 요청마다 외부 공고를
-조회하며 별도 메모리 캐시를 두지 않습니다. MySQL 카탈로그의 테이블·저장·조회와 기업마당 전체
-목록을 원자적으로 동기화하는 핵심 Service와 정기 실행 스케줄러를 구현했습니다. 기본 설정에서는
-앱 준비 뒤 즉시 한 번 동기화하고, 이후 이전 동기화가 끝난 시점부터 6시간마다 다시 실행합니다.
-검색 경로는 아직 기업마당을 직접 조회하며, 다음 단계에서 사용자 검색을 DB 조회로 전환합니다.
+현재는 대화와 검색 결과를 브라우저 메모리에 보관합니다. Core API는 사용자 검색 때 동기화된 MySQL
+카탈로그를 조회하며, 기업마당 API는 백그라운드 동기화 스케줄러만 호출합니다. MySQL 카탈로그의
+테이블·저장·조회와 기업마당 전체 목록을 원자적으로 동기화하는 핵심 Service와 정기 실행 스케줄러를
+구현했습니다. 기본 설정에서는 앱 준비 뒤 즉시 한 번 동기화하고, 이후 이전 동기화가 끝난 시점부터
+6시간마다 다시 실행합니다. 첫 동기화가 끝나기 전에는 검색 결과가 비어 있을 수 있습니다.
 현재 구현 평가와 구체적인 확장 원칙은
 [Frontend 상태 관리 설계](frontend/README.md#상태-관리-설계와-확장-원칙)와
 [Provider와 Service Locator에서 ViewModel까지 전달](frontend/README.md#redux-provider와-service-locator에서-viewmodel까지-전달)을
@@ -94,14 +95,14 @@ Repository, UseCase와 외부 서비스 역할별 모듈로 분리해 관리합�
 - Zod와 Bean Validation을 이용한 요청·응답 계약 검증
 - FastAPI 내부 Health API와 Core API의 upstream 오류 변환
 - OpenAI Agents SDK의 필수 typed agent를 사용하는 공고 후보 점수화
-- 공공데이터포털 응답을 GovBiz 공고 모델로 변환하는 외부 API adapter
-- MySQL 8.4·Flyway·MyBatis Mapper XML 기반의 `support_program` 카탈로그 스키마와 공고 UPSERT·조회 Repository
+- 백그라운드 동기화에서 공공데이터포털 응답을 GovBiz 공고 모델로 변환하는 외부 API adapter
+- MySQL 8.4·Flyway·MyBatis Mapper XML 기반의 `support_program` 카탈로그 스키마와 공고 UPSERT·검색 Repository
 - 전체 수집 성공 후에만 신규·변경·누락 공고를 하나의 트랜잭션으로 반영하는 기업마당 동기화 Service
 - 실제 MySQL Testcontainers를 이용한 카탈로그 저장·갱신·비활성화·롤백 통합 테스트
 - Tailwind CSS 유틸리티와 Vite 프록시를 사용하는 Docker Compose 개발 환경
 - 실제 키 없이 로컬 공공데이터 스텁을 사용하는 결정적 Compose smoke 검증
 
-### 지원사업 카탈로그 MySQL과 안전한 동기화
+### 지원사업 카탈로그 MySQL, 안전한 동기화와 검색
 
 기업마당 전체 페이지와 필수 공고 값을 먼저 검증하고, 완전한 목록만 MySQL에 반영합니다.
 
@@ -128,9 +129,11 @@ BizInfoSupportProgramCatalogSyncScheduler
 - 긴 UPSERT·SELECT SQL은 Kotlin 코드가 아니라 MyBatis Mapper XML에서 관리합니다.
 - 자동 동기화가 실패해도 Core API는 계속 실행하며 이전 MySQL 카탈로그를 유지합니다.
 
-아직은 `GET /api/v1/support-programs/search`가 MySQL을 읽지 않습니다. 실제 흐름은 여전히
-`검색 요청 → 기업마당 API → AI 점수화 → 응답`입니다. 다음 단계에서 `MySQL 조회 → AI 점수화 → 응답`으로
-전환합니다. 자동 동기화는 `BIZINFO_SYNC_ENABLED=false`로 끌 수 있으며, 세부 실행 방법과 환경변수는
+`GET /api/v1/support-programs/search`는 MySQL의 현재 노출 공고를 읽어
+`검색 요청 → MySQL 조회 → AI 점수화 → 응답` 순서로 처리합니다. 사용자 검색 요청은 기업마당 API를
+직접 호출하지 않습니다. 기업마당 API 호출은 `BizInfoSupportProgramCatalogSyncScheduler`의 동기화에만
+있습니다. 자동 동기화를 `BIZINFO_SYNC_ENABLED=false`로 끄면 기존 MySQL 데이터는 검색할 수 있지만,
+새 공고는 갱신되지 않습니다. 세부 실행 방법과 환경변수는
 [Core API README](backend/core-api/README.md)를 참고하세요.
 
 ## SampleItem 예제
@@ -174,7 +177,7 @@ docker compose --env-file .env --file infrastructure/compose.yaml up --build
 ```
 
 브라우저에서 [http://127.0.0.1:5173](http://127.0.0.1:5173)을 열면 GovBiz 채팅 화면을 볼 수
-있습니다.
+있습니다. 기본 설정에서는 시작 동기화가 끝난 뒤 MySQL에 저장된 기업마당 공고를 검색합니다.
 
 | 주소 | 용도 |
 |---|---|
@@ -192,9 +195,9 @@ docker compose --file infrastructure/compose.yaml down --volumes --remove-orphan
 
 ## 검증
 
-전체 컨테이너 경로, 지원사업 검색 계약, AI Service 장애·복구까지 확인합니다. 이 검증은 로컬
-공공데이터 스텁과 외부로 전송하지 않는 dummy OpenAI key를 사용하므로 개인 인증키나 외부 네트워크가
-필요하지 않습니다.
+전체 컨테이너 경로, MySQL 카탈로그 기반 지원사업 검색 계약, AI Service 장애·복구까지 확인합니다.
+이 검증은 로컬 공공데이터 스텁과 외부로 전송하지 않는 dummy OpenAI key를 사용하므로 개인 인증키나
+외부 네트워크가 필요하지 않습니다.
 
 ```bash
 ./infrastructure/scripts/verify-compose.sh
@@ -229,9 +232,8 @@ govBiz/
 ## 다음 단계
 
 1. 대표 검색 질문과 Top-5 관련성 기준으로 현재 검색 품질을 측정합니다.
-2. 구현된 기업마당 동기화를 정기 실행하고 사용자 검색 경로에서 외부 API 호출을 제거합니다.
-3. 데이터가 부족하다는 근거가 생기면 K-Startup 등 두 번째 공식 소스를 추가합니다.
-4. 이후 기업정보 기반 추천과 GovClause의 PDF·조건 판정을 결합합니다.
+2. 데이터가 부족하다는 근거가 생기면 K-Startup 등 두 번째 공식 소스를 추가합니다.
+3. 이후 기업정보 기반 추천과 GovClause의 PDF·조건 판정을 결합합니다.
 
 GovBiz 계층을 유지하며 데이터 소스와 기능을 확장하는 방법은
 [GovBiz 확장·적용 안내](docs/customization-guide.md)를 참고하세요.
