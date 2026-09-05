@@ -14,7 +14,7 @@ object SupportProgramCatalogFingerprintHelper {
             MessageDigest.getInstance("SHA-256").digest(
                 programs
                     .asSequence()
-                    .map(SupportProgramIndexDocumentMapper::fromBizInfo)
+                    .map(SupportProgramIndexDocumentMapper::fromCatalog)
                     .map { document -> "${document.id}:${document.contentHash}" }
                     .sorted()
                     .joinToString("\n")

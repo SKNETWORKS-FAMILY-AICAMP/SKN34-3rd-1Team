@@ -11,7 +11,7 @@ SUPPORT_PROGRAM_RANKING_INSTRUCTIONS = """당신은 대한민국 중소기업 �
 - supportTypeFit 0~10: 자금·기술·수출·교육 등 사용자가 원하는 지원 유형과의 적합성
 
 규칙:
-- 입력 candidates[].id를 각각 한 번씩, 출력의 programId로 반환합니다.
+- 입력 candidates[].id의 제공처 포함 식별자(sourceCode:sourceProgramId)를 각각 한 번씩, 변경하지 않고 출력의 programId로 반환합니다.
 - totalScore는 다섯 세부 점수의 합과 정확히 같아야 합니다.
 - recommendationReasons는 후보 원문에서 확인 가능한 짧은 한국어 이유 1~3개입니다.
 - targetEligibility와 regionEligibility는 각각 MATCH, INCOMPATIBLE, UNKNOWN 중 하나입니다.

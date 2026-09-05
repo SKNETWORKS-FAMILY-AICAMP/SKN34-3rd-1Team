@@ -19,4 +19,18 @@ data class SupportProgram(
     val sourceUrl: String,
     val matchedReasons: List<String>,
     val recommendationScore: Int? = null,
-)
+) {
+    init {
+        require(SOURCE_CODE_PATTERN.matches(sourceCode)) {
+            "sourceCode must be an uppercase provider code without a colon"
+        }
+    }
+
+    /** 서로 다른 제공처의 같은 원본 ID를 구분하는 내부 검색·AI 식별자입니다. */
+    val sourceQualifiedId: String
+        get() = "$sourceCode:$id"
+
+    private companion object {
+        val SOURCE_CODE_PATTERN = Regex("[A-Z][A-Z0-9_]{0,63}")
+    }
+}

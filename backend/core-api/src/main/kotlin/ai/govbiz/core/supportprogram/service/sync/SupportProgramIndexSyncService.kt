@@ -20,20 +20,17 @@ class SupportProgramIndexSyncService(
      * 이 작업은 삭제를 수행하지 않습니다. 새 카탈로그의 벡터를 준비하는 도중 이전 스냅샷 기준의
      * 정리 작업이 새 벡터를 삭제하지 않게 하기 위해서입니다.
      */
-    fun repair(): Int = indexBizInfoSnapshot(repository.findPresentBizInfo())
+    fun repair(): Int = indexSnapshot(repository.findPresent())
 
     /**
-     * MySQL에 공개하기 전 기업마당 공고 전체의 현재 버전을 색인합니다.
+     * MySQL에 공개하기 전 카탈로그 스냅샷의 현재 버전을 색인합니다.
      *
      * 모든 batch가 성공할 때만 호출자에게 반환하므로, 호출자는 이 메서드가 성공한 뒤에만 해당
      * 스냅샷을 DB에 공개할 수 있습니다.
      */
-    fun indexBizInfoSnapshot(programs: List<CatalogSupportProgram>): Int {
-        require(programs.all { it.program.sourceCode == SupportProgramIndexDocumentMapper.SOURCE_CODE }) {
-            "BizInfo index accepts only BIZINFO source programs"
-        }
+    fun indexSnapshot(programs: List<CatalogSupportProgram>): Int {
         check(programs.size <= SupportProgramIndexDocumentMapper.MAX_DOCUMENTS) { "index catalog exceeds supported limit" }
-        val documents = programs.map(SupportProgramIndexDocumentMapper::fromBizInfo)
+        val documents = programs.map(SupportProgramIndexDocumentMapper::fromCatalog)
         check(documents.map { it.id }.toSet().size == documents.size) { "duplicate catalog identities" }
         // 외부 API는 DB transaction 밖에서 호출하며, 같은 문서 버전은 AI Service가 재사용합니다.
         for (batch in documents.chunked(BATCH_SIZE)) {

@@ -13,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional
 import tools.jackson.core.type.TypeReference
 import tools.jackson.databind.ObjectMapper
 
-/** 기업마당에서 정규화한 지원사업 카탈로그를 MySQL에 저장하고 읽습니다. */
+/** 외부 제공처에서 정규화한 지원사업 카탈로그를 MySQL에 저장하고 읽습니다. */
 @Repository
 class SupportProgramRepository(
     private val supportProgramMapper: SupportProgramMapper,
@@ -82,11 +82,11 @@ class SupportProgramRepository(
         supportProgramMapper.findBySourceAndProgramId(sourceCode, sourceProgramId)
             ?.toCatalogProgram()
 
-    /** 현재 기업마당 스냅샷에 포함된 공고를 검색 후보로 반환합니다. */
-    fun findPresentBizInfo(): List<CatalogSupportProgram> =
+    /** 현재 모든 제공처 스냅샷에 포함된 공고를 검색 후보로 반환합니다. */
+    fun findPresent(): List<CatalogSupportProgram> =
         java.util.List.copyOf(
             supportProgramMapper
-                .findPresentBySourceCode(BIZINFO_SOURCE_CODE)
+                .findPresent()
                 .map { it.toCatalogProgram() },
         )
 

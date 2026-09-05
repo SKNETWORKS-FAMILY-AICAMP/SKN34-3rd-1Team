@@ -30,8 +30,8 @@ cd backend/core-api
 
 ### 실제 공고 fixture 초안 내보내기
 
-실데이터 평가의 시작점은 `evaluation-fixture-export` 프로필입니다. 이 비웹 프로필은 현재 MySQL의
-공개 기업마당 공고 중 `OPEN` 공고만 읽고, 운영 색인과 같은 `SupportProgramIndexDocumentMapper`로
+실데이터 평가의 시작점은 `evaluation-fixture-export` 프로필입니다. 이 비웹 프로필은 현재 MySQL의 모든
+제공처 공개 공고 중 `OPEN` 공고만 읽고, 운영 색인과 같은 `SupportProgramIndexDocumentMapper.fromCatalog`로
 `id`·`contentHash`·`text`를 만듭니다. 공고 수와 카탈로그 지문을 포함한 전체 fixture 초안을 기록하므로,
 이후 캡처 결과가 같은 공고 스냅샷에서 나왔는지 확인할 수 있습니다.
 
@@ -43,7 +43,7 @@ cd backend/core-api
 ./gradlew bootJar
 
 SPRING_PROFILES_ACTIVE=evaluation-fixture-export \
-APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_NAME=bizinfo-20260905-v1 \
+APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_NAME=support-program-catalog-20260905-v1 \
 APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_OUTPUT_PATH=/absolute/path/support-program-fixture.json \
 java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ```
@@ -85,18 +85,19 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 |---|---|
 | `GET /api/v1/health` | Core API 자체 생존 상태 |
 | `GET /api/v1/health/ai-service` | AI Service의 내부 Health 응답 확인 |
-| `GET /api/v1/support-programs/search` | 현재 MySQL 기업마당 공고의 검색 또는 최신 목록 |
+| `GET /api/v1/support-programs/search` | 현재 MySQL 공고 카탈로그의 검색 또는 최신 목록 |
 | `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회 |
 | `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
 
 - 검색: 필수 `query`는 최대 500자이며 빈 문자열을 허용합니다. `acceptingOnly`의 기본값은 `true`이고
   이때 `OPEN` 공고만 대상으로 삼습니다. 검색어가 있으면 의미 검색 후보 최대 20개를 AI가 점수화하여
   기준을 통과한 0~5개를 반환합니다. 빈 검색어는 AI를 호출하지 않고 최신순 최대 5개를 반환합니다.
-- 상세: 필수 `sourceCode`는 최대 64자, `sourceProgramId`는 최대 255자이며 공백만 있는 값은 허용하지
+- 상세: 필수 `sourceCode`는 `[A-Z][A-Z0-9_]{0,63}` 형식, `sourceProgramId`는 최대 255자이며 공백만 있는 값은 허용하지
   않습니다. 현재 노출된 행만 반환하며, 없는·미노출 공고는 404입니다. 검색 문맥이 없으므로 추천 이유는
   빈 배열, 추천 점수는 `null`입니다.
-- 현재 수집·전체 검색·색인은 `BIZINFO` 한 제공처를 지원합니다. 상세 조회와 DB 고유키는
-  `(source_code, source_program_id)`를 사용하지만 다른 제공처의 수집기는 구현되어 있지 않습니다.
+- 현재 수집기는 `BIZINFO` 한 제공처만 구현되어 있습니다. 전체 검색·색인·평가 fixture는 현재 MySQL의
+  모든 제공처 공고를 다루며, 내부 식별자 `sourceCode:sourceProgramId`로 같은 원본 ID를 구분합니다.
+  다른 제공처를 실제로 수집하려면 별도 Client·Facade·동기화 설정을 구현해야 합니다.
 
 요청·응답 JSON과 상세 오류 계약은 [지원사업 API 계약](../../docs/support-program-search-contract.md),
 SampleItem 예제는 [별도 계약](../../docs/sample-item-contract.md)에 있습니다.

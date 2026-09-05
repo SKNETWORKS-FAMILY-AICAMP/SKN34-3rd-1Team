@@ -16,9 +16,7 @@ interface SupportProgramMapper {
         @Param("sourceProgramId") sourceProgramId: String,
     ): SupportProgramDbRow?
 
-    fun findPresentBySourceCode(
-        @Param("sourceCode") sourceCode: String,
-    ): List<SupportProgramDbRow>
+    fun findPresent(): List<SupportProgramDbRow>
 
     fun insertSyncGenerationIfAbsent(@Param("sourceCode") sourceCode: String): Int
 

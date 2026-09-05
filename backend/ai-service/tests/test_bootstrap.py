@@ -55,7 +55,7 @@ async def test_builds_and_wires_agent_in_the_composition_root(
     expected = SupportProgramRankingOutput(
         rankings=[
             ScoredSupportProgram(
-                programId="program-1",
+                programId="BIZINFO:program-1",
                 semanticRelevance=40,
                 targetFit=25,
                 targetEligibility=SupportProgramEligibility.MATCH,
@@ -114,7 +114,7 @@ async def test_builds_and_wires_agent_in_the_composition_root(
             resultLimit=1,
             candidates=[
                 SupportProgramCandidate(
-                    id="program-1",
+                    id="BIZINFO:program-1",
                     title="서울 AI 반도체 지원",
                     organization="기관",
                     summary="반도체 지원",

@@ -53,7 +53,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
         doReturn(trace("서울 AI 지원", listOf("BIZINFO:A"), listOf("BIZINFO:A")))
             .`when`(searchService)
             .searchWithTrace("서울 AI 지원", true)
-        doReturn(trace("수출 바우처", listOf("BIZINFO:B"), emptyList()))
+        doReturn(trace("수출 바우처", listOf("OTHER:A"), emptyList()))
             .`when`(searchService)
             .searchWithTrace("수출 바우처", true)
 
@@ -74,10 +74,11 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
         assertEquals(FINGERPRINT, capture.get("catalog").get("eligibleCatalogFingerprint").stringValue())
         assertEquals(20, capture.get("search").get("candidateLimit").intValue())
         assertEquals(5, capture.get("search").get("finalResultLimit").intValue())
-        assertEquals("govbiz-support-program-ranking-v2", capture.get("search").get("scoringVersion").stringValue())
+        assertEquals("govbiz-support-program-ranking-v3", capture.get("search").get("scoringVersion").stringValue())
         assertEquals(2, capture.get("observations").size())
         assertEquals("Q01", capture.get("observations").get(0).get("id").stringValue())
         assertEquals("BIZINFO:A", capture.get("observations").get(0).get("candidateIds").get(0).stringValue())
+        assertEquals("OTHER:A", capture.get("observations").get(1).get("candidateIds").get(0).stringValue())
         assertEquals(0, capture.get("observations").get(1).get("finalProgramIds").size())
         verify(searchService).searchWithTrace("서울 AI 지원", true)
         verify(searchService).searchWithTrace("수출 바우처", true)
@@ -274,6 +275,30 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
 
         assertTrue(exception.message.orEmpty().contains("must be candidateIds"))
         assertEquals("previous-capture", Files.readString(output, UTF_8))
+    }
+
+    @Test
+    fun rejectsASearchTraceWithANonstandardSourceCode() {
+        val input = writeQuerySet(
+            """
+            {
+              "schemaVersion": "support-program-search-query-set-v1",
+              "name": "real-catalog-v1",
+              "queries": [{"id": "Q01", "query": "서울 AI 지원", "split": "dev"}]
+            }
+            """.trimIndent(),
+        )
+        val output = directory.resolve("capture.json")
+        doReturn(trace("서울 AI 지원", listOf("other:A"), listOf("other:A")))
+            .`when`(searchService)
+            .searchWithTrace("서울 AI 지원", true)
+
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            runner(input, output).run()
+        }
+
+        assertTrue(exception.message.orEmpty().contains("noncanonical"))
+        assertFalse(Files.exists(output))
     }
 
     private fun runner(input: Path, output: Path) = SupportProgramSearchEvaluationCaptureCommandLineRunner(

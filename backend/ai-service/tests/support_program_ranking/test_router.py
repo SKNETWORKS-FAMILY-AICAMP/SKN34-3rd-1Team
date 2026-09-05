@@ -44,7 +44,7 @@ def score(
         applicationStatusFit=application_status,
         supportTypeFit=support_type,
         totalScore=semantic + target + region + application_status + support_type,
-        recommendationReasons=[f"{program_id} 근거"],
+        recommendationReasons=["공고 원문 근거"],
     )
 
 
@@ -58,7 +58,7 @@ class SuccessfulAgent(SupportProgramRecommendationAgent):
     ) -> SupportProgramRankingOutput:
         self.requests.append(request)
         return SupportProgramRankingOutput(
-            rankings=[score("program-low", 20), score("program-high", 40)]
+            rankings=[score("BIZINFO:program-low", 20), score("BIZINFO:program-high", 40)]
         )
 
 
@@ -70,7 +70,7 @@ class MissingCandidateAgent(SupportProgramRecommendationAgent):
         self,
         request: SupportProgramRankingRequest,
     ) -> SupportProgramRankingOutput:
-        return SupportProgramRankingOutput(rankings=[score("program-high", 40)])
+        return SupportProgramRankingOutput(rankings=[score("BIZINFO:program-high", 40)])
 
 
 class BelowSemanticMinimumAgent(SupportProgramRecommendationAgent):
@@ -82,7 +82,7 @@ class BelowSemanticMinimumAgent(SupportProgramRecommendationAgent):
         request: SupportProgramRankingRequest,
     ) -> SupportProgramRankingOutput:
         return SupportProgramRankingOutput(
-            rankings=[score("program-low", 19), score("program-high", 40)]
+            rankings=[score("BIZINFO:program-low", 19), score("BIZINFO:program-high", 40)]
         )
 
 
@@ -97,14 +97,14 @@ class BelowTotalMinimumAgent(SupportProgramRecommendationAgent):
         return SupportProgramRankingOutput(
             rankings=[
                 score(
-                    "program-low",
+                    "BIZINFO:program-low",
                     20,
                     target=10,
                     region=10,
                     application_status=10,
                     support_type=9,
                 ),
-                score("program-high", 40),
+                score("BIZINFO:program-high", 40),
             ]
         )
 
@@ -118,7 +118,7 @@ class NoEligibleCandidateAgent(SupportProgramRecommendationAgent):
         request: SupportProgramRankingRequest,
     ) -> SupportProgramRankingOutput:
         return SupportProgramRankingOutput(
-            rankings=[score("program-low", 0), score("program-high", 19)]
+            rankings=[score("BIZINFO:program-low", 0), score("BIZINFO:program-high", 19)]
         )
 
 
@@ -140,7 +140,7 @@ def request_body() -> dict[str, object]:
         "resultLimit": 2,
         "candidates": [
             {
-                "id": "program-low",
+                "id": "BIZINFO:program-low",
                 "title": "일반 창업 지원",
                 "organization": "기관",
                 "summary": "창업기업 지원",
@@ -151,7 +151,7 @@ def request_body() -> dict[str, object]:
                 "status": "OPEN",
             },
             {
-                "id": "program-high",
+                "id": "BIZINFO:program-high",
                 "title": "서울 AI 창업기업 지원",
                 "organization": "기관",
                 "summary": "서울 AI 기업 사업화 지원",
@@ -213,13 +213,64 @@ def test_returns_llm_scores_sorted_by_total_score() -> None:
     assert body["originalQuery"] == "서울 AI 창업기업 지원"
     assert body["scoringVersion"] == SCORING_VERSION
     assert [item["programId"] for item in body["rankings"]] == [
-        "program-high",
-        "program-low",
+        "BIZINFO:program-high",
+        "BIZINFO:program-low",
     ]
     assert body["rankings"][0]["totalScore"] == 85
     assert body["rankings"][0]["targetEligibility"] == "MATCH"
     assert body["rankings"][0]["regionEligibility"] == "MATCH"
     assert len(agent.requests) == 1
+
+
+def test_keeps_candidates_with_the_same_original_id_from_different_sources_distinct() -> None:
+    body = request_body()
+    body["candidates"][0]["id"] = "BIZINFO:PBLN_001"  # type: ignore[index]
+    body["candidates"][1]["id"] = "KSTARTUP:PBLN_001"  # type: ignore[index]
+    client = TestClient(
+        create_app(
+            settings=TEST_SETTINGS,
+            support_program_recommendation_agent=FixedOutputAgent(
+                [
+                    score("KSTARTUP:PBLN_001", 40),
+                    score("BIZINFO:PBLN_001", 20),
+                ]
+            ),
+        )
+    )
+
+    response = client.post(
+        "/internal/v1/support-program-rankings/rank",
+        json=body,
+    )
+
+    assert response.status_code == 200
+    assert [item["programId"] for item in response.json()["rankings"]] == [
+        "KSTARTUP:PBLN_001",
+        "BIZINFO:PBLN_001",
+    ]
+
+
+def test_accepts_the_maximum_length_canonical_program_id() -> None:
+    canonical_id = f"{'S' * 64}:{'P' * 255}"
+    body = request_body()
+    body["resultLimit"] = 1
+    body["candidates"] = [body["candidates"][0]]  # type: ignore[index]
+    body["candidates"][0]["id"] = canonical_id  # type: ignore[index]
+    client = TestClient(
+        create_app(
+            settings=TEST_SETTINGS,
+            support_program_recommendation_agent=FixedOutputAgent([score(canonical_id, 40)]),
+        )
+    )
+
+    response = client.post(
+        "/internal/v1/support-program-rankings/rank",
+        json=body,
+    )
+
+    assert len(canonical_id) == 320
+    assert response.status_code == 200
+    assert response.json()["rankings"][0]["programId"] == canonical_id
 
 
 def test_filters_a_candidate_below_the_semantic_relevance_minimum() -> None:
@@ -237,7 +288,7 @@ def test_filters_a_candidate_below_the_semantic_relevance_minimum() -> None:
 
     assert response.status_code == 200
     assert [item["programId"] for item in response.json()["rankings"]] == [
-        "program-high"
+        "BIZINFO:program-high"
     ]
 
 
@@ -256,7 +307,7 @@ def test_filters_a_candidate_below_the_total_score_minimum() -> None:
 
     assert response.status_code == 200
     assert [item["programId"] for item in response.json()["rankings"]] == [
-        "program-high"
+        "BIZINFO:program-high"
     ]
 
 
@@ -284,7 +335,7 @@ def test_excludes_explicit_busan_region_mismatch_despite_high_score() -> None:
             support_program_recommendation_agent=FixedOutputAgent(
                 [
                     score(
-                        "program-busan",
+                        "BIZINFO:program-busan",
                         40,
                         target=25,
                         region=0,
@@ -298,7 +349,7 @@ def test_excludes_explicit_busan_region_mismatch_despite_high_score() -> None:
     )
     body = single_candidate_request_body(
         query="서울 소재 AI 기업 지원",
-        program_id="program-busan",
+        program_id="BIZINFO:program-busan",
         title="부산 AI 기업 사업화 지원",
         summary="부산 소재 AI 기업의 사업화를 지원합니다.",
         regions=["부산"],
@@ -321,7 +372,7 @@ def test_excludes_explicit_pre_startup_target_mismatch_despite_high_score() -> N
             support_program_recommendation_agent=FixedOutputAgent(
                 [
                     score(
-                        "program-pre-startup",
+                        "BIZINFO:program-pre-startup",
                         40,
                         target=0,
                         target_eligibility=SupportProgramEligibility.INCOMPATIBLE,
@@ -335,7 +386,7 @@ def test_excludes_explicit_pre_startup_target_mismatch_despite_high_score() -> N
     )
     body = single_candidate_request_body(
         query="서울 소재 기창업 AI 기업 지원",
-        program_id="program-pre-startup",
+        program_id="BIZINFO:program-pre-startup",
         title="서울 AI 예비창업자 지원",
         summary="서울 예비창업자의 AI 사업화를 지원합니다.",
         regions=["서울"],
@@ -358,7 +409,7 @@ def test_keeps_a_candidate_when_target_and_region_information_are_unknown() -> N
             support_program_recommendation_agent=FixedOutputAgent(
                 [
                     score(
-                        "program-unknown",
+                        "BIZINFO:program-unknown",
                         40,
                         target=0,
                         target_eligibility=SupportProgramEligibility.UNKNOWN,
@@ -373,7 +424,7 @@ def test_keeps_a_candidate_when_target_and_region_information_are_unknown() -> N
     )
     body = single_candidate_request_body(
         query="AI 사업화 지원",
-        program_id="program-unknown",
+        program_id="BIZINFO:program-unknown",
         title="AI 사업화 지원",
         summary="AI 기술 사업화를 지원합니다.",
         regions=["전국"],
@@ -387,7 +438,7 @@ def test_keeps_a_candidate_when_target_and_region_information_are_unknown() -> N
 
     assert response.status_code == 200
     assert [item["programId"] for item in response.json()["rankings"]] == [
-        "program-unknown"
+        "BIZINFO:program-unknown"
     ]
 
 
@@ -419,6 +470,7 @@ def test_rejects_an_agent_output_that_omits_a_candidate_without_leaking_details(
         lambda body: body.update({"scoringVersion": "stale-version"}),
         lambda body: body.update({"unknown": "value"}),
         lambda body: body["candidates"].append(body["candidates"][0]),
+        lambda body: body["candidates"][0].update({"id": "PBLN_001"}),
     ],
 )
 def test_rejects_invalid_requests(mutation) -> None:  # type: ignore[no-untyped-def]
@@ -440,7 +492,7 @@ def test_rejects_invalid_requests(mutation) -> None:  # type: ignore[no-untyped-
 def test_score_schema_requires_the_total_to_equal_all_dimensions() -> None:
     with pytest.raises(ValidationError, match="totalScore"):
         ScoredSupportProgram(
-            programId="program-1",
+            programId="BIZINFO:program-1",
             semanticRelevance=40,
             targetFit=25,
             targetEligibility=SupportProgramEligibility.MATCH,
@@ -451,6 +503,11 @@ def test_score_schema_requires_the_total_to_equal_all_dimensions() -> None:
             totalScore=99,
             recommendationReasons=["근거"],
         )
+
+
+def test_score_schema_requires_a_canonical_program_id() -> None:
+    with pytest.raises(ValidationError, match="canonical sourceCode:sourceProgramId"):
+        score("BIZINFO: PBLN_001", 40)
 
 
 @pytest.mark.parametrize(
@@ -481,7 +538,7 @@ def test_score_schema_requires_zero_fit_for_explicit_incompatibility(
 ) -> None:
     with pytest.raises(ValidationError, match=message):
         score(
-            "program-1",
+            "BIZINFO:program-1",
             40,
             target=target,
             target_eligibility=target_eligibility,

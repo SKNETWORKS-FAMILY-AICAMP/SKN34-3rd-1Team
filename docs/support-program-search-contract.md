@@ -1,14 +1,14 @@
 # 지원사업 검색·상세 HTTP 계약
 
 GovBiz Web은 공공데이터포털 키나 OpenAI 키를 보유하지 않습니다. 브라우저는 Core API만 호출하고,
-Core는 정기 동기화된 기업마당 공고 MySQL 카탈로그에서 후보를 읽어 AI Service에 점수화를 요청합니다.
+Core는 정기 동기화된 MySQL 공고 카탈로그에서 후보를 읽어 AI Service에 점수화를 요청합니다.
 전체 구성은 [기술 문서](technology.md), 구현 범위와 후속 과제는 [구현 현황](implementation-status.md)을 참고하세요.
 
 ```text
 Browser
   → GET /api/v1/support-programs/search
       → Core API
-          → MySQL의 현재 노출 기업마당 공고 조회·접수 상태 필터
+          → MySQL의 현재 노출 공고 조회·접수 상태 필터
           → 현재 공고 ID·내용 해시로 Qdrant 검색 범위 제한
           → 질의 임베딩에 가까운 후보 최대 20개 선택
           → POST /internal/v1/support-program-rankings/rank
@@ -39,11 +39,11 @@ Content-Type: application/json
 
 {
   "originalQuery": "서울 AI 창업기업이 받을 사업",
-  "scoringVersion": "govbiz-support-program-ranking-v2",
+  "scoringVersion": "govbiz-support-program-ranking-v3",
   "resultLimit": 5,
   "candidates": [
     {
-      "id": "PBLN_001",
+      "id": "BIZINFO:PBLN_001",
       "title": "서울 AI 창업기업 사업화 지원",
       "organization": "서울경제진흥원",
       "summary": "AI 창업기업의 사업화를 지원합니다.",
@@ -57,7 +57,7 @@ Content-Type: application/json
 }
 ```
 
-AI Service의 버전 `govbiz-support-program-ranking-v2`는 다음 100점 기준을 사용합니다.
+AI Service의 버전 `govbiz-support-program-ranking-v3`는 다음 100점 기준을 사용합니다.
 
 | 평가 항목 | 배점 | 의미 |
 |---|---:|---|
@@ -68,7 +68,7 @@ AI Service의 버전 `govbiz-support-program-ranking-v2`는 다음 100점 기준
 | `supportTypeFit` | 10 | 자금·기술·수출·교육 등 원하는 지원 유형의 적합성 |
 
 LLM은 입력 후보를 정확히 한 번씩 모두 평가합니다. 후보 문장은 데이터일 뿐 지시가 아니며,
-후보에 없는 자격·금액·상태를 만들어서는 안 됩니다. v2는 점수와 별도로 모든 후보의 `targetEligibility`와
+후보에 없는 자격·금액·상태를 만들어서는 안 됩니다. v3는 점수와 별도로 모든 후보의 `targetEligibility`와
 `regionEligibility`를 필수로 반환합니다. `MATCH`는 제공된 정보와 일치, `INCOMPATIBLE`은 명백한 조건
 불일치, `UNKNOWN`은 정보 부족입니다. 하나라도 `INCOMPATIBLE`이면 총점과 관계없이 추천에서 제외합니다.
 `UNKNOWN`은 자동 제외하지 않지만 신청 자격 충족을 확정하는 값도 아닙니다. 여기에 `semanticRelevance`
@@ -79,10 +79,10 @@ LLM은 입력 후보를 정확히 한 번씩 모두 평가합니다. 후보 문�
 ```json
 {
   "originalQuery": "서울 AI 창업기업이 받을 사업",
-  "scoringVersion": "govbiz-support-program-ranking-v2",
+  "scoringVersion": "govbiz-support-program-ranking-v3",
   "rankings": [
     {
-      "programId": "PBLN_001",
+      "programId": "BIZINFO:PBLN_001",
       "semanticRelevance": 38,
       "targetFit": 24,
       "targetEligibility": "MATCH",
@@ -100,7 +100,7 @@ LLM은 입력 후보를 정확히 한 번씩 모두 평가합니다. 후보 문�
 Core는 다음 불변식을 다시 검사합니다.
 
 - `originalQuery`와 `scoringVersion`이 요청과 정확히 일치
-- `programId`가 전달한 후보에 존재하고 중복되지 않음
+- `programId`가 전달한 후보의 제공처 포함 식별자와 정확히 일치하고 중복되지 않음
 - 세부 점수가 각 배점 범위 안에 있음
 - `targetEligibility`·`regionEligibility`가 누락 없이 허용 값이며 어느 쪽도 `INCOMPATIBLE`이 아님
 - `totalScore`가 다섯 세부 점수의 합과 정확히 일치
@@ -148,7 +148,7 @@ Core는 다음 불변식을 다시 검사합니다.
 ## 공개 상세 조회
 
 검색 결과의 `id`는 제공처 안에서의 원본 공고 ID입니다. 제공처가 다르면 같은 `id`가 존재할 수 있으므로,
-상세 조회는 검색 응답의 `sourceCode`와 `id`를 각각 전달합니다. 두 값을 `BIZINFO:PBLN_001`처럼 하나의
+상세 조회는 검색 응답의 `sourceCode`와 `id`를 각각 전달합니다. 두 값을 `{sourceCode}:{sourceProgramId}`처럼 하나의
 문자열로 합치지 않아 URL 인코딩·구분자 충돌 없이 MySQL의 복합 원본 식별자와 정확히 대응합니다.
 
 ```http
@@ -158,7 +158,7 @@ Accept: application/json
 
 | Query parameter | 필수 | 설명 |
 |---|---|---|
-| `sourceCode` | 예 | 제공처 코드. 공백일 수 없고 최대 64자입니다. |
+| `sourceCode` | 예 | 제공처 코드. `[A-Z][A-Z0-9_]{0,63}` 형식이며 최대 64자입니다. |
 | `sourceProgramId` | 예 | 제공처가 부여한 원본 공고 ID. 공백일 수 없고 최대 255자입니다. 검색 응답의 `id`를 전달합니다. |
 
 성공하면 검색 결과 한 건과 같은 `SupportProgramResponse` 객체를 반환합니다. 상세 조회에는 검색 질의가
@@ -178,7 +178,7 @@ Accept: application/json
 
 ## 전체 카탈로그 후보 검색
 
-검색어가 있으면 Core는 MySQL에서 현재 노출된 전체 기업마당 공고를 읽어 접수 상태를 적용합니다.
+검색어가 있으면 Core는 MySQL에서 현재 노출된 전체 제공처 공고를 읽어 접수 상태를 적용합니다.
 그 전체 허용 목록의 ID·검색 텍스트 해시를 AI Service에 보내고, Qdrant의 의미 검색으로 최대 20개를
 선택합니다. 최신순 21번째 이후의 공고도 후보가 될 수 있습니다. 빈 검색어만 최신순 최대 5개를 반환합니다.
 
@@ -190,8 +190,10 @@ Accept: application/json
 | `POST /internal/v1/support-program-index/prune` | `sourceCode`, 현재 `documents`: `{id, contentHash}` | `retainedCount` |
 | `POST /internal/v1/support-program-index/search` | `query`, `eligibleDocuments`: `{id, contentHash}`, `limit`(1~20) | `query`, `matches`: `{id, contentHash, score}` |
 
-`id`는 내부에서 `BIZINFO:원본ID`로 구성합니다. `contentHash`는 전달한 검색 텍스트의 UTF-8 SHA-256
-소문자 64자리이며 공개 응답 ID나 DB `content_hash`와는 별개의 색인 계약입니다. 검색 텍스트는 최대
+색인·점수화 경계의 `id`와 `programId`는 `{sourceCode}:{sourceProgramId}`로 구성합니다. 첫 번째 `:` 앞의
+`sourceCode`는 `[A-Z][A-Z0-9_]{0,63}` 형태의 안정적인 제공처 코드이고, 뒤의 원본 ID는 전체 문자열로 유지합니다.
+`contentHash`는 전달한 검색 텍스트의 UTF-8 SHA-256 소문자 64자리이며 공개 응답 ID나 DB `content_hash`와는
+별개의 색인 계약입니다. 검색 텍스트는 최대
 12,000자로 제한하고 임베딩 입력은 모델 토큰 제한 내에서 잘라 사용합니다. 검색·정리 허용 목록은 최대 20,000개입니다.
 오늘 날짜에 따라 달라지는 상태는 텍스트에 고정하지 않고 Core가 조회 시 계산합니다.
 
@@ -213,7 +215,7 @@ Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지
 정상 성공 응답입니다. 상세 문서 RAG는 이번 범위에 포함하지 않습니다.
 후보·최종 추천 비교를 위한 [검색 평가 자료와 실행 도구](../evaluation/support-program-search/README.md)를
 추가했습니다. `evaluation-fixture-export`는 공개 API가 아닌 비웹 실행 프로필이며, 현재 MySQL의 `OPEN`
-기업마당 공고를 운영 색인과 같은 ID·내용 해시·검색 문서로 미라벨 fixture 초안에 기록합니다.
+모든 제공처의 현재 `OPEN` 공고를 운영 색인과 같은 ID·내용 해시·검색 문서로 미라벨 fixture 초안에 기록합니다.
 `evaluation-capture`는 사람이 fixture에 질문·정답을 라벨링한 뒤 현재 Search Service가 만든 후보 최대 20개와
 최종 추천 최대 5개의 ID를 기록합니다. 실제 공고·임베딩 모델을 사용한 추천 품질의 **측정 결과**는 사람이
 검토한 정답 라벨을 아직 만들지 않았으므로 아직 없습니다.
@@ -229,7 +231,7 @@ Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지
 | 상황 | HTTP | `code` |
 |---|---:|---|
 | `query`가 500자를 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
-| 상세 조회의 `sourceCode`·`sourceProgramId`가 누락·공백·길이 제한을 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
+| 상세 조회의 `sourceCode`·`sourceProgramId`가 누락·형식·공백·길이 제한을 위반함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 상세 조회 대상이 없거나 현재 제공처 목록에서 사라짐 | 404 | `SUPPORT_PROGRAM_NOT_FOUND` |
 | AI Service의 예상하지 못한 HTTP 응답·응답 계약 위반 | 502 | `AI_SERVICE_UPSTREAM_ERROR` / `AI_SERVICE_INVALID_RESPONSE` |
 | AI Service 연결 불가·내부 503 응답 | 503 | `AI_SERVICE_UNAVAILABLE` |

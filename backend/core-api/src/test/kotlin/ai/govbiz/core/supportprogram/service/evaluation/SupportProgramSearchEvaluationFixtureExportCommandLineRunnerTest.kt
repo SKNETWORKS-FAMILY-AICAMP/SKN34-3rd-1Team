@@ -47,7 +47,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
             .copy(program = catalogProgram("PBLN_UPCOMING").program.copy(status = SupportProgramStatus.UPCOMING))
         doReturn(listOf(laterCanonicalId, closed, earlierCanonicalId, upcoming))
             .`when`(supportProgramRepository)
-            .findPresentBizInfo()
+            .findPresent()
 
         val output = directory.resolve("fixture.json")
         Files.writeString(output, "previous-fixture", UTF_8)
@@ -72,7 +72,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
         val expectedPrograms = listOf(earlierCanonicalId, laterCanonicalId)
         assertEquals(2, fixture.get("docs").size())
         expectedPrograms.forEachIndexed { index, program ->
-            val expectedDocument = SupportProgramIndexDocumentMapper.fromBizInfo(program)
+            val expectedDocument = SupportProgramIndexDocumentMapper.fromCatalog(program)
             val document = fixture.get("docs").get(index)
             assertEquals(
                 setOf("id", "contentHash", "text", "sortTimestamp"),
@@ -83,7 +83,38 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
             assertEquals(expectedDocument.text, document.get("text").stringValue())
             assertEquals(program.sortTimestamp, document.get("sortTimestamp").stringValue())
         }
-        verify(supportProgramRepository).findPresentBizInfo()
+        verify(supportProgramRepository).findPresent()
+    }
+
+    @Test
+    fun exportsSameRawIdsFromDifferentSourcesAsSeparateDocuments() {
+        val bizInfo = catalogProgram("SHARED")
+        val other = bizInfo.copy(
+            program = bizInfo.program.copy(
+                sourceCode = "OTHER",
+                sourceName = "다른 제공처",
+                sourceUrl = "https://other.example/program/SHARED",
+            ),
+        )
+        doReturn(listOf(other, bizInfo)).`when`(supportProgramRepository).findPresent()
+        val output = directory.resolve("fixture.json")
+
+        runner("support-program-catalog-v1", output).run()
+
+        val fixture = objectMapper.readTree(Files.readAllBytes(output))
+        assertEquals(2, fixture.get("catalog").get("eligibleProgramCount").intValue())
+        val documents = fixture.get("docs")
+        assertEquals(
+            listOf("BIZINFO:SHARED", "OTHER:SHARED"),
+            listOf(
+                documents.get(0).get("id").stringValue(),
+                documents.get(1).get("id").stringValue(),
+            ),
+        )
+        assertEquals(
+            catalogFingerprint(listOf(bizInfo, other)),
+            fixture.get("catalog").get("eligibleCatalogFingerprint").stringValue(),
+        )
     }
 
     @Test
@@ -92,7 +123,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
             .copy(program = catalogProgram("PBLN_CLOSED").program.copy(status = SupportProgramStatus.CLOSED))
         val upcoming = catalogProgram("PBLN_UPCOMING")
             .copy(program = catalogProgram("PBLN_UPCOMING").program.copy(status = SupportProgramStatus.UPCOMING))
-        doReturn(listOf(closed, upcoming)).`when`(supportProgramRepository).findPresentBizInfo()
+        doReturn(listOf(closed, upcoming)).`when`(supportProgramRepository).findPresent()
         val output = directory.resolve("fixture.json")
         Files.writeString(output, "previous-fixture", UTF_8)
 
@@ -102,7 +133,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
 
         assertTrue(exception.message.orEmpty().contains("eligible"))
         assertEquals("previous-fixture", Files.readString(output, UTF_8))
-        verify(supportProgramRepository).findPresentBizInfo()
+        verify(supportProgramRepository).findPresent()
     }
 
     @Test
@@ -111,7 +142,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
         Files.writeString(output, "previous-fixture", UTF_8)
         doThrow(IllegalStateException("database unavailable"))
             .`when`(supportProgramRepository)
-            .findPresentBizInfo()
+            .findPresent()
 
         val exception = assertThrows(IllegalStateException::class.java) {
             runner("bizinfo-20260905-v1", output).run()
@@ -119,14 +150,14 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
 
         assertEquals("database unavailable", exception.message)
         assertEquals("previous-fixture", Files.readString(output, UTF_8))
-        verify(supportProgramRepository).findPresentBizInfo()
+        verify(supportProgramRepository).findPresent()
     }
 
     @Test
     fun keepsThePreviousFixtureWhenAnEligibleProgramHasNoStableSortTimestamp() {
         val withoutSortTimestamp = catalogProgram("PBLN_OPEN")
             .copy(sortTimestamp = "")
-        doReturn(listOf(withoutSortTimestamp)).`when`(supportProgramRepository).findPresentBizInfo()
+        doReturn(listOf(withoutSortTimestamp)).`when`(supportProgramRepository).findPresent()
         val output = directory.resolve("fixture.json")
         Files.writeString(output, "previous-fixture", UTF_8)
 
@@ -136,7 +167,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
 
         assertTrue(exception.message.orEmpty().contains("sortTimestamp"))
         assertEquals("previous-fixture", Files.readString(output, UTF_8))
-        verify(supportProgramRepository).findPresentBizInfo()
+        verify(supportProgramRepository).findPresent()
     }
 
     @Test
@@ -166,7 +197,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
         HexFormat.of().formatHex(
             MessageDigest.getInstance("SHA-256").digest(
                 programs
-                    .map(SupportProgramIndexDocumentMapper::fromBizInfo)
+                    .map(SupportProgramIndexDocumentMapper::fromCatalog)
                     .map { document -> "${document.id}:${document.contentHash}" }
                     .sorted()
                     .joinToString("\n")

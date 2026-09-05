@@ -138,7 +138,7 @@ class SupportProgramRepositoryIntegrationTest {
         assertEquals("pbln_case", stored.program.id)
         assertEquals(
             "BIZINFO:pbln_case",
-            SupportProgramIndexDocumentMapper.fromBizInfo(stored).id,
+            SupportProgramIndexDocumentMapper.fromCatalog(stored).id,
         )
     }
 
@@ -174,14 +174,17 @@ class SupportProgramRepositoryIntegrationTest {
     }
 
     @Test
-    fun findsOnlyPresentBizInfoProgramsForSearch() {
+    fun findsPresentProgramsAcrossSourcesForSearch() {
         val current = catalogProgram(id = "PBLN_CURRENT", title = "현재 노출 공고")
         val missing = catalogProgram(id = "PBLN_MISSING", title = "사라진 공고")
         repository.synchronizeBizInfo(listOf(current, missing))
         repository.synchronizeBizInfo(listOf(current))
         insertProgram(sourceCode = "OTHER", sourceProgramId = "PBLN_OTHER", title = "다른 제공처 공고")
 
-        assertEquals(listOf(current), repository.findPresentBizInfo())
+        assertEquals(
+            listOf("BIZINFO:PBLN_CURRENT", "OTHER:PBLN_OTHER"),
+            repository.findPresent().map { it.program.sourceQualifiedId },
+        )
     }
 
     @Test

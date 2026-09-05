@@ -69,7 +69,7 @@ class SupportProgramControllerTest {
             .retrieve("서울 AI", listOf(catalogProgram()))
         Mockito.doReturn(listOf(catalogProgram()))
             .`when`(supportProgramRepository)
-            .findPresentBizInfo()
+            .findPresent()
         ranking.response = { candidates ->
             listOf(
                 candidates.single().program.copy(
@@ -102,7 +102,7 @@ class SupportProgramControllerTest {
     fun returnsAnEmptyListWhenTheCurrentCatalogIsEmpty() {
         Mockito.doReturn(emptyList<CatalogSupportProgram>())
             .`when`(supportProgramRepository)
-            .findPresentBizInfo()
+            .findPresent()
 
         mockMvc.perform(get(PATH).queryParam("query", "서울"))
             .andExpect(status().isOk())
@@ -159,6 +159,15 @@ class SupportProgramControllerTest {
             .andExpect(status().isBadRequest())
             .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
             .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", "other:source")
+                .queryParam("sourceProgramId", "PBLN_TEST"),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
     }
 
     @Test
@@ -201,7 +210,7 @@ class SupportProgramControllerTest {
             .retrieve("서울", listOf(catalogProgram()))
         Mockito.doReturn(listOf(catalogProgram()))
             .`when`(supportProgramRepository)
-            .findPresentBizInfo()
+            .findPresent()
         ranking.failure = problemCase.exception
 
         assertProblem(
@@ -218,7 +227,7 @@ class SupportProgramControllerTest {
 
     @Test
     fun mapsIncompleteSemanticIndexToServiceUnavailable() {
-        Mockito.doReturn(listOf(catalogProgram())).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(listOf(catalogProgram())).`when`(supportProgramRepository).findPresent()
         Mockito.doThrow(AiServiceCallException.unavailable(null)).`when`(retrieval)
             .retrieve("서울", listOf(catalogProgram()))
 

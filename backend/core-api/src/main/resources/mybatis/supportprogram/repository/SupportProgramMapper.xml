@@ -99,7 +99,7 @@
           AND is_source_present = TRUE
     </select>
 
-    <select id="findPresentBySourceCode" resultMap="supportProgramDbRow">
+    <select id="findPresent" resultMap="supportProgramDbRow">
         SELECT
             source_code,
             source_program_id,
@@ -115,8 +115,8 @@
             source_url,
             source_sort_timestamp
         FROM support_program
-        WHERE source_code = #{sourceCode}
-          AND is_source_present = TRUE
+        WHERE is_source_present = TRUE
+        ORDER BY source_code ASC, source_program_id ASC
     </select>
 
     <insert id="insertSyncGenerationIfAbsent">

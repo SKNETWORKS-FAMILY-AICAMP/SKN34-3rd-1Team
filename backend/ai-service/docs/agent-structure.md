@@ -29,7 +29,9 @@ HTTP router
 → 의미 관련성 20점·총점 60점 기준 필터 후 점수순 SupportProgramRankingResponse (0~5개)
 ```
 
-현재 계약 버전은 `govbiz-support-program-ranking-v2`입니다. `targetEligibility`와 `regionEligibility`는
+현재 계약 버전은 `govbiz-support-program-ranking-v3`입니다. 후보 `id`와 응답 `programId`는
+`sourceCode:sourceProgramId` 형태의 정규 식별자이며, 서로 다른 제공처가 같은 원본 ID를 사용해도
+별개 후보로 검증합니다. `targetEligibility`와 `regionEligibility`는
 `MATCH`, `INCOMPATIBLE`, `UNKNOWN` 중 하나이며, 정보 부족을 뜻하는 `UNKNOWN`은 자동 제외하지 않습니다.
 이 Agent는 공고 단위 점수와 추천 이유를 반환합니다. 첨부문서 검색이나 근거 문단을 인용하는 답변 생성은 구현하지 않았습니다.
 

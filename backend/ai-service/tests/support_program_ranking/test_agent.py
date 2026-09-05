@@ -29,7 +29,7 @@ def ranking_request() -> SupportProgramRankingRequest:
         resultLimit=1,
         candidates=[
             SupportProgramCandidate(
-                id="program-1",
+                id="BIZINFO:program-1",
                 title="서울 AI 창업기업 사업화",
                 organization="서울경제진흥원",
                 summary="AI 창업기업의 사업화를 지원합니다.",
@@ -47,7 +47,7 @@ def valid_output() -> SupportProgramRankingOutput:
     return SupportProgramRankingOutput(
         rankings=[
             ScoredSupportProgram(
-                programId="program-1",
+                programId="BIZINFO:program-1",
                 semanticRelevance=38,
                 targetFit=24,
                 targetEligibility=SupportProgramEligibility.MATCH,
@@ -70,6 +70,7 @@ def test_prompt_declares_the_recommendation_minimum_without_omitting_candidates(
     assert "regionEligibility" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     assert "정보 부족만으로 INCOMPATIBLE로 판단하지 마세요" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     assert "candidates[].id" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "sourceCode:sourceProgramId" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     assert "출력의 programId" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
 
 
@@ -90,7 +91,7 @@ async def test_runs_typed_ranking_agent_through_the_real_runner() -> None:
     assert call.system_instructions == SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
     request_json = json.loads(call.input[0]["content"])  # type: ignore[index]
     assert request_json["originalQuery"] == "서울 AI 창업기업 지원"
-    assert request_json["candidates"][0]["id"] == "program-1"
+    assert request_json["candidates"][0]["id"] == "BIZINFO:program-1"
     assert call.output_schema is not None
     assert call.output_schema.output_type is SupportProgramRankingOutput
     assert call.model_settings.timeout == 3.0

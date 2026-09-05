@@ -29,7 +29,7 @@ class SupportProgramIndexSyncServiceTest {
     @Mock
     private lateinit var client: AiSupportProgramIndexClient
     private val programs = (1..17).map { catalogProgram("program-$it") }
-    private val documents = programs.map(SupportProgramIndexDocumentMapper::fromBizInfo)
+    private val documents = programs.map(SupportProgramIndexDocumentMapper::fromCatalog)
     private val firstBatch = AiSupportProgramIndexBatchRequest(documents.take(16))
     private val lastBatch = AiSupportProgramIndexBatchRequest(documents.drop(16))
 
@@ -39,8 +39,8 @@ class SupportProgramIndexSyncServiceTest {
         doReturn(AiSupportProgramIndexBatchPayload(1)).`when`(client).indexBatch(lastBatch)
         val service = SupportProgramIndexSyncService(repository, client)
 
-        assertEquals(17, service.indexBizInfoSnapshot(programs))
-        assertEquals(17, service.indexBizInfoSnapshot(programs))
+        assertEquals(17, service.indexSnapshot(programs))
+        assertEquals(17, service.indexSnapshot(programs))
 
         val order = inOrder(client)
         repeat(2) {
@@ -50,8 +50,29 @@ class SupportProgramIndexSyncServiceTest {
     }
 
     @Test
+    fun indexesProgramsFromDifferentSourcesWithTheSameRawId() {
+        val bizInfo = catalogProgram("SHARED")
+        val other = bizInfo.copy(
+            program = bizInfo.program.copy(
+                sourceCode = "OTHER",
+                sourceName = "다른 제공처",
+                sourceUrl = "https://other.example/program/SHARED",
+            ),
+        )
+        val snapshot = listOf(bizInfo, other)
+        val request = AiSupportProgramIndexBatchRequest(
+            snapshot.map(SupportProgramIndexDocumentMapper::fromCatalog),
+        )
+        doReturn(AiSupportProgramIndexBatchPayload(2)).`when`(client).indexBatch(request)
+        val service = SupportProgramIndexSyncService(repository, client)
+
+        assertEquals(2, service.indexSnapshot(snapshot))
+        verify(client).indexBatch(request)
+    }
+
+    @Test
     fun failedLaterBatchDoesNotPublishACompleteIndexAndNextRepairRetriesTheSnapshot() {
-        doReturn(programs).`when`(repository).findPresentBizInfo()
+        doReturn(programs).`when`(repository).findPresent()
         doReturn(AiSupportProgramIndexBatchPayload(16)).`when`(client).indexBatch(firstBatch)
         doThrow(AiServiceCallException.unavailable(null)).doReturn(AiSupportProgramIndexBatchPayload(1))
             .`when`(client).indexBatch(lastBatch)
@@ -69,7 +90,7 @@ class SupportProgramIndexSyncServiceTest {
         doReturn(AiSupportProgramIndexBatchPayload(15)).`when`(client).indexBatch(firstBatch)
 
         assertThrows(AiServiceCallException::class.java) {
-            SupportProgramIndexSyncService(repository, client).indexBizInfoSnapshot(programs)
+            SupportProgramIndexSyncService(repository, client).indexSnapshot(programs)
         }
 
         verify(client, never()).indexBatch(lastBatch)
@@ -77,7 +98,7 @@ class SupportProgramIndexSyncServiceTest {
 
     @Test
     fun emptyCatalogNeedsNoEmbeddingCall() {
-        doReturn(emptyList<CatalogSupportProgram>()).`when`(repository).findPresentBizInfo()
+        doReturn(emptyList<CatalogSupportProgram>()).`when`(repository).findPresent()
 
         assertEquals(0, SupportProgramIndexSyncService(repository, client).repair())
         verifyNoInteractions(client)
