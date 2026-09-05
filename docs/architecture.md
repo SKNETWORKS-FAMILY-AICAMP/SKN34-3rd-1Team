@@ -70,6 +70,25 @@ GET /api/v1/support-programs/detail
 `SUPPORT_PROGRAM_NOT_FOUND`(404)입니다. 검색 문맥이 없으므로 추천 이유는 빈 배열, 점수는 `null`입니다.
 공개 입력 제한과 JSON·오류 코드의 전체 계약은 [지원사업 API 계약](support-program-search-contract.md)에 있습니다.
 
+## 검색 품질 평가 캡처
+
+```text
+evaluation-capture profile (비웹 실행)
+  → 질문 묶음 JSON 검증
+  → SupportProgramSearchService.searchWithTrace
+      → MySQL 현재 공고 → Qdrant 후보 최대 20개 → AI 최종 추천 최대 5개
+  → 질문별 후보 ID·최종 ID·카탈로그 지문을 원자적으로 JSON 기록
+  → 별도 Python 평가 도구가 사람 라벨 fixture와 대조
+```
+
+이 경로는 공개 Controller나 디버그 HTTP endpoint가 아닙니다. `evaluation-capture` profile은 **자신의** 웹
+서버와 두 동기화 스케줄러를 끄며, 모든 질문이 성공하고 캡처 중 카탈로그 지문이 같을 때만 출력 파일을
+교체합니다. 별도 Core API 인스턴스가 카탈로그를 갱신한 경우에는 지문 변화로 결과 파일 기록을 거부합니다.
+후보 ID는 `sourceCode:sourceProgramId` 형태이고, 같은 Search Service가 만든 후보·최종 결과를 기록하므로
+평가 코드가 운영 검색 흐름을 별도로 재현하지 않습니다. 실제 AI Service를 호출할 수 있으므로 기본 실행·CI에는
+포함하지 않습니다. 실행과 라벨 fixture 규칙은 [검색 평가 자료](../evaluation/support-program-search/README.md)를
+따릅니다.
+
 ## 기업마당 동기화와 공개 순서
 
 ```text
@@ -180,5 +199,6 @@ Core의 Health는 프로세스 상태, AI Health는 AI Service의 정해진 Heal
 이들이 성공했다고 MySQL·Qdrant·OpenAI를 포함한 실제 검색 전체가 준비됐음을 보장하지 않습니다.
 전체 연결 동작은 [Compose 검증 절차](../infrastructure/README.md)로 확인합니다.
 
-현재 제품은 공고 요약의 의미 검색과 구조화된 추천 단계입니다. 첨부문서 수집·청킹·근거 인용 답변 RAG,
-여러 제공처 수집, 실제 공고 정답 데이터에 기반한 품질 평가는 구현 현황의 후속 범위로 구분합니다.
+현재 제품은 공고 요약의 의미 검색과 구조화된 추천 단계입니다. 실제 검색 후보·최종 추천을 캡처해 평가하는
+도구는 있으나, 실제 공고 정답 데이터와 사람이 검토한 품질 보고서는 아직 없습니다. 첨부문서 수집·청킹·근거
+인용 답변 RAG와 여러 제공처 수집도 구현 현황의 후속 범위로 구분합니다.

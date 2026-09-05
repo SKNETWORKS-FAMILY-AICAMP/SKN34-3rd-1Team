@@ -1,10 +1,72 @@
 import unittest
 from pathlib import Path
 
-from evaluate import baseline_results, evaluate_results, load_fixture, validate_results
+from evaluate import (
+    CAPTURE_SCHEMA_VERSION,
+    baseline_results,
+    evaluate_capture,
+    evaluate_final_results,
+    evaluate_results,
+    eligible_catalog_fingerprint,
+    load_fixture,
+    query_set_sha256,
+    validate_capture,
+    validate_results,
+)
 
 
 class RetrievalEvaluationTest(unittest.TestCase):
+    def capture_fixture(self):
+        docs = [
+            {"id": "BIZINFO:A", "contentHash": "a" * 64},
+            {"id": "BIZINFO:B", "contentHash": "b" * 64},
+            {"id": "OTHER:C", "contentHash": "c" * 64},
+        ]
+        fixture = {
+            "name": "capture-fixture-v1",
+            "dataType": "real_labeled_catalog_snapshot",
+            "docs": docs,
+            "cases": [
+                {"id": "Q1", "query": "서울 AI", "split": "dev", "relevantIds": ["BIZINFO:A"]},
+                {"id": "Q2", "query": "지원 없는 질문", "split": "dev", "relevantIds": []},
+                {"id": "Q3", "query": "추가 정보 필요", "split": "heldout", "relevantIds": None},
+            ],
+        }
+        fixture["catalog"] = {
+            "presentProgramCount": 3,
+            "eligibleProgramCount": 3,
+            "eligibleCatalogFingerprint": eligible_catalog_fingerprint(docs),
+        }
+        return fixture
+
+    def capture(self, fixture, observations):
+        return {
+            "schemaVersion": CAPTURE_SCHEMA_VERSION,
+            "querySet": {
+                "name": fixture["name"],
+                "sha256": query_set_sha256(fixture["cases"]),
+            },
+            "capturedAt": "2026-09-05T00:00:00Z",
+            "acceptingOnly": True,
+            "catalog": dict(fixture["catalog"]),
+            "search": {
+                "candidateLimit": 20,
+                "finalResultLimit": 5,
+                "scoringVersion": "govbiz-support-program-ranking-v2",
+            },
+            "observations": observations,
+        }
+
+    def observation(self, fixture, query_id, candidate_ids, final_program_ids):
+        case = next(case for case in fixture["cases"] if case["id"] == query_id)
+        return {
+            "id": query_id,
+            "query": case["query"],
+            "split": case["split"],
+            "candidateIds": candidate_ids,
+            "finalProgramIds": final_program_ids,
+        }
+
     def test_recall_uses_full_relevant_set_and_only_first_k_candidates(self):
         cases = [{"id": "Q", "relevantIds": ["A", "B"]}]
         report = evaluate_results(cases, {"Q": ["A", "X", "B"]}, k=2)
@@ -30,6 +92,43 @@ class RetrievalEvaluationTest(unittest.TestCase):
         report = evaluate_results([], {})
         self.assertIsNone(report["macroRecallAtK"])
 
+    def test_final_mrr_uses_first_relevant_program_within_top_five(self):
+        cases = [
+            {"id": "Q1", "relevantIds": ["A", "B"]},
+            {"id": "Q2", "relevantIds": ["C"]},
+            {"id": "Q3", "relevantIds": []},
+            {"id": "Q4", "relevantIds": None},
+        ]
+        results = {
+            "Q1": ["X", "B", "A"],
+            "Q2": ["X1", "X2", "X3", "X4", "X5", "C"],
+            "Q3": ["X"],
+            "Q4": [],
+        }
+
+        report = evaluate_final_results(cases, results)
+
+        self.assertEqual(5, report["k"])
+        self.assertEqual(0.5, report["macroRecallAt5"])
+        self.assertAlmostEqual(0.25, report["mrrAt5"])
+        self.assertEqual(1.0, report["noMatchFalsePositiveRate"])
+        details = {detail["queryId"]: detail for detail in report["perQuery"]}
+        self.assertEqual(2, details["Q1"]["firstRelevantRankAt5"])
+        self.assertEqual(0.5, details["Q1"]["reciprocalRankAt5"])
+        self.assertIsNone(details["Q2"]["firstRelevantRankAt5"])
+        self.assertEqual(0.0, details["Q2"]["reciprocalRankAt5"])
+
+    def test_query_set_hash_matches_the_korean_core_capture_contract(self):
+        cases = [
+            {"id": "Q01", "query": "서울 AI 지원", "split": "dev"},
+            {"id": "Q02", "query": "수출 바우처", "split": "heldout"},
+        ]
+
+        self.assertEqual(
+            "eb70524c7e1a92a8250b525ceee8e1b432833aedc6730646b3a009bcb12b4356",
+            query_set_sha256(cases),
+        )
+
     def test_missing_observation_is_not_silently_empty_result(self):
         cases = [{"id": "Q", "relevantIds": ["A"]}]
         with self.assertRaisesRegex(ValueError, "incomplete"):
@@ -41,6 +140,185 @@ class RetrievalEvaluationTest(unittest.TestCase):
             with self.subTest(ids=ids), self.assertRaises(ValueError):
                 validate_results({"Q": ids}, [{"id": "A"}], cases, cases)
 
+    def test_capture_reports_candidate_and_final_stages_separately(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:B", "BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", ["BIZINFO:B"], []),
+            ],
+        )
+
+        stages = validate_capture(capture, fixture, fixture["cases"])
+        report = evaluate_capture(capture, fixture, fixture["cases"], candidate_k=20)
+
+        self.assertEqual({"Q1": ["BIZINFO:B", "BIZINFO:A"], "Q2": ["BIZINFO:B"]}, stages["candidate"])
+        self.assertEqual({"Q1": ["BIZINFO:A"], "Q2": []}, stages["final"])
+        self.assertEqual(1.0, report["candidate"]["macroRecallAtK"])
+        self.assertEqual(1.0, report["candidate"]["noMatchFalsePositiveRate"])
+        self.assertEqual(1.0, report["final"]["macroRecallAt5"])
+        self.assertEqual(1.0, report["final"]["mrrAt5"])
+        self.assertEqual(0.0, report["final"]["noMatchFalsePositiveRate"])
+
+    def test_capture_rejects_a_different_catalog_snapshot(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        capture["catalog"]["presentProgramCount"] = 4
+
+        with self.assertRaisesRegex(ValueError, "does not match the fixture catalog snapshot"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_requires_a_complete_fixture_catalog_with_matching_content_fingerprint(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        fixture["docs"][0]["contentHash"] = "d" * 64
+
+        with self.assertRaisesRegex(ValueError, "does not match its document contentHash"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+        fixture = self.capture_fixture()
+        fixture["docs"].pop()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, "entire eligible catalog"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_eligible_catalog_fingerprint_is_sorted_by_canonical_id(self):
+        docs = self.capture_fixture()["docs"]
+
+        self.assertEqual(
+            eligible_catalog_fingerprint(docs),
+            eligible_catalog_fingerprint(list(reversed(docs))),
+        )
+
+    def test_capture_rejects_unknown_document(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:UNKNOWN"], []),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unknown returned document"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_rejects_missing_labeled_observation(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"])],
+        )
+
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_rejects_duplicate_candidate_or_final_program(self):
+        fixture = self.capture_fixture()
+        duplicate_candidates = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A", "BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        duplicate_final_programs = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A", "BIZINFO:B"], ["BIZINFO:A", "BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+
+        for capture in (duplicate_candidates, duplicate_final_programs):
+            with self.subTest(capture=capture), self.assertRaisesRegex(ValueError, "Duplicate returned document"):
+                validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_rejects_final_program_that_was_not_a_candidate(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:B"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "must be candidates"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_requires_canonical_fixture_ids_and_matching_query_set(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        fixture_with_bare_ids = self.capture_fixture()
+        fixture_with_bare_ids["docs"][0]["id"] = "A"
+        fixture_with_bare_ids["cases"][0]["relevantIds"] = ["A"]
+
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            validate_capture(capture, fixture_with_bare_ids, fixture_with_bare_ids["cases"])
+
+        capture["querySet"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "sha256"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_k_cannot_exceed_the_captured_candidate_limit(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        capture["search"]["candidateLimit"] = 1
+
+        with self.assertRaisesRegex(ValueError, "candidateLimit"):
+            evaluate_capture(capture, fixture, fixture["cases"], candidate_k=2)
+
+    def test_capture_requires_a_top_five_final_result_limit_and_valid_catalog_fingerprint(self):
+        fixture = self.capture_fixture()
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+        capture["search"]["finalResultLimit"] = 3
+
+        with self.assertRaisesRegex(ValueError, "finalResultLimit"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+        capture["search"]["finalResultLimit"] = 5
+        capture["catalog"]["eligibleCatalogFingerprint"] = "A" * 64
+        with self.assertRaisesRegex(ValueError, "Fingerprint"):
+            validate_capture(capture, fixture, fixture["cases"])
+
     def test_keyword_no_overlap_returns_empty_and_tie_order_is_stable(self):
         docs = [{"id": "B", "text": "서울 AI", "sortTimestamp": "20260101"}, {"id": "A", "text": "서울 AI", "sortTimestamp": "20260101"}]
         cases = [{"id": "Q1", "query": "서울"}, {"id": "Q2", "query": "부산"}]
@@ -51,6 +329,7 @@ class RetrievalEvaluationTest(unittest.TestCase):
 
     def test_fixture_has_old_relevant_cases_and_separate_splits(self):
         fixture = load_fixture(Path(__file__).with_name("fixture.json"))
+        self.assertEqual("synthetic_not_real_programs", fixture["dataType"])
         self.assertEqual(40, len(fixture["docs"]))
         self.assertEqual(30, len(fixture["cases"]))
         self.assertEqual(20, sum(case["split"] == "dev" for case in fixture["cases"]))
