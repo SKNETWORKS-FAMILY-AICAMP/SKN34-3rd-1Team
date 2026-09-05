@@ -1,462 +1,167 @@
 # GovBiz Core API
 
-Spring Boot 기반의 GovBiz 브라우저 공개 API입니다. React의 업무 요청을 받고, 정기적으로 동기화한
-MySQL 기업마당 공고 카탈로그와 내부 AI Service 호출 결과를 안정적인 공개 HTTP 계약으로 변환합니다.
+브라우저에 공개하는 Spring Boot API입니다. 기업마당 공고를 수집해 벡터 색인을 준비한 뒤 MySQL에
+공개하고, 저장된 공고의 검색·상세 조회와 내부 AI Service 호출을 담당합니다.
 
-## 현재 API
-
-| Endpoint | 용도 |
-|---|---|
-| `GET /api/v1/health` | Core API 자체 상태 |
-| `GET /api/v1/health/ai-service` | Core API를 통한 AI Service 상태 |
-| `GET /api/v1/support-programs/search?query=수출&acceptingOnly=true` | MySQL 기업마당 공고 카탈로그 검색 |
-| `GET /api/v1/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN_001` | 복합 원본 식별자로 현재 노출 공고 상세 조회 |
-| `POST /api/v1/sample-items/prepare` | 예제 수직 슬라이스의 입력 검증과 준비 상태 반환 |
-
-지원사업 검색·상세의 요청·응답 필드, 날짜·상태 의미와 오류 코드는
-[지원사업 검색·상세 HTTP 계약](../../docs/support-program-search-contract.md)을 참고하세요. 검색 결과는
-추천 최소 기준을 통과한 공고를 LLM 총점 순으로 0~5개 반환합니다.
-
-`SampleItem`의 정확한 요청·응답은 [SampleItem 계약](../../docs/sample-item-contract.md)을
-참고하세요.
-
-현재 SampleItem은 실제 지원사업 검색과 무관한 계층 연결 구조 예제입니다.
-
-## 구조
-
-```text
-supportprogram/
-├── controller/             # 지원사업 공개 HTTP API
-│   └── dto/                # 지원사업 공개 요청·응답 계약
-├── service/
-│   ├── detail/             # 제공처·원본 ID로 현재 공고 상세를 조회
-│   ├── search/             # 전체 MySQL 공고의 의미 검색·점수화 흐름
-│   ├── sync/               # 기업마당→색인 준비→MySQL 공개 및 누락 벡터 복구·정기 실행
-│   └── dto/                # 검증된 검색 실행 결과
-├── config/                 # 지원사업 공용 Spring 설정
-├── facade/                 # 기업마당 수집·의미 검색·AI 점수화 경계
-│   └── exception/          # 상위 Service에 전달하는 Facade 실패 계약
-├── domain/                 # 지원사업·정규화된 검색 후보 모델과 상태
-├── repository/             # MySQL 지원사업 카탈로그 저장·조회
-│   └── mapper/             # MyBatis SQL Mapper와 DB 행 타입
-└── client/
-    ├── ai/                 # AI 점수화·벡터 색인·의미 검색 Client
-    │   ├── dto/            # AI 내부 요청·응답 계약
-    │   └── mapper/         # 동일 공고 버전의 검색 문서·SHA-256 구성
-    └── bizinfo/            # 기업마당 HTTP와 외부 응답 해석
-        ├── config/         # 기업마당 Client 설정·속성
-        ├── dto/            # 기업마당 응답 계약
-        ├── exception/      # 기업마당 전용 Client 오류 계약
-        ├── helper/         # 기업마당 전용 HTTP·JSON 변환 헬퍼
-        └── mapper/         # 기업마당 DTO를 검색 후보로 변환
-_sampleitem/
-├── controller/             # SampleItem 공개 API
-│   └── dto/                # SampleItem 공개 요청·응답 계약
-├── service/                # SampleItem 준비 흐름
-└── domain/                 # SampleItem 모델과 상태
-_health/
-└── controller/             # Core API 자체 Health API
-    └── dto/                # Core API Health 공개 응답 계약
-_health_ai_service/
-├── client/                 # AI Service 내부 Health HTTP 호출
-│   └── dto/                # AI Service Health 응답 계약
-├── controller/             # AI Service Health 공개 API
-│   └── dto/                # AI Service Health 공개 응답 계약
-└── service/                # AI Service Health 응답 검증
-    └── dto/                # 검증된 Health 실행 결과
-_common/
-├── ai_config/              # AI Client 주소·일반/의미검색 timeout·RestClient 설정
-├── config/                 # 전체 API의 CORS·JSON 정책
-├── exception/              # 공통 AI 호출 예외와 ProblemDetail 예외 처리
-└── helper/                 # 공통 RestClient 생성·검증과 HTTP 예외 분류 헬퍼
-```
-
-Kotlin 기본 패키지는 `ai.govbiz.core`이고 Gradle 프로젝트명은 `govbiz-core-api`입니다.
-
-### 파일 배치 규칙
-
-전송 객체와 모델은 이름에 `Request`, `Response`, `Payload`가 들어가는지만 보고 프로젝트 전체의
-한 DTO 폴더에 모으지 않습니다. 그 객체를 만들고 해석하며 책임지는 코드 가까이에 둡니다.
-
-```text
-공개 HTTP Request/Response → controller/dto
-외부 API Request/Payload  → client/dto
-검증된 실행 Result        → service/dto
-업무 모델                 → domain
-```
-
-| 구분 | 배치 위치 | 현재 예시 |
-|---|---|---|
-| 브라우저가 Core API에 보내거나 받는 공개 HTTP 계약 | 해당 기능의 `controller/dto` | `SampleItemPreparationRequest`, `SupportProgramSearchResponse` |
-| Core가 AI Service·기업마당처럼 다른 시스템과 주고받는 계약 | 해당 외부 시스템의 `client/dto` | `AiSupportProgramRankingRequest`, `BizInfoProgramPayload` |
-| 외부 응답 검증과 업무 처리를 마친 애플리케이션 실행 결과 | 해당 기능의 `service/dto` | `AiServiceHealthResult`, `SupportProgramSearchResult` |
-| 프레임워크·HTTP 형식과 무관한 업무 개념과 불변식 | 해당 기능의 `domain` | `SampleItem`, `SupportProgram`, `CatalogSupportProgram` |
-
-두 곳에서 같은 필드가 보인다는 이유만으로 계약을 합치거나 `_common`으로 옮기지 않습니다. 실제로
-둘 이상의 기능이 같은 의미와 변경 이유를 공유할 때만 공통화를 검토합니다.
-
-### 파일·타입 이름과 Helper 배치 규칙
-
-파일과 타입 이름은 맡은 역할을 접미사로 드러냅니다. 같은 역할은 같은 접미사를 사용하고,
-`Support`, `Util`, `Common`처럼 구체적인 동작을 알기 어려운 이름은 사용하지 않습니다.
-
-| 역할 | 접미사 | 현재 예시 |
-|---|---|---|
-| 공개 HTTP 진입점 | `Controller` | `SupportProgramController` |
-| 애플리케이션 흐름·업무 처리 | `Service` | `SupportProgramSearchService` |
-| 하위 기능의 호출·검증·변환을 단일 진입점으로 제공 | `Facade` | `BizInfoSupportProgramCatalogFacade`, `AiSupportProgramRankingFacade` |
-| 업무 모델을 데이터베이스에 저장·조회 | `Repository` | `SupportProgramRepository` |
-| MyBatis SQL 실행 계약 | `Mapper` | `SupportProgramMapper` |
-| 외부 시스템 HTTP 통신 | `Client` | `BizInfoClient`, `HttpAiSupportProgramRankingClient` |
-| 경계별 실패 분류 | `Exception` | `BizInfoClientException`, `AiServiceCallException` |
-| 외부 DTO를 내부 모델로 변환 | `Mapper` | `BizInfoProgramMapper` |
-| Spring Bean 구성 | `Config` | `BizInfoClientConfig` |
-| 환경설정 값 | `Properties` | `BizInfoClientProperties` |
-| 공개·외부·내부 전송 객체 | `Request`, `Response`, `Payload`, `Result` | `SupportProgramSearchResponse`, `BizInfoProgramPayload` |
-| 다른 코드의 반복 작업을 보조 | `Helper` | `HttpCallHelper`, `BizInfoPageDecoderHelper` |
-
-### Facade 배치 규칙
-
-이 프로젝트에서 Facade는 Controller 위에 두는 상위 진입점이 아니라, Service가 복잡한 하위 시스템을
-간단하게 사용하도록 감싸는 내부 경계입니다. 기본 의존 방향은 다음과 같이 고정합니다.
-
-```text
-Controller → Service → Facade → Client → 외부 시스템
-```
-
-- Controller는 Facade나 Client를 직접 호출하지 않고 사용자 유스케이스를 담당하는 Service만 호출합니다.
-- Service는 Repository를 직접 사용할 수 있습니다. 외부 하위 시스템의 요청 생성, Client 호출,
-  응답 검증, 도메인 변환이 함께 필요할 때 Facade를 사용합니다.
-- Facade는 자신을 호출한 상위 Service를 다시 호출하지 않습니다. `Service ↔ Facade` 순환 의존성은
-  허용하지 않습니다.
-- 단순히 Client 메서드를 한 줄 전달하는 경우에는 Facade를 만들지 않고 Service가 Client를 직접
-  사용합니다.
-
-`BizInfoSupportProgramCatalogFacade`는 동기화 Service가 사용할 기업마당 전체 조회·Facade 실패 변환·공고
-정규화를 `load` 하나로 감춥니다. 검색 Service는 이 Facade가 아니라 Repository에서 동기화된 공고를 직접
-읽습니다. `AiSupportProgramRankingFacade`는 AI 요청 생성·점수화 Client 호출·응답의 공고 ID·점수·순서
-검증과 도메인 변환을 `rank` 하나로 감춥니다. 둘 다 단순 전달 객체가 아니라 이 규칙에 맞는 하위 시스템
-Facade입니다.
-
-Helper는 사용 범위에 따라 배치합니다.
-
-```text
-둘 이상의 기능이 함께 사용 → _common/helper
-특정 외부 시스템만 사용   → 해당 client/helper
-특정 기능만 사용           → 해당 기능/helper
-```
-
-Helper 파일과 `object`·클래스 이름은 `Helper`로 끝냅니다. Helper 안의 함수는
-`executeHttpCall`, `buildRestClient`, `decode`처럼 수행 동작을 동사로 표현하며 함수 이름에
-`Helper`를 반복해서 붙이지 않습니다. 역할이 이미 `Controller`, `Service`, `Facade`, `Client`, `Mapper`로
-명확한 코드는 Helper 디렉터리로 옮기지 않습니다. 공통 사용처가 하나뿐인 코드를
-미리 `_common/helper`로 올리지 않습니다.
-
-### AI Health의 Payload·Result·Response를 분리하는 이유
-
-AI Service Health 흐름에는 현재 `status`, `service`라는 동일한 필드를 가진 객체가 세 개 있습니다.
-필드 모양이 같더라도 각 객체가 소유하는 경계와 신뢰 수준이 다르기 때문에 의도적으로 분리합니다.
-
-```text
-AI Service의 신뢰하지 않는 JSON
-  → AiServiceHealthPayload       # client가 역직렬화
-  → AiServiceHealthService 검증  # status·service exact 확인
-  → AiServiceHealthResult        # 검증된 내부 실행 결과
-  → AiServiceHealthController    # 공개 계약으로 변환
-  → AiServiceHealthResponse      # 브라우저에 반환하는 JSON
-```
-
-| 타입 | 소유 위치 | 의미와 변경 이유 |
-|---|---|---|
-| `AiServiceHealthPayload` | `_health_ai_service/client/dto` | 외부 AI Service JSON을 그대로 받는 신뢰하지 않는 입력입니다. 누락·`null`·잘못된 값을 검증할 수 있도록 필드가 nullable입니다. |
-| `AiServiceHealthResult` | `_health_ai_service/service/dto` | Client 응답이 `status=up`, `service=govbiz-ai-service` 계약을 통과한 뒤 만들어지는 non-null 내부 결과입니다. 향후 확인 시각이나 지연시간 같은 내부 정보가 추가될 수 있습니다. |
-| `AiServiceHealthResponse` | `_health_ai_service/controller/dto` | Core API가 브라우저에 보장하는 공개 HTTP 응답입니다. 내부 결과가 확장되어도 공개할 필드만 선택하여 API 형식을 유지합니다. |
-
-현재 `Result`와 `Response`의 필드는 같아서 Controller 변환이 단순합니다.
-
-```kotlin
-val result = aiServiceHealthService.getHealth()
-return AiServiceHealthResponse(result.status, result.service)
-```
-
-하지만 나중에 내부 결과에 `latencyMs`, `checkedAt`을 추가하더라도 공개 응답에 자동으로 노출되지
-않습니다. 반대로 공개 JSON의 이름이나 구성을 바꾸더라도 Service 결과를 함께 바꿀 필요가 없습니다.
-또한 Service가 Controller의 응답 타입에 의존하지 않으므로 의존 방향도 `controller → service → client`로
-유지됩니다. 따라서 이 분리는 코드 중복을 위한 것이 아니라 외부 입력, 검증된 내부 결과, 공개 응답의
-서로 다른 계약을 독립적으로 변경하기 위한 경계입니다.
-
-지원사업 검색 관련 코드는 `supportprogram` 기능 디렉터리에서 함께 관리합니다. `service/search`는
-Repository에서 현재 노출된 기업마당 공고를 읽고 접수 상태 필터·전체 공고 의미 검색·AI 점수화를 연결합니다.
-`service/sync`는 시작 세대 발급·기업마당 전체 공고 수집·색인 준비·DB 공개와 별도 누락 벡터 복구를 소유합니다. `facade`는
-`SupportProgramCatalogFacade`·`SupportProgramRankingFacade` 계약과 그 구현을 함께 관리하고, 하위
-`exception`에는 상위 Service에 전달하는 안정적인 Facade 실패 계약을 둡니다.
-`BizInfoSupportProgramCatalogFacade`는 동기화에 필요한 기업마당 조회·오류 변환·공고 정규화를 `load`
-하나로 감추고, `AiSupportProgramRankingFacade`는 AI 요청 생성·호출·응답 검증·도메인 변환을 `rank`
-하나로 감춥니다. `BizInfoSupportProgramCatalogSyncService`는 수집 전에 Repository에서 시작 세대를 발급받고,
-Facade의 전체 수집·검증과 `SupportProgramIndexSyncService.indexBizInfoSnapshot()`의 전체 색인을 마친 뒤
-Repository의 짧은 DB transaction에서 최신 시작 세대일 때만 공개합니다. `repository/SupportProgramRepository`는 정규화된
-기업마당 공고를 MySQL에 저장하고 읽으며, 저장된 신청 기간에서 현재 접수 상태를 다시 계산합니다.
-기업마당 전체 동기화에서는 기존 BIZINFO 행을 미노출 처리하고 이번 목록 UPSERT를 하나의 transaction으로
-묶어, 중간 실패 시 이전 카탈로그를 보존합니다. SQL은 `repository/mapper/SupportProgramMapper`와
-`src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml`에 두어 Kotlin 업무 코드에서
-분리합니다. 벡터 색인과 의미 검색은 `BIZINFO:{원본 ID}`와 검색 문서의 SHA-256으로 현재 버전을
-구분합니다. 현재 점수화 후보와 공개 응답은 원본 ID를 유지하므로 두 번째 제공처를 실제로
-추가할 때는 이 공개·점수화 식별자 계약과 표시 이름 매핑도 함께 확장합니다. 모든 전송 객체를
-프로젝트 전체의 한 DTO 폴더에 모으지 않습니다. 브라우저 공개 응답은 `supportprogram/controller/dto`,
-AI Service 요청·응답은 `supportprogram/client/ai/dto`, 기업마당 응답은 `supportprogram/client/bizinfo/dto`,
-검증된 검색 결과는 `supportprogram/service/dto`가 각각 소유합니다. `BizInfoClient`는 인증키·pagination·
-공공데이터포털 HTTP 전송을 담당하고, `BizInfoPageDecoderHelper`가 허용된 JSON 구조만 DTO로 변환합니다.
-`client/bizinfo/mapper`의 `BizInfoProgramMapper`는 모든 공고의 필수 값을 검증한 뒤 외부 DTO를 검색 후보로
-정규화합니다. Client 설정과 속성은 `client/bizinfo/config`, 전용 실패 계약은 `client/bizinfo/exception`,
-전용 보조 코드는 `client/bizinfo/helper`에서 관리하고, 접수 상태 계산용 서울 기준 시계는
-`supportprogram/config`에 둡니다. Kotlin 단어 사전과 고정 관련도 가중치는 사용하지 않습니다.
-
-`service/detail/SupportProgramDetailService`는 외부 API나 AI를 다시 호출하지 않고 Repository에서 현재 노출된
-공고를 조회합니다. 공개 응답은 기존 `id`(제공처 원본 ID)에 `sourceCode`를 함께 제공하고, 상세 요청은 이 두 값을
-각각 전달합니다. 따라서 서로 다른 제공처가 같은 원본 ID를 사용해도 하나의 문자열로 합치거나 기업마당 ID로
-고정하지 않고 정확한 MySQL 행을 찾습니다. 현재 미노출이거나 없는 조합은
-`SUPPORT_PROGRAM_NOT_FOUND` ProblemDetail(404)로 반환합니다.
-
-계층 연결 예제인 SampleItem도 `_sampleitem/controller → service → domain`으로 독립되어 있으며 공개 요청·응답 형식은 `_sampleitem/controller/dto`가 소유합니다.
-
-Core API 프로세스 자체의 생존 상태는 `_health/controller`, 공개 응답 계약은 `_health/controller/dto`가 담당합니다. AI Service 연결 상태를 확인하는 `_health_ai_service` 기능과는 별개입니다. `_health_ai_service/client/AiServiceHealthClient`는 내부 Health API만 호출하고, 공개 Health 응답은 `_health_ai_service/controller/dto`, 지원사업 점수화 호출은 `supportprogram/client/ai/HttpAiSupportProgramRankingClient`가 담당합니다.
-
-둘 이상의 기능이 실제로 함께 사용하는 코드만 `_common`에 둡니다. 앞의 밑줄은 IDE의 알파벳 정렬에서 공통 코드를 기능보다 위에 표시하려는 프로젝트 규칙입니다. `_common/ai_config`는 AI Service 주소·timeout과 공용 `RestClient` 설정만 담당합니다. `_common/helper`는 범용 `RestClient` 생성·설정 검증과 AI·기업마당 Client가 함께 사용하는 연결 실패·timeout·Spring 응답 해석 실패 분류를 담당합니다. 각 외부 시스템은 이 공통 분류를 자기 예외 계약으로 변환합니다. `_common/exception`은 공통 AI 호출 예외와 공개 ProblemDetail 변환을 담당합니다. 반면 HTTP 204·503·504가 각 기능에서 무엇을 뜻하는지는 각 Client가 판단합니다. `_common/config`는 전체 API의 JSON·CORS 정책을 담당합니다.
-
-## 외부 HTTP 호출의 공통 처리와 기능별 처리
-
-AI Health·지원사업 점수화·기업마당 수집은 서로 다른 API입니다. 하지만 Spring이 표현하는 연결
-실패·timeout·JSON 역직렬화 실패는 같으므로 그 분류만 `executeHttpCall`로 공통화합니다.
-
-```text
-AiServiceHealthClient ─────────────┐
-HttpAiSupportProgramRankingClient ─┼─ executeHttpCall { 각 Client의 HTTP 호출 }
-BizInfoClient ─────────────────────┘    ├─ 연결 실패 공통 분류
-                                       ├─ 네트워크 timeout 공통 분류
-                                       └─ Spring 응답 해석 실패 공통 분류
-```
-
-공통 함수는
-[`HttpCallHelper.kt`](src/main/kotlin/ai/govbiz/core/_common/helper/HttpCallHelper.kt)에 있습니다. 각
-Client가 전달한 코드 블록을 `try` 안에서 실행하고, 실패 종류에 맞는 예외 생성 함수를 호출합니다.
-
-```kotlin
-fun <T> executeHttpCall(
-    onTimeout: (Throwable) -> RuntimeException,
-    onUnavailable: (Throwable) -> RuntimeException,
-    onUpstreamError: (RestClientResponseException) -> RuntimeException,
-    onInvalidResponse: (RestClientException) -> RuntimeException,
-    block: () -> T,
-): T =
-    try {
-        block()
-    } catch (exception: ResourceAccessException) {
-        // timeout인지 연결 불가인지 공통 판별
-    } catch (exception: RestClientResponseException) {
-        // 처리되지 않은 HTTP 응답 오류
-    } catch (exception: RestClientException) {
-        // JSON 역직렬화 같은 RestClient 오류
-    }
-```
-
-`executeAiServiceCall`은 이 공통 함수를 AI용 `AiServiceCallException`과 연결합니다. 기업마당은
-`executeBizInfoHttpCall`을 통해 같은 공통 함수를 `BizInfoClientException`과 연결합니다. 기업마당에서
-AI용 helper를 그대로 사용하면 공개 오류가 `AI_SERVICE_*`로 잘못 표시되므로, 공통화 대상은 Spring
-예외 판별까지만입니다.
-
-| 공통 판별 | AI 호출 결과 | 기업마당 호출 결과 |
-|---|---|---|
-| 연결 불가 | `AiServiceFailure.UNAVAILABLE` | `BizInfoClientException.Failure.UNAVAILABLE` |
-| timeout | `AiServiceFailure.TIMEOUT` | `BizInfoClientException.Failure.TIMEOUT` |
-| HTTP 응답 오류 | `AiServiceFailure.UPSTREAM_ERROR` | `BizInfoClientException.Failure.UPSTREAM_ERROR` |
-| 역직렬화 오류 | `AiServiceFailure.INVALID_RESPONSE` | `BizInfoClientException.Failure.INVALID_RESPONSE` |
-
-Health Client는 다음처럼 이 공통 함수 안에서 자기 HTTP 요청을 실행합니다.
-
-```kotlin
-fun getHealth(): AiServiceHealthPayload =
-    executeAiServiceCall {
-        restClient.get()
-            .uri("/internal/v1/health")
-            .retrieve()
-            .onStatus(/* Health 응답 상태 해석 */)
-            .toEntity(AiServiceHealthPayload::class.java)
-    }
-```
-
-여기서 `executeAiServiceCall`은 연결·timeout·JSON 해석 오류를 처리하고, `onStatus`는 실제 HTTP
-응답을 받은 뒤 그 상태 코드의 의미를 판단합니다. 숫자 대신 Spring 상수를 사용합니다.
-
-| Spring 표현 | 실제 HTTP 상태 |
-|---|---:|
-| `HttpStatus.OK.value()` | 200 |
-| `HttpStatus.NO_CONTENT.value()` | 204 |
-| `HttpStatus.REQUEST_TIMEOUT.value()` | 408 |
-| `HttpStatus.SERVICE_UNAVAILABLE.value()` | 503 |
-| `HttpStatus.GATEWAY_TIMEOUT.value()` | 504 |
-
-현재 상태 해석은 다음과 같습니다.
-
-| 내부 API | 204 | 503 | 408·504 | 그 밖의 200이 아닌 상태 |
-|---|---|---|---|---|
-| Health | `INVALID_RESPONSE` | `UNAVAILABLE` | `UPSTREAM_ERROR` | `UPSTREAM_ERROR` |
-| 지원사업 점수화 | `INVALID_RESPONSE` | `UNAVAILABLE` | `TIMEOUT` | `UPSTREAM_ERROR` |
-
-204와 503은 현재 두 Client에서 같은 오류로 바뀌지만, 각 내부 API의 상태 계약을 코드에서 바로
-확인할 수 있도록 `onStatus` 안에 명시적으로 둡니다. 공통화된 것은 그 뒤에 사용하는
-`AiServiceCallException`의 네 가지 분류와 공개 ProblemDetail 변환입니다. 따라서 흐름은 다음과
-같습니다.
-
-```text
-HTTP 상태를 기능별 Client가 해석
-  → UPSTREAM_ERROR | INVALID_RESPONSE | UNAVAILABLE | TIMEOUT
-  → ApiExceptionHandler가 공개 502 | 502 | 503 | 504 ProblemDetail로 변환
-```
-
-HTTP 200을 받았더라도 body가 없으면 각 Client가 `INVALID_RESPONSE`를 발생시킵니다. 연결조차 되지
-않거나 소켓 timeout이 발생하면 HTTP 상태가 없으므로 `onStatus`가 아니라 공통
-`executeAiServiceCall`이 처리합니다.
+프로젝트 전체 설명은 [메인 README](../../README.md), 기술 선택과 구현 범위는
+[기술 구성](../../docs/technology.md)과 [구현 현황](../../docs/implementation-status.md),
+실제 호출·데이터 흐름은 [아키텍처](../../docs/architecture.md)를 참고하세요.
 
 ## 실행
 
-JDK 21이 필요합니다.
+JDK 21과 MySQL 8.4가 필요합니다. 실제 공고 동기화·의미 검색에는 실행 중인 AI Service와 Qdrant도
+필요합니다. 전체 서비스를 함께 실행하는 방법은 [인프라 README](../../infrastructure/README.md)를 참고하세요.
 
-Core API는 Flyway로 스키마를 적용하는 MySQL 연결이 필요합니다. 기본값은
-`jdbc:mysql://127.0.0.1:3306/govbiz`이며, Compose 실행에서는 내부 `mysql` 서비스 주소를 사용합니다.
+저장소 루트에서 다음 명령으로 실행합니다. 네이티브 실행은 루트 `.env`를 자동으로 읽지 않으므로
+필요한 환경변수를 현재 프로세스에 설정해야 합니다.
 
 ```bash
+cd backend/core-api
 ./gradlew bootRun
 ```
 
-기본 주소는 `http://127.0.0.1:8080`입니다. 기업마당 공고를 동기화하려면 공공데이터포털에서 발급한
-개인 서비스키가 필요합니다. Encoding 또는 Decoding 키를 `DATA_GO_KR_SERVICE_KEY`에 넣을 수 있으며,
-Core API가 외부 요청 전에 정확히 한 번 인코딩합니다. 키가 없어도 이미 저장된 공고는 검색할 수 있지만,
-새 MySQL 카탈로그는 채워지지 않습니다. 키를 `application.properties`, Git 또는 Frontend 환경변수에
-기록하지 마세요.
+기본 주소는 `http://127.0.0.1:8080`입니다. 실행 시 Flyway가 MySQL 스키마를 적용합니다.
+`DATA_GO_KR_SERVICE_KEY`가 비어 있으면 수집 작업은 실패를 기록하며 다음 주기에 다시 시도합니다.
+기존 DB의 빈 검색어 목록·상세 조회는 가능하고, 검색어가 있는 검색은 AI Service와 해당 공고 버전의
+색인이 있어야 성공합니다. 새 카탈로그 공개에도 색인 준비가 필수이므로 기업마당 키만으로 동기화가
+완료되지는 않습니다.
+
+## 공개 API
+
+| 메서드·경로 | 용도 |
+|---|---|
+| `GET /api/v1/health` | Core API 자체 생존 상태 |
+| `GET /api/v1/health/ai-service` | AI Service의 내부 Health 응답 확인 |
+| `GET /api/v1/support-programs/search` | 현재 MySQL 기업마당 공고의 검색 또는 최신 목록 |
+| `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회 |
+| `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
+
+- 검색: 필수 `query`는 최대 500자이며 빈 문자열을 허용합니다. `acceptingOnly`의 기본값은 `true`이고
+  이때 `OPEN` 공고만 대상으로 삼습니다. 검색어가 있으면 의미 검색 후보 최대 20개를 AI가 점수화하여
+  기준을 통과한 0~5개를 반환합니다. 빈 검색어는 AI를 호출하지 않고 최신순 최대 5개를 반환합니다.
+- 상세: 필수 `sourceCode`는 최대 64자, `sourceProgramId`는 최대 255자이며 공백만 있는 값은 허용하지
+  않습니다. 현재 노출된 행만 반환하며, 없는·미노출 공고는 404입니다. 검색 문맥이 없으므로 추천 이유는
+  빈 배열, 추천 점수는 `null`입니다.
+- 현재 수집·전체 검색·색인은 `BIZINFO` 한 제공처를 지원합니다. 상세 조회와 DB 고유키는
+  `(source_code, source_program_id)`를 사용하지만 다른 제공처의 수집기는 구현되어 있지 않습니다.
+
+요청·응답 JSON과 상세 오류 계약은 [지원사업 API 계약](../../docs/support-program-search-contract.md),
+SampleItem 예제는 [별도 계약](../../docs/sample-item-contract.md)에 있습니다.
+
+## 설정
+
+기본값의 기준은 [`application.properties`](src/main/resources/application.properties)입니다.
+Compose는 일부 주소·CORS 값을 내부 네트워크에 맞게 덮어씁니다.
 
 | 환경변수 | 기본값 | 용도 |
 |---|---|---|
-| `DATA_GO_KR_SERVICE_KEY` | 빈 값 | 기업마당 자동 동기화용 공공데이터포털 인증키 |
-| `BIZINFO_API_BASE_URL` | `https://apis.data.go.kr` | 공고 API origin |
-| `BIZINFO_API_CONNECT_TIMEOUT` | `2s` | 공고 API 연결 제한시간 |
-| `BIZINFO_API_READ_TIMEOUT` | `10s` | 공고 API 응답 제한시간 |
-| `BIZINFO_SYNC_ENABLED` | `true` | `false`이면 기업마당 공고 자동 동기화를 실행하지 않음 |
-| `BIZINFO_SYNC_INITIAL_DELAY` | `PT0S` | 앱 준비 뒤 첫 동기화까지의 ISO-8601 기간. 기본값은 즉시 실행 |
-| `BIZINFO_SYNC_FIXED_DELAY` | `PT6H` | 이전 동기화가 끝난 뒤 다음 동기화까지의 ISO-8601 기간 |
+| `SPRING_DATASOURCE_URL` | `jdbc:mysql://127.0.0.1:3306/govbiz` | MySQL JDBC 주소 |
+| `SPRING_DATASOURCE_USERNAME` | `govbiz` | MySQL 사용자 |
+| `SPRING_DATASOURCE_PASSWORD` | `govbiz-local` | 로컬 개발용 MySQL 비밀번호 |
+| `DATA_GO_KR_SERVICE_KEY` | 빈 값 | 기업마당 수집용 공공데이터포털 키 |
+| `BIZINFO_API_BASE_URL` | `https://apis.data.go.kr` | 기업마당 API 주소 |
+| `BIZINFO_API_CONNECT_TIMEOUT` | `2s` | 기업마당 연결 제한시간 |
+| `BIZINFO_API_READ_TIMEOUT` | `10s` | 기업마당 응답 제한시간 |
+| `BIZINFO_SYNC_ENABLED` | `true` | 기업마당 수집·색인 준비·DB 공개 작업 실행 여부 |
+| `BIZINFO_SYNC_INITIAL_DELAY` | `PT0S` | 첫 수집 작업까지의 지연 |
+| `BIZINFO_SYNC_FIXED_DELAY` | `PT6H` | 이전 수집 작업 종료 후 다음 실행까지의 지연 |
 | `AI_SERVICE_BASE_URL` | `http://127.0.0.1:8000` | 내부 AI Service 주소 |
 | `AI_SERVICE_CONNECT_TIMEOUT` | `1s` | AI Service 연결 제한시간 |
-| `AI_SERVICE_READ_TIMEOUT` | `12s` | AI Service 응답 제한시간(LLM 전체 제한 10초 + 내부 응답 여유) |
-| `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | 의미 검색·문서 색인 HTTP 응답 제한시간 |
-| `SUPPORT_PROGRAM_INDEX_ENABLED` | `true` | 이미 공개된 MySQL 공고의 누락 벡터 자동 복구 여부. 새 카탈로그 공개 전 필수 색인은 별도 |
-| `SUPPORT_PROGRAM_INDEX_INITIAL_DELAY` | `PT0S` | 첫 누락 벡터 복구 실행까지의 기간 |
-| `SUPPORT_PROGRAM_INDEX_FIXED_DELAY` | `PT1M` | 이전 누락 벡터 복구 종료 뒤 다음 실행까지의 기간 |
+| `AI_SERVICE_READ_TIMEOUT` | `12s` | Health·점수화 응답 제한시간 |
+| `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | 의미 검색·색인 응답 제한시간 |
+| `SUPPORT_PROGRAM_INDEX_ENABLED` | `true` | 이미 공개된 공고의 누락 벡터 자동 복구 여부 |
+| `SUPPORT_PROGRAM_INDEX_INITIAL_DELAY` | `PT0S` | 첫 누락 벡터 복구까지의 지연 |
+| `SUPPORT_PROGRAM_INDEX_FIXED_DELAY` | `PT1M` | 이전 복구 작업 종료 후 다음 실행까지의 지연 |
 | `APP_CORS_ALLOWED_ORIGIN` | `http://localhost:5173` | 허용할 Web origin |
-| `SPRING_DATASOURCE_URL` | `jdbc:mysql://127.0.0.1:3306/govbiz` | MySQL JDBC 연결 주소 |
-| `SPRING_DATASOURCE_USERNAME` | `govbiz` | MySQL 연결 사용자 |
-| `SPRING_DATASOURCE_PASSWORD` | `govbiz-local` | MySQL 연결 비밀번호 |
 
-Compose 실행은 저장소 루트 `.env`의 기업마당 동기화용 `DATA_GO_KR_SERVICE_KEY`와 MySQL 연결 정보를
-Core API에, `OPENAI_API_KEY`를 AI Service에만 전달합니다. 네이티브 실행에서는 각 프로세스 환경변수를
-직접 설정해야 합니다.
+`SUPPORT_PROGRAM_INDEX_ENABLED=false`는 별도 복구 스케줄러만 끕니다. 새 카탈로그 공개 전의 필수
+색인은 계속 실행됩니다. 두 스케줄러는 각각 별도의 단일 스레드에서 실행되며 실패를 기록한 뒤
+다음 주기에 다시 시도합니다. 현재 공개된 수동 동기화 HTTP API는 없습니다.
 
-### MySQL 카탈로그와 기업마당 동기화 범위
+기업마당 키는 Encoding·Decoding 형식 모두 받을 수 있으며 Client가 요청 전에 정규화합니다.
+실제 인증키·운영 DB 비밀번호는 환경변수로 주입하고 Git에 기록하지 않습니다. OpenAI 키는
+Core API가 아닌 AI Service에만 설정합니다.
 
-앱 시작 시 Flyway가 [`V1__create_support_program.sql`](src/main/resources/db/migration/V1__create_support_program.sql)을
-한 번 적용해 `support_program` 테이블을 만듭니다. `SupportProgramRepository`는 현재 기업마당에서
-정규화된 공고를 `SupportProgramMapper`와
-[`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml)의 SQL로 저장·조회합니다.
-[`V2__add_support_program_sync_generation.sql`](src/main/resources/db/migration/V2__add_support_program_sync_generation.sql)은
-제공처별 최신 시작 세대를 관리하는 `support_program_sync_generation` 테이블을 추가합니다.
+## 코드 구조
 
-- `source_code`와 `source_program_id`를 함께 고유 식별자로 사용합니다.
-- 같은 공고를 다시 저장하면 `INSERT ... ON DUPLICATE KEY UPDATE`로 최신 값으로 갱신합니다.
-- `categories`, `regions`는 MySQL JSON으로 저장하고, 신청기간 원문과 해석된 날짜를 함께 보관합니다.
-- 접수 상태는 저장하지 않고 읽을 때 서울 날짜 기준으로 계산합니다. 날짜가 지나도 DB 값을 수정하지 않아도 됩니다.
-- `BizInfoClient`가 전체 페이지와 건수를, `BizInfoProgramMapper`가 모든 공고의 필수 값을 검증합니다.
-- 수집 전에 시작 세대를 발급하고, 전체 수집·검증·벡터 색인을 성공한 뒤에만 카탈로그 공개를 시도합니다.
-- 공개 transaction에서 최신 시작 세대인지 확인합니다. 더 최근에 시작한 작업이 있으면 이전 작업의 공개를 건너뜁니다.
-- 최신 시작 세대의 기존 BIZINFO 행 미노출 처리와 이번 목록 UPSERT를 하나의 transaction으로 반영합니다.
-- DB 반영 중 하나라도 실패하면 전체 transaction을 롤백해 이전 카탈로그를 유지합니다.
-- SQL은 MyBatis Mapper XML에, JSON 변환·접수 상태 계산은 Kotlin Repository에 둡니다.
+기본 패키지는 `ai.govbiz.core`, Gradle 프로젝트명은 `govbiz-core-api`입니다.
 
-`BizInfoSupportProgramCatalogSyncScheduler`는 `app.bizinfo.sync.enabled`가 `true`일 때
-`BizInfoSupportProgramCatalogSyncService.sync()`를 자동 호출합니다. 기본값은 앱 준비 뒤 `PT0S`에
-한 번 실행하고, 동기화가 끝난 시점부터 `PT6H` 뒤에 다시 실행하는 것입니다. 기업마당 호출·검증·전체
-색인이 실패하면 공개 전이므로 이전 카탈로그를 유지하고, DB 공개가 실패하면 transaction을 롤백합니다.
-Scheduler는 오류를 기록하고 다음 실행을 계속합니다. 후발 작업이 시작된 뒤 실패하더라도 이미 대체된
-이전 세대가 뒤늦게 공개되지는 않으며, 마지막으로 공개된 카탈로그를 다음 성공까지 유지합니다.
+```text
+supportprogram/
+├── controller            # 공개 HTTP 진입점
+│   └── dto               # 공개 응답 계약
+├── service/
+│   ├── search             # DB 조회 → 의미 검색 → AI 점수화
+│   ├── detail             # 현재 공고 상세 조회
+│   ├── sync               # 수집·색인 준비·DB 공개와 별도 벡터 복구
+│   └── dto                # 검증된 내부 실행 결과
+├── facade                 # 기업마당 수집·AI 응답 검증·도메인 변환
+├── client/
+│   ├── bizinfo            # 기업마당 HTTP·페이지 검증·외부 DTO 정규화
+│   └── ai                 # AI 내부 HTTP 계약·검색 문서와 해시 생성
+├── repository            # 도메인↔DB 행 변환·트랜잭션·저장·조회
+│   └── mapper            # MyBatis Mapper, DbRow
+├── domain                 # 업무 모델·서울 날짜 기준 접수 상태 규칙
+└── config                 # 지원사업 공용 시계 설정
+_health                    # Core API Health
+_health_ai_service         # AI Service Health의 Controller → Service → Client
+_sampleitem                # 학습 예제
+_common                    # 실제 공유하는 HTTP·AI 설정·JSON·CORS·오류 처리
+```
 
-`GET /api/v1/support-programs/search`는 `is_source_present = TRUE`인 현재 기업마당 공고를 MySQL에서
-읽습니다. 기업마당 API 호출은 Scheduler의 동기화 경로에만 있습니다.
+외부 호출의 기본 흐름은 `Controller → Service → Facade → Client`입니다. Facade는 하위 호출·검증·변환을
+묶을 때 사용하며, DB 접근은 `Service → Repository → MyBatis Mapper → Mapper XML → MySQL`입니다.
+Facade와 Domain은 MyBatis Mapper를 직접 호출하지 않습니다.
 
-`GET /api/v1/support-programs/detail`도 외부 기업마당 API를 호출하지 않습니다. `sourceCode`(최대 64자)와
-`sourceProgramId`(최대 255자)를 별도 query parameter로 받아 `is_source_present = TRUE`인 정확한 복합 키 행만
-조회합니다. 검색 점수는 검색 질의에만 의미가 있으므로 상세 응답의 `matchedReasons`는 빈 배열,
-`recommendationScore`는 `null`입니다.
+| 타입 | 소유 위치·역할 |
+|---|---|
+| `Request`, `Response` | 공개 HTTP 계약은 해당 기능의 `controller/dto` |
+| 외부 `Request`, `Payload` | 상대 시스템별 `client/dto` |
+| `Result` | 검증된 실행 결과는 `service/dto` |
+| 업무 모델 | 프레임워크에 의존하지 않는 `domain` |
+| `DbRow` | `repository/mapper`의 DB 행 타입. Repository 밖으로 노출하지 않음 |
+| `Helper` | 실제 반복 보조 작업. 한 기능 전용이면 해당 기능, 공유되면 `_common/helper` |
 
-## 지원사업 검색 동작
+SQL은 [`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml)에
+명시하며 JPA·JdbcClient·annotation SQL을 혼용하지 않습니다. Repository가 JSON 배열과 DbRow를
+변환하고 `SupportProgramStatusResolver`를 호출합니다. 상세 규칙은 [AGENTS.md](../../AGENTS.md)를 따릅니다.
 
-Core API는 검색 요청마다 공공데이터포털을 호출하지 않고 MySQL 카탈로그를 읽습니다. Repository는 저장된
-신청 기간과 서울 날짜로 접수 상태를 계산합니다. 검색어가 있으면 접수 필터를 통과한 **전체 공고**의
-ID·문서 해시를 `AiSupportProgramRetrievalFacade`가 AI Service에 전달합니다. AI Service는 Qdrant에서
-검색어와 가까운 최대 20개를 찾고, Core는 ID·문서 버전·중복·유한 점수·내림차순·개수·검색어 일치를
-검증한 뒤 기존 LLM 점수화에 전달합니다. 응답은 적격 공고 수와 20 중 작은 수만큼 있어야 하며, 부족한
-성공 응답도 잘못된 내부 응답으로 처리합니다. 오래된 공고도 의미 검색 후보에 포함되며 최신 20개 절단은 없습니다.
+## 데이터 관리와 오류 처리
 
-LLM 점수화의 `govbiz-support-program-ranking-v2` 계약은 모든 후보의 `targetEligibility`·`regionEligibility`를
-필수로 반환합니다. 허용 값은 `MATCH`, `INCOMPATIBLE`, `UNKNOWN`이며 하나라도 `INCOMPATIBLE`이면
-총점과 관계없이 제외합니다. `UNKNOWN`은 정보 부족을 뜻해 자동 제외하지 않으며 신청 자격 확정도 아닙니다.
-이 조건과 `semanticRelevance` 20점 이상(40점 중 절반)·`totalScore` 60점 이상(100점 기준)을
-모두 통과한 공고만 최대 5개 반환합니다. 이 기준을 통과한 공고가
-없으면 빈 검색 결과는 정상 응답입니다. `AiSupportProgramRankingFacade`는 0~`resultLimit`개의 응답을 허용하되,
-반환된 공고가 자격 판정 필수 값·불일치 제외·최소 점수·후보 ID·점수 합계·내림차순 규칙을 모두 지키는지
-다시 검증합니다. 이 초기 점수 기준은
-실제 검색 평가 데이터가 쌓이면 조정합니다.
+- Flyway [V1](src/main/resources/db/migration/V1__create_support_program.sql)은 공고 테이블,
+  [V2](src/main/resources/db/migration/V2__add_support_program_sync_generation.sql)는 최신 수집 시작 세대
+  테이블을 만듭니다. 적용된 migration은 수정하지 않고 새 버전을 추가합니다.
+- 전체 수집·검증·색인이 끝난 뒤 최신 시작 세대만 공개합니다. BIZINFO 행 미노출 처리와 UPSERT를
+  하나의 짧은 DB transaction으로 묶으며 외부 HTTP 호출은 transaction 밖에서 수행합니다.
+- 원본 ID 표기의 대소문자만 바뀌어도 UPSERT가 최신 표기를 저장하여 DB ID와 벡터 ID를 맞춥니다.
+  DB 고유키의 비교는 `utf8mb4_0900_ai_ci` collation을 따릅니다.
+- 접수 상태를 DB에 고정 저장하지 않습니다. 조회 시 날짜를 우선 적용하고, 날짜만으로 판단할 수
+  없는 경우 원문 표현을 확인합니다. 명시적 종료 표현은 상시 접수 표현보다 우선합니다.
+- 검색·색인 흐름은 [아키텍처](../../docs/architecture.md)에, 20,000건 상한·자동 벡터 삭제 미연결 등
+  현재 제약은 [구현 현황](../../docs/implementation-status.md)에 정리합니다.
 
-검색어가 비어 있으면 의미 검색과 LLM을 호출하지 않고 최신 5개를 반환합니다. DB나 접수 필터 결과가
-비어 있으면 빈 목록을 반환합니다. 기업마당 동기화가 실패해도 이전 MySQL 공고와 그 버전의 색인이
-있으면 검색할 수 있습니다. 필요한 공고 버전의 색인이 아직 없거나 Qdrant가 불가하면 공개 API는
-`503 AI_SERVICE_UNAVAILABLE`을 반환합니다. 이 실패를 최신 공고나 빈 검색 결과로 숨기지 않습니다.
+AI 경계의 실패는 `application/problem+json`으로 변환합니다. 내부 URL·라이브러리 예외는 공개하지 않습니다.
 
-### 공개 전 색인 준비와 누락 벡터 복구
-
-기업마당 동기화는 `SupportProgramIndexSyncService.indexBizInfoSnapshot()`으로 들어온 전체 공고의 벡터를
-준비한 뒤 MySQL에 공개합니다. `SupportProgramIndexSyncScheduler`는 기업마당 수집과 별도 스레드에서
-앱 시작 직후 및 이전 작업 종료 1분 뒤마다 `SupportProgramIndexSyncService.repair()`를 호출해 이미 공개된
-MySQL 공고의 누락 벡터를 복구합니다. 두 경로는 제목·기관·대상·분야·지역·신청기간·내용을 같은 형식으로
-구성하고, UTF-8 문서의 SHA-256을 계산합니다.
-본문의 제어·형식 문자는 개행·탭을 제외하고 공백으로 정리한 후 Unicode 코드 포인트 기준 최대
-12,000자로 제한하며 오늘의 접수 상태는 해시에 넣지 않습니다.
-
-- `PUT /internal/v1/support-program-index/batch`: 16개씩 색인 요청. 동일 ID·해시의 벡터는 AI Service가 재사용합니다.
-- 공개 전 배치 일부 실패나 건수 검증 실패 시 새 카탈로그를 공개하지 않습니다. 이미 준비된 벡터는 재시도 시 재사용합니다.
-- 복구 스케줄러는 현재 공개된 공고의 누락 벡터만 채우며, 읽은 스냅샷이 비어 있어도 기존 벡터를 삭제하지 않습니다.
-- 두 경로 모두 `prune`을 호출하지 않습니다. 이전 스냅샷 기준의 정리가 공개 준비 중인 새 벡터를 지우지 않도록 합니다.
-- 외부 색인 호출은 MySQL transaction 밖에서 실행합니다. 시작 세대 발급과 카탈로그 공개는 각각 짧은 DB transaction입니다.
-
-현재 DB의 정확한 ID·해시 목록으로 검색하므로 이전 버전·미공개 세대의 벡터는 결과에 섞이지 않습니다.
-이 벡터들과 이전 모델 collection의 저장 공간 정리는 후속 과제입니다. 진행 중인 작업·검색을 보호하는
-보존·삭제 수명주기 없이 `prune`을 다시 연결하면 안 되며, 현재 내부 `prune` 자체의 다중 인스턴스 안전성은
-보장하지 않습니다. MySQL 시작 세대 비교는 카탈로그 공개 순서만 보호하며 전체 다중 인스턴스 운영 검증을
-대체하지 않습니다.
-
-검색·색인은 MySQL 공고 전체를 읽고 검색 시 ID·해시 목록을 전송하므로 최대 20,000개까지 지원합니다.
-상한 초과를 임의 절단하지 않습니다. 이 단계는 공고 요약 수준의
-의미 검색이며 상세 첨부문서 근거 답변 RAG는 아직 포함하지 않습니다.
-
-## AI Service 오류 계약
-
-| 상황 | HTTP | code |
+| AI 호출에서 관측한 상황 | 공개 HTTP | `code` |
 |---|---:|---|
-| AI Service/OpenAI 실패 응답 | 502 | `AI_SERVICE_UPSTREAM_ERROR` |
-| 잘못된 Content-Type·JSON·응답 body | 502 | `AI_SERVICE_INVALID_RESPONSE` |
-| 연결 불가 | 503 | `AI_SERVICE_UNAVAILABLE` |
-| 연결·읽기 시간 초과 | 504 | `AI_SERVICE_TIMEOUT` |
+| 내부 503 또는 연결 불가 | 503 | `AI_SERVICE_UNAVAILABLE` |
+| 점수화·색인 API의 내부 408·504 또는 연결·읽기 시간 초과 | 504 | `AI_SERVICE_TIMEOUT` |
+| 예상하지 않은 HTTP 상태 | 502 | `AI_SERVICE_UPSTREAM_ERROR` |
+| 잘못된 JSON·빈 body·응답 계약 위반 | 502 | `AI_SERVICE_INVALID_RESPONSE` |
 
-내부 URL과 라이브러리 예외는 공개 응답에 노출하지 않습니다.
+AI Service는 LLM 실행 실패와 색인 미준비·Qdrant 실패를 내부 503으로 반환하므로 일반적으로 공개 503이
+됩니다. Health API의 내부 408·504는 점수화 API와 달리 `UPSTREAM_ERROR`로 분류합니다.
+기업마당 수집 오류는 검색 요청에서 발생하는 오류가 아니라 백그라운드 작업의 실패로 기록됩니다.
 
 ## 검증
 
+`backend/core-api` 디렉터리에서 JDK 21 환경으로 실행합니다. Repository 통합 테스트가 실제
+`mysql:8.4` Testcontainers를 실행하므로 Docker가 필요합니다.
+
 ```bash
-./gradlew clean build --no-daemon
+./gradlew clean test --no-daemon
 ```
+
+테스트는 Controller 계약·Client/Facade 응답 검증·상태 계산·동기화 순서와 MySQL의 JSON, 복합 식별자,
+UPSERT, rollback, 시작 세대에 따른 공개 제어 등을 검증합니다. 전체 서비스 연결 검증은
+[인프라 README](../../infrastructure/README.md)의 Compose 검증 절차를 참고하세요.

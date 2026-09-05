@@ -3,6 +3,9 @@
 FastAPI, OpenAI 임베딩, Qdrant로 전체 공고에서 관련 후보를 찾고 OpenAI Agents SDK로 후보를
 점수화하는 내부 서비스입니다. 브라우저에 직접 공개하지 않고 Spring Core API만 호출합니다.
 
+프로젝트 전체 기술 구성은 [기술 문서](../../docs/technology.md), 기능별 완료 범위와 남은 작업은
+[구현 현황](../../docs/implementation-status.md)을 참고하세요. 이 문서는 AI Service 실행·설정·내부 처리 규칙을 다룹니다.
+
 ## 책임
 
 AI Service가 하는 일:
@@ -36,6 +39,10 @@ POST /internal/v1/support-program-index/search
 없을 수 있으므로 0개부터 `resultLimit`개까지입니다. 계약 예시는
 [지원사업 검색·추천 HTTP 계약](../../docs/support-program-search-contract.md)에 있습니다.
 
+Health 응답은 프로세스의 HTTP 응답 여부만 확인합니다. OpenAI 모델 호출 성공이나 Qdrant 연결·색인
+완료 여부를 검사하는 readiness 검사는 아닙니다. `/internal` 경로 자체에 인증 기능은 없으며,
+기본 Compose에서는 AI Service 포트를 호스트에 공개하지 않습니다.
+
 ## 전체 공고 의미 검색
 
 공고의 제목·요약·지원대상 등을 포함한 검색 문서는 Core가 구성합니다. `id`는
@@ -46,7 +53,7 @@ Qdrant point ID는 이 두 값에서 결정되므로 같은 문서를 반복 처
 |---|---|---|
 | `PUT .../batch` | `documents: [{id, contentHash, text}]`, 1~50개, text 최대 12,000자 | `{indexedCount}`: 기존 색인 포함 요청 건수 |
 | `POST .../prune` | `sourceCode`, `documents: [{id, contentHash}]`, 최대 20,000개 | `{retainedCount}` |
-| `POST .../search` | `query`: 공백 제외 1~500자, `eligibleDocuments: [{id, contentHash}]`, `limit`: 1~20 | `{query, matches: [{id, contentHash, score}]}` |
+| `POST .../search` | `query`: 앞뒤 공백 제거 후 1~500자, `eligibleDocuments: [{id, contentHash}]` 최대 20,000개, `limit`: 1~20 | `{query, matches: [{id, contentHash, score}]}` |
 
 ```text
 Core의 기업마당 동기화: 시작 세대 발급 → 전체 수집·검증
@@ -102,8 +109,10 @@ RAG는 아직 구현하지 않았습니다. 벡터 유사도는 신청 자격 �
 | 신청 시점과 접수 상태 적합성 | 10 |
 | 원하는 지원 유형 적합성 | 10 |
 
-평가 기준은 [prompt.py](app/support_program_ranking/prompt.py)에 한 번만 정의합니다. Kotlin에
-지역·카테고리 단어 사전이나 `지역 +12` 같은 점수표를 복제하지 않습니다.
+LLM에 전달할 평가 지시는 [prompt.py](app/support_program_ranking/prompt.py)에 둡니다.
+[models.py](app/support_program_ranking/models.py)는 점수 범위·합계·자격 판정을 검증하고,
+[service.py](app/support_program_ranking/service.py)는 최소 추천 기준을 적용합니다. Core도 같은
+HTTP 계약을 검증하지만, 지역·카테고리 단어 사전으로 별도 추천 점수를 계산하지 않습니다.
 
 ### 추천 반환 최소 기준
 
@@ -206,10 +215,11 @@ OPENAI_EMBEDDING_DIMENSIONS=1536
 EMBEDDING_TIMEOUT_SECONDS=15
 ```
 
-전체 Agent 제한은 모델 호출 제한보다 길고 Core의 기본 읽기 제한 `12s`보다 짧게 유지합니다.
+기본 전체 Agent 제한 `10s`는 모델 호출 제한 `8s`보다 길고 Core의 기본 읽기 제한 `12s`보다 짧습니다.
+환경변수를 변경할 때도 이 관계를 유지해야 합니다. 설정 코드가 세 값의 대소 관계를 자동 검증하지는 않습니다.
 색인·의미 검색은 별도 Core 읽기 제한을 사용합니다. AI batch/search 전체 제한은 `25s`, prune은
-`15s`입니다. 임베딩은 재시도 없이 호출하며 한 문서 최대 8,191 tokens, 요청당 최대 32개로
-제한하여 전체 입력이 300,000 tokens보다 작게 유지합니다. 긴 문서의 뒷부분은 이 단계의 후보
+`15s`이고 Core 색인·검색 읽기 제한 기본값은 `30s`입니다. 이 구현은 임베딩을 재시도 없이 호출하며
+한 문서 최대 8,191 tokens, 임베딩 API 요청당 최대 32개로 나눕니다. 긴 문서의 뒷부분은 이 단계의 후보
 검색에서 제외될 수 있습니다. 토큰 계산은 두 지원 모델 공통 `cl100k_base`를 사용합니다.
 Docker 이미지는 빌드 시 토크나이저 파일을 받아 런타임에 별도 다운로드가 필요하지 않습니다.
 
@@ -218,6 +228,9 @@ Docker 이미지는 빌드 시 토크나이저 파일을 받아 런타임에 별
 애플리케이션 종료 시 OpenAI와 Qdrant client를 모두 닫습니다.
 
 ## 설치와 실행
+
+Python 지원 범위는 `>=3.11,<3.15`이며 Docker와 CI는 3.11을 사용합니다. 아래 명령은
+`backend/ai-service`에서 실행합니다. 색인·의미 검색에는 `QDRANT_URL`에 Qdrant가 실행 중이어야 합니다.
 
 ```bash
 uv sync --locked --extra dev
@@ -244,7 +257,5 @@ collection을 만들고 정리합니다. 현재 운영 collection은 테스트�
 최신 20개 밖의 관련 공고 조회, 재색인 중복 방지, 현재 해시와 검색 가능 목록 필터, 부분 실패 시
 prune 차단, 다른 제공처 보존, 비정상 임베딩 거부를 검증합니다. 테스트 임베딩은 HTTP mock으로
 고정한 벡터이므로 실제 한국어 검색 정확도 향상을 측정한 결과로 해석하면 안 됩니다.
-
-입력 제한 근거: [OpenAI 임베딩 API](https://developers.openai.com/api/reference/python/resources/embeddings/methods/create).
 
 Agent 확장 원칙은 [AI Agent 모듈 구조](docs/agent-structure.md)를 참고하세요.
