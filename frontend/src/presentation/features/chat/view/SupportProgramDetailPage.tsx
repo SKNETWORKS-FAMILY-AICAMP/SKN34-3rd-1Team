@@ -1,21 +1,80 @@
-import { Link, useLocation, useParams } from 'react-router'
 import type { ReactNode } from 'react'
+import { Link, useSearchParams } from 'react-router'
 
 import type { SupportProgram, SupportProgramStatus } from '../../../../domain/entities/SupportProgram'
+import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
+import { useSupportProgramDetailViewModel } from '../viewmodel/useSupportProgramDetailViewModel'
 import { supportProgramDetailStyles } from './SupportProgramDetailPage.styles'
 
-type SupportProgramDetailLocationState = {
-  program?: SupportProgram
+/** URL의 제공처·원본 공고 ID로 최신 상세 정보를 조회하는 화면입니다. */
+export function SupportProgramDetailPage() {
+  const [searchParams] = useSearchParams()
+  const identity = getSupportProgramIdentity(
+    searchParams.get('sourceCode') ?? undefined,
+    searchParams.get('sourceProgramId') ?? undefined,
+  )
+
+  if (!identity) {
+    return (
+      <UnavailableSupportProgramDetail
+        description="공고 주소가 올바르지 않습니다. 검색 결과에서 공고를 다시 선택해 주세요."
+        title="공고 정보를 찾을 수 없습니다"
+      />
+    )
+  }
+
+  return (
+    <SupportProgramDetailContent
+      key={JSON.stringify([identity.sourceCode, identity.sourceProgramId])}
+      identity={identity}
+    />
+  )
 }
 
-/** 검색 결과에서 선택한 공고의 조건을 같은 앱 안에서 보여 주는 상세 화면입니다. */
-export function SupportProgramDetailPage() {
-  const location = useLocation()
-  const { programId } = useParams()
-  const program = getProgramFromLocationState(location.state, programId)
+function SupportProgramDetailContent({ identity }: { identity: SupportProgramIdentity }) {
+  const detail = useSupportProgramDetailViewModel(identity)
 
-  if (!program) return <UnavailableSupportProgramDetail />
+  if (detail.status === 'loading') {
+    return <LoadingSupportProgramDetail />
+  }
 
+  if (detail.status === 'not-found') {
+    return (
+      <UnavailableSupportProgramDetail
+        description="존재하지 않거나 더 이상 제공되지 않는 공고입니다. 검색 결과에서 다른 공고를 확인해 주세요."
+        title="공고 정보를 찾을 수 없습니다"
+      />
+    )
+  }
+
+  if (detail.status === 'failed') {
+    return <UnavailableSupportProgramDetail
+      description="공고 상세 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+      title="공고 정보를 불러오지 못했습니다"
+    />
+  }
+
+  return <SupportProgramDetail program={detail.program} />
+}
+
+function LoadingSupportProgramDetail() {
+  return (
+    <main className={supportProgramDetailStyles.unavailablePage} aria-live="polite">
+      <Link className={supportProgramDetailStyles.backLink} to="/">
+        ← 검색 결과로 돌아가기
+      </Link>
+      <section className={supportProgramDetailStyles.unavailableCard}>
+        <p className={supportProgramDetailStyles.eyebrow}>지원사업 상세</p>
+        <h1 className={supportProgramDetailStyles.title}>공고 정보를 불러오는 중입니다</h1>
+        <p className={supportProgramDetailStyles.unavailableDescription}>
+          최신 공고 조건을 확인하고 있습니다.
+        </p>
+      </section>
+    </main>
+  )
+}
+
+function SupportProgramDetail({ program }: { program: SupportProgram }) {
   return (
     <main className={supportProgramDetailStyles.page}>
       <header className={supportProgramDetailStyles.header}>
@@ -41,7 +100,7 @@ export function SupportProgramDetailPage() {
           </strong>
           <span className={supportProgramDetailStyles.score}>
             {program.recommendationScore === null
-              ? '최신 공고'
+              ? '공고 상세 정보'
               : `AI 추천 ${program.recommendationScore}점`}
           </span>
         </div>
@@ -68,12 +127,12 @@ export function SupportProgramDetailPage() {
         </DetailItem>
       </section>
 
-      <section className={supportProgramDetailStyles.reasonSection} aria-labelledby="recommendation-reasons">
-        <p className={supportProgramDetailStyles.sectionEyebrow}>검색 결과</p>
-        <h2 id="recommendation-reasons" className={supportProgramDetailStyles.sectionTitle}>
-          이 공고를 추천한 이유
-        </h2>
-        {program.matchedReasons.length > 0 ? (
+      {program.matchedReasons.length > 0 ? (
+        <section className={supportProgramDetailStyles.reasonSection} aria-labelledby="recommendation-reasons">
+          <p className={supportProgramDetailStyles.sectionEyebrow}>검색 결과</p>
+          <h2 id="recommendation-reasons" className={supportProgramDetailStyles.sectionTitle}>
+            이 공고를 추천한 이유
+          </h2>
           <ul className={supportProgramDetailStyles.reasonList}>
             {program.matchedReasons.map((reason) => (
               <li key={reason} className={supportProgramDetailStyles.reason}>
@@ -81,12 +140,8 @@ export function SupportProgramDetailPage() {
               </li>
             ))}
           </ul>
-        ) : (
-          <p className={supportProgramDetailStyles.emptyReason}>
-            검색 조건과 일치한 이유가 제공되지 않았습니다.
-          </p>
-        )}
-      </section>
+        </section>
+      ) : null}
 
       <section className={supportProgramDetailStyles.sourceSection} aria-labelledby="source-information">
         <div>
@@ -111,7 +166,13 @@ export function SupportProgramDetailPage() {
   )
 }
 
-function UnavailableSupportProgramDetail() {
+function UnavailableSupportProgramDetail({
+  description,
+  title,
+}: {
+  description: string
+  title: string
+}) {
   return (
     <main className={supportProgramDetailStyles.unavailablePage}>
       <Link className={supportProgramDetailStyles.backLink} to="/">
@@ -119,10 +180,8 @@ function UnavailableSupportProgramDetail() {
       </Link>
       <section className={supportProgramDetailStyles.unavailableCard}>
         <p className={supportProgramDetailStyles.eyebrow}>지원사업 상세</p>
-        <h1 className={supportProgramDetailStyles.title}>공고 정보를 찾을 수 없습니다</h1>
-        <p className={supportProgramDetailStyles.unavailableDescription}>
-          검색 결과에서 공고의 상세 조건 보기 버튼을 다시 선택해 주세요.
-        </p>
+        <h1 className={supportProgramDetailStyles.title}>{title}</h1>
+        <p className={supportProgramDetailStyles.unavailableDescription}>{description}</p>
       </section>
     </main>
   )
@@ -163,72 +222,11 @@ function formatStatus(status: SupportProgramStatus) {
   return labels[status]
 }
 
-function getProgramFromLocationState(
-  state: unknown,
-  programId: string | undefined,
-): SupportProgram | null {
-  if (!isSupportProgramDetailLocationState(state)) return null
-  if (!programId || programId !== state.program.id) return null
-  return state.program
-}
+function getSupportProgramIdentity(
+  sourceCode: string | undefined,
+  sourceProgramId: string | undefined,
+): SupportProgramIdentity | null {
+  if (!sourceCode?.trim() || !sourceProgramId?.trim()) return null
 
-function isSupportProgramDetailLocationState(
-  state: unknown,
-): state is Required<SupportProgramDetailLocationState> {
-  if (!isRecord(state)) return false
-  return isSupportProgram(state.program)
-}
-
-function isSupportProgram(value: unknown): value is SupportProgram {
-  if (!isRecord(value)) return false
-
-  return typeof value.id === 'string'
-    && typeof value.title === 'string'
-    && typeof value.organization === 'string'
-    && typeof value.summary === 'string'
-    && isStringArray(value.categories)
-    && isStringArray(value.regions)
-    && typeof value.targetDescription === 'string'
-    && typeof value.applicationPeriod === 'string'
-    && isDateOrNull(value.applicationStartDate)
-    && isDateOrNull(value.applicationEndDate)
-    && isSupportProgramStatus(value.status)
-    && typeof value.sourceName === 'string'
-    && isSafeSourceUrl(value.sourceUrl)
-    && isStringArray(value.matchedReasons)
-    && isRecommendationScore(value.recommendationScore)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string')
-}
-
-function isDateOrNull(value: unknown): value is string | null {
-  return value === null || typeof value === 'string'
-}
-
-function isSupportProgramStatus(value: unknown): value is SupportProgramStatus {
-  return value === 'OPEN' || value === 'UPCOMING' || value === 'CLOSED' || value === 'UNKNOWN'
-}
-
-function isSafeSourceUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-
-  try {
-    const url = new URL(value)
-    const hostname = url.hostname.toLowerCase()
-    return (url.protocol === 'https:' || url.protocol === 'http:')
-      && (hostname === 'bizinfo.go.kr' || hostname.endsWith('.bizinfo.go.kr'))
-  } catch {
-    return false
-  }
-}
-
-function isRecommendationScore(value: unknown): value is number | null {
-  return value === null
-    || (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 100)
+  return { sourceCode, sourceProgramId }
 }

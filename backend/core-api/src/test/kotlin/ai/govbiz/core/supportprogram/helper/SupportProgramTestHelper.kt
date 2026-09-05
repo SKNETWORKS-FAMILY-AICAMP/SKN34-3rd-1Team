@@ -8,6 +8,7 @@ object SupportProgramTestHelper {
     fun catalogProgram(id: String, summary: String = "서울 AI 기업 기술 지원") = CatalogSupportProgram(
         SupportProgram(
             id = id,
+            sourceCode = "BIZINFO",
             title = "$id 지원사업",
             organization = "수행기관",
             summary = summary,

@@ -149,6 +149,7 @@ class AiSupportProgramRankingFacadeTest {
 
     private fun program(id: String) = SupportProgram(
         id = id,
+        sourceCode = "BIZINFO",
         title = "$id 지원사업",
         organization = "기관",
         summary = "$id 기업을 지원합니다.",

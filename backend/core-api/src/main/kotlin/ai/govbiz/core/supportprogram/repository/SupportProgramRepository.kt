@@ -29,14 +29,21 @@ class SupportProgramRepository(
     /** 기업마당의 완전한 최신 목록으로 기존 기업마당 데이터의 노출 상태와 내용을 원자적으로 갱신합니다. */
     @Transactional
     fun synchronizeBizInfo(programs: List<CatalogSupportProgram>) {
+        require(programs.all { it.program.sourceCode == BIZINFO_SOURCE_CODE }) {
+            "BizInfo synchronization accepts only BIZINFO source programs"
+        }
         supportProgramMapper.markAllNotPresentBySourceCode(BIZINFO_SOURCE_CODE)
         programs.forEach { program ->
             supportProgramMapper.upsert(program.toDbRow())
         }
     }
 
-    fun findByProgramId(programId: String): CatalogSupportProgram? =
-        supportProgramMapper.findBySourceAndProgramId(BIZINFO_SOURCE_CODE, programId)
+    /** 현재 노출 중인 공고를 제공처 코드와 제공처 원본 ID 조합으로 조회합니다. */
+    fun findPresentBySourceAndProgramId(
+        sourceCode: String,
+        sourceProgramId: String,
+    ): CatalogSupportProgram? =
+        supportProgramMapper.findBySourceAndProgramId(sourceCode, sourceProgramId)
             ?.toCatalogProgram()
 
     /** 현재 기업마당 스냅샷에 포함된 공고를 검색 후보로 반환합니다. */
@@ -51,7 +58,7 @@ class SupportProgramRepository(
         val supportProgram = program
 
         return SupportProgramDbRow(
-            sourceCode = BIZINFO_SOURCE_CODE,
+            sourceCode = supportProgram.sourceCode,
             sourceProgramId = supportProgram.id,
             title = supportProgram.title,
             organization = supportProgram.organization,
@@ -75,6 +82,7 @@ class SupportProgramRepository(
         return CatalogSupportProgram(
             program = SupportProgram(
                 id = sourceProgramId,
+                sourceCode = sourceCode,
                 title = title,
                 organization = organization,
                 summary = summary,
@@ -90,7 +98,7 @@ class SupportProgramRepository(
                     applicationEndDate = endDate,
                     today = LocalDate.now(clock),
                 ),
-                sourceName = BIZINFO_SOURCE_NAME,
+                sourceName = sourceNameFor(sourceCode),
                 sourceUrl = sourceUrl,
                 matchedReasons = emptyList(),
                 recommendationScore = null,
@@ -101,6 +109,9 @@ class SupportProgramRepository(
 
     private fun readStringList(value: String): List<String> =
         java.util.List.copyOf(objectMapper.readValue(value, STRING_LIST_TYPE))
+
+    private fun sourceNameFor(sourceCode: String): String =
+        if (sourceCode == BIZINFO_SOURCE_CODE) BIZINFO_SOURCE_NAME else sourceCode
 
     private companion object {
         const val BIZINFO_SOURCE_CODE = "BIZINFO"

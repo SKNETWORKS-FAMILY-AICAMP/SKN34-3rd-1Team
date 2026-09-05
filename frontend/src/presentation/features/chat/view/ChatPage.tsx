@@ -277,8 +277,7 @@ function ProgramCard({ program }: { program: SupportProgram }) {
       <div className={chatPageStyles.programActions}>
         <Link
           className={chatPageStyles.programDetailsButton}
-          to={`/support-programs/${encodeURIComponent(program.id)}`}
-          state={{ program }}
+          to={createSupportProgramDetailPath(program)}
         >
           상세 조건 보기
         </Link>
@@ -293,6 +292,14 @@ function ProgramCard({ program }: { program: SupportProgram }) {
       </div>
     </article>
   )
+}
+
+function createSupportProgramDetailPath(program: SupportProgram) {
+  const searchParams = new URLSearchParams({
+    sourceCode: program.sourceCode,
+    sourceProgramId: program.id,
+  })
+  return `/support-programs/detail?${searchParams.toString()}`
 }
 
 function formatApplicationDeadline(program: SupportProgram) {

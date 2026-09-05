@@ -219,6 +219,7 @@ class SupportProgramSearchServiceTest {
     ) = CatalogSupportProgram(
         program = SupportProgram(
             id = id,
+            sourceCode = "BIZINFO",
             title = title,
             organization = "수행기관",
             summary = summary,

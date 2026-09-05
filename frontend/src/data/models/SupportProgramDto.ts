@@ -15,6 +15,7 @@ const officialBizInfoUrlSchema = z.string().url().refine((value) => {
 }, '기업마당 공식 http(s) URL이어야 합니다.')
 
 export const supportProgramDtoSchema = z.object({
+  sourceCode: z.string().min(1),
   id: z.string().min(1),
   title: z.string().min(1),
   organization: z.string(),
@@ -45,6 +46,7 @@ export type SupportProgramSearchResponseDto = z.infer<
 /** HTTP DTO와 Domain 객체가 우연히 같은 모양이어도 경계를 명시적으로 유지합니다. */
 export function toSupportProgram(dto: SupportProgramDto): SupportProgram {
   return {
+    sourceCode: dto.sourceCode,
     id: dto.id,
     title: dto.title,
     organization: dto.organization,

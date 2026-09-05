@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { supportPrograms } from '../../fixtures/supportPrograms'
 import { SupportProgramRepositoryImpl } from '../../repositories/SupportProgramRepositoryImpl'
-import { SupportProgramApiError, searchSupportProgramsApi } from '../supportProgramApi'
+import {
+  getSupportProgramDetailApi,
+  SupportProgramApiError,
+  searchSupportProgramsApi,
+} from '../supportProgramApi'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -99,6 +103,54 @@ describe('searchSupportProgramsApi', () => {
     controller.abort()
 
     await expect(request).rejects.toBe(aborted)
+  })
+})
+
+describe('getSupportProgramDetailApi', () => {
+  it('uses the complete source identity and maps the detail response', async () => {
+    const controller = new AbortController()
+    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(detail)))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getSupportProgramDetailApi({
+      sourceCode: detail.sourceCode,
+      sourceProgramId: detail.id,
+    }, controller.signal)).resolves.toEqual(detail)
+
+    const [requestUrl, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const url = new URL(requestUrl)
+    expect(url.pathname).toBe('/api/v1/support-programs/detail')
+    expect(url.searchParams.get('sourceCode')).toBe(detail.sourceCode)
+    expect(url.searchParams.get('sourceProgramId')).toBe(detail.id)
+    expect(init.headers).toEqual({ Accept: 'application/json' })
+    expect(init.signal).toBe(controller.signal)
+
+    await expect(new SupportProgramRepositoryImpl().getDetail({
+      sourceCode: detail.sourceCode,
+      sourceProgramId: detail.id,
+    })).resolves.toEqual(detail)
+  })
+
+  it('returns null when the program is missing or inactive', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 404 })))
+
+    await expect(getSupportProgramDetailApi({
+      sourceCode: 'BIZINFO',
+      sourceProgramId: 'missing',
+    })).resolves.toBeNull()
+  })
+
+  it('rejects a successful response whose source identity differs from the request', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      ...supportPrograms[0],
+      id: 'different-program-id',
+    })))
+
+    await expect(getSupportProgramDetailApi({
+      sourceCode: supportPrograms[0].sourceCode,
+      sourceProgramId: supportPrograms[0].id,
+    })).rejects.toBeInstanceOf(SupportProgramApiError)
   })
 })
 

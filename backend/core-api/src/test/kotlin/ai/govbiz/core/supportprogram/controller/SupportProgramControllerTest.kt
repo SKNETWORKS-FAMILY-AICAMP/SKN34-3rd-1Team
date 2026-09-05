@@ -8,6 +8,7 @@ import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramRetrievalFacade
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
+import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
 import java.util.stream.Stream
 import org.hamcrest.Matchers.containsString
@@ -52,7 +53,12 @@ class SupportProgramControllerTest {
             retrieval,
         )
         mockMvc = MockMvcBuilders
-            .standaloneSetup(SupportProgramController(service))
+            .standaloneSetup(
+                SupportProgramController(
+                    searchService = service,
+                    detailService = SupportProgramDetailService(supportProgramRepository),
+                ),
+            )
             .setControllerAdvice(ApiExceptionHandler())
             .build()
     }
@@ -78,6 +84,7 @@ class SupportProgramControllerTest {
             .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
             .andExpect(jsonPath("$.query").value("서울 AI"))
             .andExpect(jsonPath("$.programs[0].id").value("PBLN_TEST"))
+            .andExpect(jsonPath("$.programs[0].sourceCode").value("BIZINFO"))
             .andExpect(jsonPath("$.programs[0].status").value("OPEN"))
             .andExpect(jsonPath("$.programs[0].applicationPeriod").value("상시 접수"))
             .andExpect(jsonPath("$.programs[0].applicationStartDate").value(nullValue()))
@@ -101,6 +108,90 @@ class SupportProgramControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.query").value("서울"))
             .andExpect(jsonPath("$.programs").isEmpty())
+    }
+
+    @Test
+    fun returnsTheCurrentProgramDetailsBySourceAndOriginalId() {
+        Mockito.doReturn(catalogProgram()).`when`(supportProgramRepository)
+            .findPresentBySourceAndProgramId("BIZINFO", "PBLN_TEST")
+
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", "BIZINFO")
+                .queryParam("sourceProgramId", "PBLN_TEST"),
+        )
+            .andExpect(status().isOk())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.id").value("PBLN_TEST"))
+            .andExpect(jsonPath("$.sourceCode").value("BIZINFO"))
+            .andExpect(jsonPath("$.title").value("서울 AI 지원사업"))
+            .andExpect(jsonPath("$.matchedReasons").isEmpty())
+            .andExpect(jsonPath("$.recommendationScore").value(nullValue()))
+    }
+
+    @Test
+    fun returnsAStableNotFoundProblemForMissingOrInactiveProgramDetails() {
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", "BIZINFO")
+                .queryParam("sourceProgramId", "PBLN_MISSING"),
+        )
+            .andExpect(status().isNotFound())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.type").value("urn:govbiz:problem:support-program-not-found"))
+            .andExpect(jsonPath("$.status").value(404))
+            .andExpect(jsonPath("$.title").value("Support Program Not Found"))
+            .andExpect(
+                jsonPath("$.detail")
+                    .value("The requested support program does not exist or is no longer available."),
+            )
+            .andExpect(jsonPath("$.code").value("SUPPORT_PROGRAM_NOT_FOUND"))
+            .andExpect(jsonPath("$.instance").value(DETAIL_PATH))
+    }
+
+    @Test
+    fun validatesBothCompositeDetailIdentityParameters() {
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", " ")
+                .queryParam("sourceProgramId", "PBLN_TEST"),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+    }
+
+    @Test
+    fun returnsTheValidationProblemWhenACompositeDetailIdentityParameterIsMissing() {
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceProgramId", "PBLN_TEST"),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.type").value("urn:govbiz:problem:request-validation-failed"))
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+            .andExpect(jsonPath("$.errors[0].field").value("sourceCode"))
+            .andExpect(jsonPath("$.errors[0].code").value("INVALID_VALUE"))
+    }
+
+    @Test
+    fun rejectsDetailIdentityValuesThatExceedTheirPublicLimits() {
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", "S".repeat(65))
+                .queryParam("sourceProgramId", "PBLN_TEST"),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", "BIZINFO")
+                .queryParam("sourceProgramId", "P".repeat(256)),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
     }
 
     @ParameterizedTest
@@ -167,6 +258,7 @@ class SupportProgramControllerTest {
     private fun catalogProgram() = CatalogSupportProgram(
         program = SupportProgram(
             id = "PBLN_TEST",
+            sourceCode = "BIZINFO",
             title = "서울 AI 지원사업",
             organization = "수행기관",
             summary = "AI 기술 지원",
@@ -201,6 +293,7 @@ class SupportProgramControllerTest {
 
     private companion object {
         const val PATH = "/api/v1/support-programs/search"
+        const val DETAIL_PATH = "/api/v1/support-programs/detail"
         const val PRIVATE_DETAIL = "private upstream detail"
 
         @JvmStatic

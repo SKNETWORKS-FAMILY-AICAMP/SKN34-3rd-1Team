@@ -59,7 +59,7 @@ class SupportProgramRepositoryIntegrationTest {
 
         repository.upsert(catalogProgram)
 
-        val stored = requireNotNull(repository.findByProgramId("PBLN_JSON"))
+        val stored = requireNotNull(repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_JSON"))
 
         assertEquals(catalogProgram, stored)
         assertNull(stored.program.applicationStartDate)
@@ -80,7 +80,10 @@ class SupportProgramRepositoryIntegrationTest {
 
         repository.upsert(catalogProgram)
 
-        assertEquals(catalogProgram, repository.findByProgramId("PBLN_EMPTY"))
+        assertEquals(
+            catalogProgram,
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_EMPTY"),
+        )
     }
 
     @Test
@@ -108,12 +111,41 @@ class SupportProgramRepositoryIntegrationTest {
 
         repository.upsert(updated)
 
-        assertEquals(updated, repository.findByProgramId("PBLN_UPSERT"))
+        assertEquals(
+            updated,
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_UPSERT"),
+        )
     }
 
     @Test
     fun returnsNullWhenProgramDoesNotExist() {
-        assertNull(repository.findByProgramId("PBLN_NOT_FOUND"))
+        assertNull(repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_NOT_FOUND"))
+    }
+
+    @Test
+    fun findsProgramsByTheCompleteSourceIdentityAndExcludesInactiveRows() {
+        val bizInfoProgram = catalogProgram(id = "SHARED_ID", title = "기업마당 공고")
+        repository.upsert(bizInfoProgram)
+        insertProgram(sourceCode = "OTHER", sourceProgramId = "SHARED_ID", title = "다른 제공처 공고")
+
+        assertEquals(
+            bizInfoProgram,
+            repository.findPresentBySourceAndProgramId("BIZINFO", "SHARED_ID"),
+        )
+        val otherProgram = requireNotNull(
+            repository.findPresentBySourceAndProgramId("OTHER", "SHARED_ID"),
+        )
+        assertEquals("OTHER", otherProgram.program.sourceCode)
+        assertEquals("OTHER", otherProgram.program.sourceName)
+        assertEquals("다른 제공처 공고", otherProgram.program.title)
+
+        repository.synchronizeBizInfo(emptyList())
+
+        assertNull(repository.findPresentBySourceAndProgramId("BIZINFO", "SHARED_ID"))
+        assertEquals(
+            "다른 제공처 공고",
+            repository.findPresentBySourceAndProgramId("OTHER", "SHARED_ID")?.program?.title,
+        )
     }
 
     @Test
@@ -163,8 +195,14 @@ class SupportProgramRepositoryIntegrationTest {
 
         assertEquals(2, countRows("BIZINFO"))
         assertEquals(2, countPresentRows("BIZINFO"))
-        assertEquals(snapshot[0], repository.findByProgramId("PBLN_SYNC_A"))
-        assertEquals(snapshot[1], repository.findByProgramId("PBLN_SYNC_B"))
+        assertEquals(
+            snapshot[0],
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_SYNC_A"),
+        )
+        assertEquals(
+            snapshot[1],
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_SYNC_B"),
+        )
     }
 
     @Test
@@ -178,7 +216,7 @@ class SupportProgramRepositoryIntegrationTest {
         assertEquals(2, countRows("BIZINFO"))
         assertTrue(isSourcePresent("BIZINFO", "PBLN_REMAINING"))
         assertFalse(isSourcePresent("BIZINFO", "PBLN_MISSING"))
-        assertNull(repository.findByProgramId("PBLN_MISSING"))
+        assertNull(repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_MISSING"))
     }
 
     @Test
@@ -191,7 +229,10 @@ class SupportProgramRepositoryIntegrationTest {
         repository.synchronizeBizInfo(listOf(remaining, reappearing))
 
         assertTrue(isSourcePresent("BIZINFO", "PBLN_REAPPEARING"))
-        assertEquals(reappearing, repository.findByProgramId("PBLN_REAPPEARING"))
+        assertEquals(
+            reappearing,
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_REAPPEARING"),
+        )
     }
 
     @Test
@@ -209,6 +250,29 @@ class SupportProgramRepositoryIntegrationTest {
     }
 
     @Test
+    fun rejectsAnotherSourceBeforeItCanReplaceTheBizInfoSnapshot() {
+        val existing = catalogProgram(id = "PBLN_EXISTING", title = "기존 기업마당 공고")
+        val otherSourceProgram = existing.copy(
+            program = existing.program.copy(
+                id = "OTHER_1",
+                sourceCode = "OTHER",
+                title = "잘못 섞인 다른 제공처 공고",
+            ),
+        )
+        repository.synchronizeBizInfo(listOf(existing))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            repository.synchronizeBizInfo(listOf(otherSourceProgram))
+        }
+
+        assertEquals(
+            existing,
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_EXISTING"),
+        )
+        assertEquals(0, countRows("OTHER"))
+    }
+
+    @Test
     fun rollsBackTheWholeSnapshotWhenAnUpsertFails() {
         val original = catalogProgram(id = "PBLN_ROLLBACK_A", title = "변경 전 공고")
         val shouldRemainPresent = catalogProgram(id = "PBLN_ROLLBACK_B", title = "유지되어야 하는 공고")
@@ -223,8 +287,14 @@ class SupportProgramRepositoryIntegrationTest {
             repository.synchronizeBizInfo(listOf(changed, invalid))
         }
 
-        assertEquals(original, repository.findByProgramId("PBLN_ROLLBACK_A"))
-        assertEquals(shouldRemainPresent, repository.findByProgramId("PBLN_ROLLBACK_B"))
+        assertEquals(
+            original,
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_ROLLBACK_A"),
+        )
+        assertEquals(
+            shouldRemainPresent,
+            repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_ROLLBACK_B"),
+        )
         assertEquals(2, countPresentRows("BIZINFO"))
         assertEquals(0, countRowsByProgramId("BIZINFO", "PBLN_TOO_LONG"))
     }
@@ -322,6 +392,7 @@ class SupportProgramRepositoryIntegrationTest {
     ) = CatalogSupportProgram(
         program = SupportProgram(
             id = id,
+            sourceCode = "BIZINFO",
             title = title,
             organization = "수행기관",
             summary = "중소기업의 AI 기술 활용을 지원합니다.",
