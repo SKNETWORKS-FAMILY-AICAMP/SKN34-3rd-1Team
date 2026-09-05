@@ -37,12 +37,67 @@ class AiSupportProgramRankingFacadeTest {
     }
 
     @Test
-    fun rejectsUnknownDuplicateMissingAndAscendingProgramIds() {
+    fun acceptsFewerRankingsWhenOnlySomeCandidatesMeetTheRecommendationMinimum() {
+        client.reset(response(score("second", semantic = 40, total = 85, reason = "질의와 직접 관련")))
+
+        val programs = facade().rank(QUERY, candidates(), 5)
+
+        assertEquals(listOf("second"), programs.map { it.id })
+        assertEquals(85, programs.single().recommendationScore)
+    }
+
+    @Test
+    fun acceptsAnEmptyRankingWhenNoCandidateMeetsTheRecommendationMinimum() {
+        client.reset(response())
+
+        assertEquals(emptyList<SupportProgram>(), facade().rank(QUERY, candidates(), 5))
+    }
+
+    @Test
+    fun rejectsMoreRankingsThanTheRequestedLimit() {
+        client.reset(
+            response(
+                score("second", semantic = 40, total = 85, reason = "질의와 직접 관련"),
+                score("first", semantic = 20, total = 65, reason = "일부 관련"),
+            ),
+        )
+
+        val exception = assertThrows(AiServiceCallException::class.java) {
+            facade().rank(QUERY, candidates(), 1)
+        }
+
+        assertEquals(AiServiceFailure.INVALID_RESPONSE, exception.failure)
+    }
+
+    @Test
+    fun rejectsUnknownDuplicateAndAscendingProgramIds() {
         val invalidPayloads = listOf(
             response(score("unknown", 40, 85, "근거"), score("first", 20, 65, "근거 2")),
             response(score("first", 40, 85, "근거"), score("first", 20, 65, "근거 2")),
-            response(score("first", 40, 85, "근거")),
             response(score("first", 20, 65, "근거"), score("second", 40, 85, "근거 2")),
+        )
+
+        invalidPayloads.forEach { payload ->
+            client.reset(payload)
+
+            assertInvalidResponse()
+        }
+    }
+
+    @Test
+    fun rejectsRankingsThatDoNotMeetTheRecommendationMinimum() {
+        val invalidPayloads = listOf(
+            response(score("first", semantic = 19, total = 64, reason = "의미 관련성이 부족")),
+            response(
+                score(
+                    "first",
+                    semantic = 20,
+                    total = 59,
+                    reason = "전체 적합성이 부족",
+                    applicationStatus = 5,
+                    supportType = 4,
+                ),
+            ),
         )
 
         invalidPayloads.forEach { payload ->
@@ -121,13 +176,17 @@ class AiSupportProgramRankingFacadeTest {
         semantic: Int,
         total: Int,
         reason: String,
+        target: Int = 20,
+        region: Int = 10,
+        applicationStatus: Int = 10,
+        supportType: Int = 5,
     ) = AiScoredSupportProgramPayload(
         programId = id,
         semanticRelevance = semantic,
-        targetFit = 20,
-        regionFit = 10,
-        applicationStatusFit = 10,
-        supportTypeFit = 5,
+        targetFit = target,
+        regionFit = region,
+        applicationStatusFit = applicationStatus,
+        supportTypeFit = supportType,
         totalScore = total,
         recommendationReasons = listOf(reason),
     )

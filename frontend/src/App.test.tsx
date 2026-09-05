@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
 import { createAppStore } from './app/store'
+import { supportPrograms } from './data/fixtures/supportPrograms'
 
 vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => ({
   CoreApiConnectionStatus: () => null,
@@ -111,9 +112,75 @@ describe('App navigation', () => {
 
     expect(screen.getByRole('heading', { name: heading })).toBeTruthy()
   })
+
+  it('검색 결과의 상세 조건 보기를 내부 상세 화면과 원문 링크로 연결한다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      query: '서울 AI',
+      programs: [supportPrograms[0]],
+    })))
+
+    renderApp(createAppStore())
+
+    const chatInput = screen.getByPlaceholderText('예: 서울에서 AI 창업지원 사업을 찾아줘')
+    fireEvent.change(chatInput, { target: { value: '서울 AI' } })
+    fireEvent.submit(chatInput.closest('form')!)
+
+    const detailLink = await screen.findByRole('link', { name: '상세 조건 보기' })
+    fireEvent.click(detailLink)
+
+    expect(screen.getByRole('heading', { name: supportPrograms[0].title })).toBeTruthy()
+    expect(screen.getByText('서울 소재 창업 7년 이내 중소기업')).toBeTruthy()
+    expect(screen.getByText(/AI·기술 분야/)).toBeTruthy()
+    expect(screen.getByText('접수 중')).toBeTruthy()
+
+    const sourceLink = screen.getByRole('link', { name: /GovBiz 샘플 데이터 원문 보기/ })
+    expect(sourceLink.getAttribute('href')).toBe(supportPrograms[0].sourceUrl)
+    expect(sourceLink.getAttribute('target')).toBe('_blank')
+    expect(sourceLink.getAttribute('rel')).toBe('noreferrer')
+
+    fireEvent.click(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }))
+    expect(screen.getByRole('heading', { name: 'GovBiz에게 물어보세요' })).toBeTruthy()
+  })
+
+  it('공고 상태 없이 상세 URL에 직접 진입하면 검색 결과 복귀 안내를 보여 준다', () => {
+    renderApp(createAppStore(), '/support-programs/unknown-program')
+
+    expect(screen.getByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })).toBeTruthy()
+    expect(screen.getByText('검색 결과에서 공고의 상세 조건 보기 버튼을 다시 선택해 주세요.')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' })).toBeTruthy()
+  })
+
+  it('URL의 공고 ID와 전달된 공고 ID가 다르면 상세 정보를 표시하지 않는다', () => {
+    renderApp(createAppStore(), {
+      pathname: '/support-programs/another-program',
+      state: { program: supportPrograms[0] },
+    })
+
+    expect(screen.getByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: supportPrograms[0].title })).toBeNull()
+  })
+
+  it('퍼센트 문자가 포함된 공고 ID도 URL 인코딩 후 상세 화면을 연다', () => {
+    const program = { ...supportPrograms[0], id: 'fixture%20program' }
+
+    renderApp(createAppStore(), {
+      pathname: `/support-programs/${encodeURIComponent(program.id)}`,
+      state: { program },
+    })
+
+    expect(screen.getByRole('heading', { name: program.title })).toBeTruthy()
+  })
 })
 
-function renderApp(appStore: ReturnType<typeof createAppStore>, initialEntry = '/') {
+type TestRouteEntry = string | {
+  pathname: string
+  state?: Record<string, unknown>
+}
+
+function renderApp(
+  appStore: ReturnType<typeof createAppStore>,
+  initialEntry: TestRouteEntry = '/',
+) {
   return render(
     <Provider store={appStore}>
       <MemoryRouter initialEntries={[initialEntry]}>
@@ -121,4 +188,11 @@ function renderApp(appStore: ReturnType<typeof createAppStore>, initialEntry = '
       </MemoryRouter>
     </Provider>,
   )
+}
+
+function jsonResponse(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }

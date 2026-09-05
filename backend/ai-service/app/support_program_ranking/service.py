@@ -7,8 +7,13 @@ from .models import (
 )
 
 
+# 40점인 의미 관련성 항목의 절반과 100점 총점의 60%를 동시에 충족해야 추천한다.
+MIN_SEMANTIC_RELEVANCE_SCORE = 20
+MIN_TOTAL_RECOMMENDATION_SCORE = 60
+
+
 class SupportProgramRankingService:
-    """Agent 결과의 후보 집합을 검증하고 점수순 상위 결과를 반환한다."""
+    """Agent 결과를 검증하고 적격 공고만 점수순으로 반환한다."""
 
     def __init__(self, agent: SupportProgramRecommendationAgent) -> None:
         self._agent = agent
@@ -35,8 +40,14 @@ class SupportProgramRankingService:
                 candidate_order[ranking.program_id],
             ),
         )
+        eligible_rankings = [
+            ranking
+            for ranking in sorted_rankings
+            if ranking.semantic_relevance >= MIN_SEMANTIC_RELEVANCE_SCORE
+            and ranking.total_score >= MIN_TOTAL_RECOMMENDATION_SCORE
+        ]
         return SupportProgramRankingResponse(
             original_query=request.original_query,
             scoring_version=request.scoring_version,
-            rankings=sorted_rankings[: request.result_limit],
+            rankings=eligible_rankings[: request.result_limit],
         )

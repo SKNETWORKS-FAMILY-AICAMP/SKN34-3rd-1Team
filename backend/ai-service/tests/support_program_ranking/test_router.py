@@ -22,15 +22,23 @@ TEST_SETTINGS = Settings(
 )
 
 
-def score(program_id: str, semantic: int) -> ScoredSupportProgram:
+def score(
+    program_id: str,
+    semantic: int,
+    *,
+    target: int = 20,
+    region: int = 10,
+    application_status: int = 10,
+    support_type: int = 5,
+) -> ScoredSupportProgram:
     return ScoredSupportProgram(
         programId=program_id,
         semanticRelevance=semantic,
-        targetFit=20,
-        regionFit=10,
-        applicationStatusFit=10,
-        supportTypeFit=5,
-        totalScore=semantic + 45,
+        targetFit=target,
+        regionFit=region,
+        applicationStatusFit=application_status,
+        supportTypeFit=support_type,
+        totalScore=semantic + target + region + application_status + support_type,
         recommendationReasons=[f"{program_id} 근거"],
     )
 
@@ -58,6 +66,55 @@ class MissingCandidateAgent(SupportProgramRecommendationAgent):
         request: SupportProgramRankingRequest,
     ) -> SupportProgramRankingOutput:
         return SupportProgramRankingOutput(rankings=[score("program-high", 40)])
+
+
+class BelowSemanticMinimumAgent(SupportProgramRecommendationAgent):
+    def __init__(self) -> None:
+        pass
+
+    async def rank(
+        self,
+        request: SupportProgramRankingRequest,
+    ) -> SupportProgramRankingOutput:
+        return SupportProgramRankingOutput(
+            rankings=[score("program-low", 19), score("program-high", 40)]
+        )
+
+
+class BelowTotalMinimumAgent(SupportProgramRecommendationAgent):
+    def __init__(self) -> None:
+        pass
+
+    async def rank(
+        self,
+        request: SupportProgramRankingRequest,
+    ) -> SupportProgramRankingOutput:
+        return SupportProgramRankingOutput(
+            rankings=[
+                score(
+                    "program-low",
+                    20,
+                    target=10,
+                    region=10,
+                    application_status=10,
+                    support_type=9,
+                ),
+                score("program-high", 40),
+            ]
+        )
+
+
+class NoEligibleCandidateAgent(SupportProgramRecommendationAgent):
+    def __init__(self) -> None:
+        pass
+
+    async def rank(
+        self,
+        request: SupportProgramRankingRequest,
+    ) -> SupportProgramRankingOutput:
+        return SupportProgramRankingOutput(
+            rankings=[score("program-low", 0), score("program-high", 19)]
+        )
 
 
 def request_body() -> dict[str, object]:
@@ -116,6 +173,61 @@ def test_returns_llm_scores_sorted_by_total_score() -> None:
     ]
     assert body["rankings"][0]["totalScore"] == 85
     assert len(agent.requests) == 1
+
+
+def test_filters_a_candidate_below_the_semantic_relevance_minimum() -> None:
+    client = TestClient(
+        create_app(
+            settings=TEST_SETTINGS,
+            support_program_recommendation_agent=BelowSemanticMinimumAgent(),
+        )
+    )
+
+    response = client.post(
+        "/internal/v1/support-program-rankings/rank",
+        json=request_body(),
+    )
+
+    assert response.status_code == 200
+    assert [item["programId"] for item in response.json()["rankings"]] == [
+        "program-high"
+    ]
+
+
+def test_filters_a_candidate_below_the_total_score_minimum() -> None:
+    client = TestClient(
+        create_app(
+            settings=TEST_SETTINGS,
+            support_program_recommendation_agent=BelowTotalMinimumAgent(),
+        )
+    )
+
+    response = client.post(
+        "/internal/v1/support-program-rankings/rank",
+        json=request_body(),
+    )
+
+    assert response.status_code == 200
+    assert [item["programId"] for item in response.json()["rankings"]] == [
+        "program-high"
+    ]
+
+
+def test_returns_an_empty_ranking_when_no_candidate_meets_the_minimum() -> None:
+    client = TestClient(
+        create_app(
+            settings=TEST_SETTINGS,
+            support_program_recommendation_agent=NoEligibleCandidateAgent(),
+        )
+    )
+
+    response = client.post(
+        "/internal/v1/support-program-rankings/rank",
+        json=request_body(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["rankings"] == []
 
 
 def test_rejects_an_agent_output_that_omits_a_candidate_without_leaking_details() -> None:

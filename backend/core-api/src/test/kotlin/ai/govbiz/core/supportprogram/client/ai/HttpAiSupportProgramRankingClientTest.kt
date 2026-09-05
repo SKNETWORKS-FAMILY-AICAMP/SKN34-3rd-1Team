@@ -3,6 +3,7 @@ package ai.govbiz.core.supportprogram.client.ai
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramCandidateRequest
+import ai.govbiz.core.supportprogram.client.ai.dto.AiScoredSupportProgramPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingRequest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -77,6 +78,16 @@ class HttpAiSupportProgramRankingClientTest {
         assertEquals("서울 AI 스타트업 지원사업", response.originalQuery)
         assertEquals(95, response.rankings?.single()?.totalScore)
         assertEquals("program-1", response.rankings?.single()?.programId)
+    }
+
+    @Test
+    fun decodesAnEmptyRankingAsAValidSuccessfulResponse() {
+        server.expect(requestTo(RANKING_URL))
+            .andRespond(withSuccess(EMPTY_RANKING_RESPONSE, MediaType.APPLICATION_JSON))
+
+        val response = client.rankSupportPrograms(rankingRequest())
+
+        assertEquals(emptyList<AiScoredSupportProgramPayload?>(), response.rankings)
     }
 
     @Test
@@ -162,6 +173,14 @@ class HttpAiSupportProgramRankingClientTest {
                 "totalScore":95,
                 "recommendationReasons":["서울 AI 창업기업 사업화 지원"]
               }]
+            }
+            """.trimIndent()
+        val EMPTY_RANKING_RESPONSE =
+            """
+            {
+              "originalQuery":"서울 AI 스타트업 지원사업",
+              "scoringVersion":"govbiz-support-program-ranking-v1",
+              "rankings":[]
             }
             """.trimIndent()
     }

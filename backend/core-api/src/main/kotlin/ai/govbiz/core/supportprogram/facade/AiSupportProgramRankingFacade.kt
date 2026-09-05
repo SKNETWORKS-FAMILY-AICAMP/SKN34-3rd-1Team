@@ -47,13 +47,13 @@ class AiSupportProgramRankingFacade(
         payload: AiSupportProgramRankingPayload,
         expectedQuery: String,
         candidates: List<CatalogSupportProgram>,
-        expectedCount: Int,
+        maximumCount: Int,
     ): List<SupportProgram>? {
         if (payload.originalQuery != expectedQuery || payload.scoringVersion != SCORING_VERSION) {
             return null
         }
         val rankings = payload.rankings ?: return null
-        if (rankings.size != expectedCount) return null
+        if (rankings.size > maximumCount) return null
 
         val candidatesById = candidates.associateBy { it.program.id }
         val seenIds = HashSet<String>()
@@ -66,6 +66,7 @@ class AiSupportProgramRankingFacade(
             if (!seenIds.add(programId)) return null
 
             val score = validatedScore(ranking) ?: return null
+            if (!meetsRecommendationMinimum(ranking, score)) return null
             if (score > previousScore) return null
             previousScore = score
             val reasons = validatedReasons(ranking.recommendationReasons) ?: return null
@@ -86,6 +87,18 @@ class AiSupportProgramRankingFacade(
         val total = ranking.totalScore?.takeIf { it in 0..MAX_TOTAL_SCORE } ?: return null
         return total.takeIf { it == semantic + target + region + status + supportType }
     }
+
+    /**
+     * AI Service가 모든 후보를 점수화한 뒤 적용하는 추천 최소 기준을 내부 HTTP 경계에서도 다시 검증한다.
+     * 의미 관련성만 40점 중 절반 이상이고, 전체 적합성도 100점 중 60점 이상인 공고만 추천한다.
+     */
+    private fun meetsRecommendationMinimum(
+        ranking: AiScoredSupportProgramPayload,
+        totalScore: Int,
+    ): Boolean =
+        ranking.semanticRelevance != null &&
+            ranking.semanticRelevance >= MIN_SEMANTIC_RELEVANCE_SCORE &&
+            totalScore >= MIN_TOTAL_RECOMMENDATION_SCORE
 
     private fun validatedReasons(values: List<String?>?): List<String>? {
         if (values == null || values.size !in 1..MAX_REASONS) return null
@@ -129,6 +142,8 @@ class AiSupportProgramRankingFacade(
     companion object {
         const val SCORING_VERSION = "govbiz-support-program-ranking-v1"
         private const val MAX_TOTAL_SCORE = 100
+        private const val MIN_SEMANTIC_RELEVANCE_SCORE = 20
+        private const val MIN_TOTAL_RECOMMENDATION_SCORE = 60
         private const val MAX_REASONS = 3
         private const val MAX_REASON_LENGTH = 120
         private const val MAX_TITLE_LENGTH = 300

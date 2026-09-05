@@ -103,6 +103,20 @@ class SupportProgramSearchServiceTest {
     }
 
     @Test
+    fun returnsAnEmptyResultWhenNoRankedCandidateMeetsTheRecommendationMinimum() {
+        val query = "서울 AI 창업기업이 받을 지원사업"
+        val open = catalogProgram(id = "open", summary = "AI 창업 지원")
+        Mockito.doReturn(listOf(open)).`when`(retrieval).retrieve(query, listOf(open))
+        Mockito.doReturn(listOf(open)).`when`(supportProgramRepository).findPresentBizInfo()
+        ranking.response = { emptyList() }
+
+        val result = service().search(query, true)
+
+        assertEquals(emptyList<SupportProgram>(), result.programs)
+        assertEquals(1, ranking.calls.size)
+    }
+
+    @Test
     fun searchesAllCurrentProgramsAndCanRankAnOlderProgramBeyondThePreviousTwentyNewest() {
         val programs = (1..25).map { index ->
                 catalogProgram(

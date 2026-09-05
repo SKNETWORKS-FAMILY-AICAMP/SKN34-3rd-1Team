@@ -59,6 +59,12 @@ def valid_output() -> SupportProgramRankingOutput:
     )
 
 
+def test_prompt_declares_the_recommendation_minimum_without_omitting_candidates() -> None:
+    assert "semanticRelevance 20점 이상" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "totalScore 60점 이상" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "모든 후보를 점수화해야 합니다" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+
+
 @pytest.mark.anyio
 async def test_runs_typed_ranking_agent_through_the_real_runner() -> None:
     expected = valid_output()
