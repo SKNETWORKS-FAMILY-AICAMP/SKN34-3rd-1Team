@@ -70,9 +70,15 @@ GET /api/v1/support-programs/detail
 `SUPPORT_PROGRAM_NOT_FOUND`(404)입니다. 검색 문맥이 없으므로 추천 이유는 빈 배열, 점수는 `null`입니다.
 공개 입력 제한과 JSON·오류 코드의 전체 계약은 [지원사업 API 계약](support-program-search-contract.md)에 있습니다.
 
-## 검색 품질 평가 캡처
+## 검색 품질 평가 fixture 내보내기와 캡처
 
 ```text
+evaluation-fixture-export profile (비웹 실행)
+  → MySQL의 현재 공개 BIZINFO 공고 조회 → OPEN 공고만 선정
+  → SupportProgramIndexDocumentMapper와 같은 ID·내용 해시·검색 문서 생성
+  → 전체 적격 카탈로그와 cases: []인 미라벨 fixture 초안을 원자적으로 JSON 기록
+  → 사람이 질문·관련 공고를 라벨링
+
 evaluation-capture profile (비웹 실행)
   → 질문 묶음 JSON 검증
   → SupportProgramSearchService.searchWithTrace
@@ -81,13 +87,18 @@ evaluation-capture profile (비웹 실행)
   → 별도 Python 평가 도구가 사람 라벨 fixture와 대조
 ```
 
-이 경로는 공개 Controller나 디버그 HTTP endpoint가 아닙니다. `evaluation-capture` profile은 **자신의** 웹
-서버와 두 동기화 스케줄러를 끄며, 모든 질문이 성공하고 캡처 중 카탈로그 지문이 같을 때만 출력 파일을
-교체합니다. 별도 Core API 인스턴스가 카탈로그를 갱신한 경우에는 지문 변화로 결과 파일 기록을 거부합니다.
-후보 ID는 `sourceCode:sourceProgramId` 형태이고, 같은 Search Service가 만든 후보·최종 결과를 기록하므로
-평가 코드가 운영 검색 흐름을 별도로 재현하지 않습니다. 실제 AI Service를 호출할 수 있으므로 기본 실행·CI에는
-포함하지 않습니다. 실행과 라벨 fixture 규칙은 [검색 평가 자료](../evaluation/support-program-search/README.md)를
-따릅니다.
+두 경로 모두 공개 Controller나 디버그 HTTP endpoint가 아닙니다. `evaluation-fixture-export`는 자신의 웹 서버와
+두 동기화 스케줄러를 끄고 공고 데이터는 MySQL에서만 조회합니다. 따라서 Qdrant·AI Service·OpenAI를 호출하지
+않으며, 전체 카탈로그 검증이 끝난 뒤에만 출력 파일을 원자적으로 교체합니다. 생성된 `cases: []`에는 사람이
+`id`·`query`·`split`·`relevantIds`를 채워야 합니다. 그 뒤 질문 묶음의 `name`과 각 `id`·`query`·`split`을
+fixture의 `cases`와 같은 순서·내용으로 맞춥니다.
+
+`evaluation-capture` profile도 자신의 웹 서버와 두 동기화 스케줄러를 끄며, 모든 질문이 성공하고 캡처 중
+카탈로그 지문이 같을 때만 출력 파일을 교체합니다. 별도 Core API 인스턴스가 카탈로그를 갱신한 경우에는 지문
+변화로 결과 파일 기록을 거부합니다. 후보 ID는 `sourceCode:sourceProgramId` 형태이고, 같은 Search Service가
+만든 후보·최종 결과를 기록하므로 평가 코드가 운영 검색 흐름을 별도로 재현하지 않습니다. 실제 AI Service를
+호출할 수 있으므로 기본 실행·CI에는 포함하지 않습니다. fixture 내보내기·라벨·캡처·평가 실행 규칙은
+[검색 평가 자료](../evaluation/support-program-search/README.md)를 따릅니다.
 
 ## 기업마당 동기화와 공개 순서
 

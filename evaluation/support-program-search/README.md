@@ -67,6 +67,31 @@ python3 evaluation/support-program-search/evaluate.py --semantic-results /path/t
 
 질문 키가 빠진 것은 실행하지 않은 경우로 취급해 오류를 낸다. 실제 검색을 실행한 결과가 비어 있을 때만 `[]`를 쓴다. 알 수 없는 공고 ID·질문 ID·중복 반환 ID도 오류다. `--split dev`에서는 개발용 질문 결과만 있어도 된다. 외부 결과 파일과 함께 모델, 임베딩 차원, 검색 설정, 실행 일시, 데이터 버전(`synthetic-support-program-retrieval-v1`)을 기록해야 재현할 수 있다.
 
+## 실제 데이터 fixture 초안 내보내기
+
+실데이터 평가를 시작할 때는 수작업으로 전체 공고를 복사하지 않고 `evaluation-fixture-export` Spring profile을
+실행한다. 이 비웹 profile은 현재 MySQL의 공개 기업마당 공고 중 `OPEN` 공고만 읽고, 운영 검색과 같은
+`SupportProgramIndexDocumentMapper`로 `id`·`contentHash`·`text`를 만든다. 따라서 생성 파일에는 전체 적격
+카탈로그의 공고 수·지문·검색 문서가 들어가며, 이후 캡처 파일과 같은 스냅샷인지 검증할 수 있다.
+
+이 profile은 웹 서버, 기업마당 동기화, 누락 색인 복구를 시작하지 않으며 Qdrant·AI Service·OpenAI도 호출하지
+않는다. `name`과 출력 경로는 실행 환경에서 반드시 지정한다.
+
+```bash
+cd backend/core-api
+./gradlew bootJar
+
+SPRING_PROFILES_ACTIVE=evaluation-fixture-export \
+APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_NAME=bizinfo-20260905-v1 \
+APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_OUTPUT_PATH=/absolute/path/support-program-fixture.json \
+java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
+```
+
+출력의 `dataType`은 `real_catalog_snapshot_unlabeled`이고 `cases`는 빈 배열(`[]`)이다. 이 파일만으로는
+점수를 계산할 수 없다. 내보내기는 빈 적격 카탈로그, 빈 `sortTimestamp`, 중복 검색 문서 ID 등의 검증에
+실패하면 기존 출력 파일을 보존하며, 모든 검증이 성공한 결과만 원자적으로 교체한다. 실제 공고의 검색용 내용이
+포함될 수 있으므로 제공처 이용 조건과 저장·공유 범위를 검토한 뒤 보관한다.
+
 ## 실제 검색 흐름 캡처
 
 `evaluation-capture` Spring profile은 공개 HTTP endpoint를 추가하지 않는다. 이미 동기화되어 있는 MySQL
@@ -78,10 +103,11 @@ python3 evaluation/support-program-search/evaluate.py --semantic-results /path/t
 이 실행은 연결된 AI Service를 통해 실제 OpenAI 임베딩·점수화를 호출할 수 있어 비용이 발생할 수 있다.
 CI나 기본 Compose 검증에서는 실행하지 않는다.
 
-질문 묶음은 [query-set.example.json](query-set.example.json)과 같은 구조를 사용한다. `name`은 라벨 fixture의
-`name`과 같아야 하며, 모든 `id`·`query`·`split`은 라벨 fixture의 `cases`와 같은 순서·내용으로 넣는다.
-이 세 값과 fixture의 `name`에는 앞뒤 공백을 넣지 않는다. 공백이 있으면 실행한 검색어와 평가 fixture의
-식별자가 달라질 수 있어 오류로 처리한다.
+질문 묶음은 [query-set.example.json](query-set.example.json)과 같은 구조를 사용한다. 먼저 내보낸 fixture의
+빈 `cases`에 사람이 `id`·`query`·`split`·`relevantIds`를 라벨링한다. 그 다음 질문 묶음의 `name`을 fixture의
+`name`과 같게 하고, 모든 `id`·`query`·`split`을 fixture의 `cases`와 같은 순서·내용으로 넣는다. 이 세 값과
+fixture의 `name`에는 앞뒤 공백을 넣지 않는다. 공백이 있으면 실행한 검색어와 평가 fixture의 식별자가 달라질
+수 있어 오류로 처리한다.
 
 ```json
 {
@@ -93,8 +119,8 @@ CI나 기본 Compose 검증에서는 실행하지 않는다.
 }
 ```
 
-Core API JAR를 만든 뒤, 실제 MySQL과 AI Service에 연결되는 환경에서 다음처럼 실행한다. 출력 경로는
-입력 경로와 달라야 한다.
+Core API JAR를 만든 뒤, 실제 MySQL과 AI Service에 연결되는 환경에서 다음처럼 실행한다. fixture 내보내기가
+`OPEN` 공고만 담으므로 캡처는 기본값인 `acceptingOnly=true`로 실행한다. 출력 경로는 입력 경로와 달라야 한다.
 
 ```bash
 cd backend/core-api
@@ -110,14 +136,20 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 후보 최대 20개와 최종 최대 5개의 제공처 포함 ID가 들어간다. 지문은 동일 공고 스냅샷에서 얻은 결과인지
 확인하기 위한 값이며 원문이나 비밀정보를 저장하지 않는다.
 
-## 실제 데이터 평가 준비
+## 실제 데이터 라벨·캡처·평가
 
 가상 자료의 통과를 제품 정확도 개선으로 보고하지 않는다. 실제 평가에는 특정 시점의 공고를 고정하고,
 대표 사용자 질문에 사람이 관련·제외 공고를 라벨링한 fixture가 필요하다. 캡처 호환 fixture는 후보·최종
 ID만 일부 담는 파일이 아니라 **캡처 시점의 전체 적격 공고 카탈로그**를 담아야 한다. 그래야 같은 ID가
 다른 내용으로 갱신된 경우에도 평가를 거부할 수 있다.
 
-- `dataType`은 예를 들어 `real_labeled_catalog_snapshot`처럼 자료 성격을 명시한다.
+실행 순서는 다음과 같다. (1) `evaluation-fixture-export`로 현재 카탈로그 초안을 만든다. (2) `cases: []`에
+질문과 정답을 사람이 라벨링한다. (3) 같은 `name`·`id`·`query`·`split`의 질문 묶음을 만든다. (4) 기본
+`acceptingOnly=true`인 `evaluation-capture`로 실제 후보·최종 추천을 기록한다. (5) fixture와 capture를
+`evaluate.py --fixture ... --capture ...`에 전달한다. `relevantIds: null`은 미라벨이므로 점수 계산에서 제외한다.
+
+- 내보내기 결과의 `dataType`은 `real_catalog_snapshot_unlabeled`이다. 라벨링이 끝난 파일은 예를 들어
+  `real_labeled_catalog_snapshot`처럼 자료 성격을 명시한다.
 - `catalog`의 `presentProgramCount`, `eligibleProgramCount`, `eligibleCatalogFingerprint`은 capture 파일의
   `catalog`과 정확히 같아야 한다.
 - `docs` 수는 `eligibleProgramCount`와 같아야 한다. 각 `docs[].id`와 `relevantIds`는 제공처를 포함한
