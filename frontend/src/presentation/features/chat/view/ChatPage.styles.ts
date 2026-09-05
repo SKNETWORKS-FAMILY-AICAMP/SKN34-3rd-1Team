@@ -49,6 +49,7 @@ export const chatPageStyles = {
     'cursor-pointer rounded-[0.65rem] border-0 px-3 py-[0.68rem] text-left text-[0.78rem]',
     'bg-[rgb(113_128_197_/_12%)] text-[#c8d0eb]',
     'transition-colors duration-[160ms] hover:bg-[rgb(113_128_197_/_28%)] hover:text-white',
+    'disabled:cursor-not-allowed disabled:opacity-50',
   ),
   dataSummary: 'grid grid-cols-2 gap-[0.6rem] pt-[0.4rem]',
   dataSummaryTitle:
@@ -90,6 +91,7 @@ export const chatPageStyles = {
   suggestedQuestionButton: classes(
     'cursor-pointer rounded-full border bg-white px-[0.78rem] py-[0.6rem] text-left text-[0.78rem]',
     'border-[#dfe4f2] text-[#536087] hover:border-[#7774d7] hover:text-[#504ebd]',
+    'disabled:cursor-not-allowed disabled:opacity-50',
   ),
   programList: 'mt-[0.9rem] grid gap-[0.8rem]',
   searchingBubble: classes(
@@ -103,6 +105,20 @@ export const chatPageStyles = {
     'mt-0 mb-[0.55rem] flex items-center justify-between gap-3 rounded-[0.7rem] border px-[0.8rem] py-[0.65rem] text-[0.76rem]',
     'border-[#f0cfd4] bg-[#fff5f6] text-[#9a3947]',
   ),
+  readinessNotice: classes(
+    'mt-0 mb-[0.55rem] rounded-[0.7rem] border px-[0.8rem] py-[0.7rem] text-[0.76rem]',
+    'border-[#d8ddec] bg-[#f7f8fc] text-[#3e4a6d]',
+  ),
+  readinessErrorNotice: classes(
+    'mt-0 mb-[0.55rem] flex items-start justify-between gap-3 rounded-[0.7rem] border px-[0.8rem] py-[0.7rem] text-[0.76rem]',
+    'border-[#f0cfd4] bg-[#fff5f6] text-[#9a3947]',
+  ),
+  readinessTitle: 'block text-[0.78rem] font-bold',
+  readinessDescription: 'mt-[0.25rem] mb-0 leading-[1.45]',
+  readinessDetails: 'mt-[0.55rem] mb-0 grid grid-cols-2 gap-x-4 gap-y-1 text-[0.7rem] leading-[1.4] max-chat:grid-cols-1',
+  readinessRetryButton:
+    'shrink-0 cursor-pointer rounded-[0.45rem] border border-[#dcaab2] bg-white px-2 py-[0.3rem] text-[0.72rem] font-bold text-[#8f3340]',
+  readinessRefreshing: 'mt-[0.5rem] block text-[0.7rem] text-[#6471a0]',
   searchRetryButton:
     'shrink-0 cursor-pointer rounded-[0.45rem] border border-[#dcaab2] bg-white px-2 py-[0.3rem] text-[0.72rem] font-bold text-[#8f3340]',
   composerInput: classes(

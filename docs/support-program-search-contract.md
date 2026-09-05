@@ -29,6 +29,42 @@ Accept: application/json
 | `query` | 예 | 사용자의 검색 문장. 요청값 최대 500자. 앞뒤 공백 제거 후 비어 있으면 임베딩·Qdrant·LLM을 호출하지 않고 최신 공고 최대 5개를 반환 |
 | `acceptingOnly` | 아니요 | `true`이면 Core가 `OPEN` 공고만 AI 후보로 전달. 기본값 `true` |
 
+## 공개 검색 준비 상태
+
+채팅 화면은 검색 요청 전에 다음 endpoint로 현재 공개 스냅샷의 준비 상태를 조회합니다. 이 endpoint는
+외부 API·AI Service·Qdrant를 호출하지 않고 MySQL에 기록된 마지막 전체 동기화·색인 준비 결과만 반환합니다.
+
+```http
+GET /api/v1/support-programs/readiness
+Accept: application/json
+```
+
+```json
+{
+  "searchState": "SEARCHABLE_WITH_SYNC_FAILURE",
+  "programCount": 128,
+  "indexReady": true,
+  "lastSuccessfulSyncAt": "2026-09-05T09:00:00+09:00",
+  "lastFailedSyncAt": "2026-09-05T10:00:00+09:00"
+}
+```
+
+| 필드 | 설명 |
+|---|---|
+| `searchState` | `PREPARING`, `SEARCHABLE`, `SEARCHABLE_WITH_SYNC_FAILURE`, `UNAVAILABLE` 중 하나 |
+| `programCount` | 마지막으로 원자적으로 공개된 기업마당 스냅샷의 공고 수. 현재 제공처가 기업마당 하나이므로 현재 검색 카탈로그 수와 같다. |
+| `indexReady` | 이 공개 스냅샷 전체의 마지막 색인 준비가 성공했는지. 실시간 Qdrant Health는 확인하지 않는다. |
+| `lastSuccessfulSyncAt` | 마지막 전체 카탈로그 동기화가 공개까지 성공한 시각. 없으면 `null` |
+| `lastFailedSyncAt` | 현재 세대의 수집·공개 전 필수 색인 실패를 기록한 마지막 시각. 없으면 `null` |
+
+`SEARCHABLE`은 성공적으로 공개·색인된 스냅샷을 뜻하며 공고 수가 0인 경우도 포함합니다.
+`SEARCHABLE_WITH_SYNC_FAILURE`은 이전 스냅샷은 계속 검색 가능하지만 더 최근 동기화가 실패한 경우입니다.
+`UNAVAILABLE`은 상태 행은 있으나 해당 공개 스냅샷의 색인 준비가 확인되지 않은 경우입니다.
+`PREPARING`은 신뢰할 수 있는 상태 행이 아직 없는 초기 상태입니다. V4 상태 테이블을 도입하기 전부터
+존재하던 **비어 있지 않은** 기업마당 공고는 전체 복구 색인이 성공한 뒤에만, 그때 읽은 지문·공고 수를 sentinel
+세대 `0`으로 조건부 채택해 `SEARCHABLE`이 될 수 있습니다. 빈 초기 DB·복구 전 legacy 공고는 이 상태를 유지하고,
+실제 새 스냅샷의 지문은 bootstrap이 바꾸지 않습니다. 시각은 `Asia/Seoul` 오프셋을 포함한 ISO-8601 문자열입니다.
+
 ## 내부 LLM 점수화 요청
 
 Core만 다음 FastAPI endpoint를 호출합니다.
@@ -276,8 +312,12 @@ Core만 아래 AI Service endpoint를 호출합니다. 브라우저에 공개하
 오늘 날짜에 따라 달라지는 상태는 텍스트에 고정하지 않고 Core가 조회 시 계산합니다.
 
 기업마당 동기화는 수집 전에 MySQL에서 시작 세대를 발급받고, 전체 수집·검증 및 모든 색인 배치를
-성공한 뒤 최신 시작 세대일 때만 새 MySQL 카탈로그를 공개합니다. 더 최근에 시작한 작업이 있으면
-이전 작업의 공개를 건너뜁니다. 별도 기본 `PT1M` 스케줄러는 이미 공개된 공고의 누락 벡터만 복구합니다.
+성공한 뒤 최신 시작 세대일 때만 새 MySQL 카탈로그를 공개합니다. 공개 transaction은 공고 교체와 함께
+공개 세대·카탈로그 지문·공고 수·`indexReady=true`·성공 시각도 기록합니다. 더 최근에 시작한 작업이 있으면
+이전 작업의 공개·실패 기록을 모두 건너뜁니다. 현재 세대의 수집 또는 사전 색인 실패는 이전 공개 스냅샷을
+바꾸지 않고 실패 시각만 기록합니다. 별도 기본 `PT1M` 스케줄러는 이미 공개된 공고의 누락 벡터만 복구합니다.
+복구의 성공·실패는 자신이 읽은 세대·지문·공고 수가 상태 행과 아직 같을 때만 `indexReady`를 바꾸므로,
+늦게 끝난 복구가 새 스냅샷 준비 상태를 덮지 못합니다.
 두 경로 모두 `prune`을 호출하지 않으며, 정확한 현재 ID·해시 필터가 오래된 벡터를 검색에서 제외합니다.
 `prune` API는 남아 있지만 다중 인스턴스·동시 실행의 안전한 정리를 보장하지 않습니다. 이전 버전·미공개
 세대의 벡터 정리는 진행 중인 작업과 검색을 보호하는 보존·삭제 수명주기를 마련한 뒤 구현할 후속 과제입니다.

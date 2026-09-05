@@ -2,6 +2,7 @@ import { asFunction } from 'awilix/browser'
 
 import { AskSupportProgramEvidenceQuestionUseCase } from '../../domain/usecases/AskSupportProgramEvidenceQuestionUseCase'
 import { GetSupportProgramDetailUseCase } from '../../domain/usecases/GetSupportProgramDetailUseCase'
+import { GetSupportProgramSearchReadinessUseCase } from '../../domain/usecases/GetSupportProgramSearchReadinessUseCase'
 import { PrepareSampleItemUseCase } from '../../domain/usecases/PrepareSampleItemUseCase'
 import { SearchSupportProgramsUseCase } from '../../domain/usecases/SearchSupportProgramsUseCase'
 import type { AppContainer, AppCradle } from './types'
@@ -14,6 +15,9 @@ export function registerUseCases(container: AppContainer) {
     ).singleton(),
     getSupportProgramDetailUseCase: asFunction(
       createGetSupportProgramDetailUseCase,
+    ).singleton(),
+    getSupportProgramSearchReadinessUseCase: asFunction(
+      createGetSupportProgramSearchReadinessUseCase,
     ).singleton(),
     prepareSampleItemUseCase: asFunction(
       createPrepareSampleItemUseCase,
@@ -34,6 +38,12 @@ function createGetSupportProgramDetailUseCase({
   supportProgramRepository,
 }: Pick<AppCradle, 'supportProgramRepository'>): GetSupportProgramDetailUseCase {
   return new GetSupportProgramDetailUseCase(supportProgramRepository)
+}
+
+function createGetSupportProgramSearchReadinessUseCase({
+  supportProgramRepository,
+}: Pick<AppCradle, 'supportProgramRepository'>): GetSupportProgramSearchReadinessUseCase {
+  return new GetSupportProgramSearchReadinessUseCase(supportProgramRepository)
 }
 
 function createPrepareSampleItemUseCase({

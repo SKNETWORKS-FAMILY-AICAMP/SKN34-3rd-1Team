@@ -31,6 +31,18 @@
         <result column="fetched_at" property="fetchedAt" />
     </resultMap>
 
+    <resultMap id="supportProgramSyncStatusDbRow"
+               type="ai.govbiz.core.supportprogram.repository.mapper.SupportProgramSyncStatusDbRow">
+        <id column="source_code" property="sourceCode" />
+        <result column="published_generation" property="publishedGeneration" />
+        <result column="published_catalog_fingerprint" property="publishedCatalogFingerprint" />
+        <result column="published_program_count" property="publishedProgramCount" />
+        <result column="index_ready" property="indexReady" />
+        <result column="last_successful_sync_at" property="lastSuccessfulSyncAt" />
+        <result column="last_failed_sync_at" property="lastFailedSyncAt" />
+        <result column="last_sync_outcome" property="lastSyncOutcome" />
+    </resultMap>
+
     <insert id="upsert"
             parameterType="ai.govbiz.core.supportprogram.repository.mapper.SupportProgramDbRow">
         INSERT INTO support_program (
@@ -186,5 +198,96 @@
         UPDATE support_program_sync_generation
         SET latest_started_generation = #{generation}
         WHERE source_code = #{sourceCode}
+    </update>
+
+    <select id="findSyncStatus" resultMap="supportProgramSyncStatusDbRow">
+        SELECT
+            source_code,
+            published_generation,
+            published_catalog_fingerprint,
+            published_program_count,
+            index_ready,
+            last_successful_sync_at,
+            last_failed_sync_at,
+            last_sync_outcome
+        FROM support_program_sync_status
+        WHERE source_code = #{sourceCode}
+    </select>
+
+    <insert id="upsertSyncSuccess">
+        INSERT INTO support_program_sync_status (
+            source_code,
+            published_generation,
+            published_catalog_fingerprint,
+            published_program_count,
+            index_ready,
+            last_successful_sync_at,
+            last_sync_outcome
+        ) VALUES (
+            #{sourceCode},
+            #{generation},
+            #{catalogFingerprint},
+            #{programCount},
+            TRUE,
+            #{occurredAt},
+            'SUCCESS'
+        )
+        ON DUPLICATE KEY UPDATE
+            published_generation = #{generation},
+            published_catalog_fingerprint = #{catalogFingerprint},
+            published_program_count = #{programCount},
+            index_ready = TRUE,
+            last_successful_sync_at = #{occurredAt},
+            last_sync_outcome = 'SUCCESS'
+    </insert>
+
+    <insert id="upsertSyncFailure">
+        INSERT INTO support_program_sync_status (
+            source_code,
+            index_ready,
+            last_failed_sync_at,
+            last_sync_outcome
+        ) VALUES (
+            #{sourceCode},
+            FALSE,
+            #{occurredAt},
+            'FAILURE'
+        )
+        ON DUPLICATE KEY UPDATE
+            last_failed_sync_at = #{occurredAt},
+            last_sync_outcome = 'FAILURE'
+    </insert>
+
+    <update id="markSyncIndexReady">
+        UPDATE support_program_sync_status
+        SET index_ready = TRUE
+        WHERE source_code = #{sourceCode}
+          AND published_generation = #{publishedGeneration}
+          AND published_catalog_fingerprint = #{catalogFingerprint}
+          AND published_program_count = #{programCount}
+    </update>
+
+    <update id="markSyncIndexNotReady">
+        UPDATE support_program_sync_status
+        SET index_ready = FALSE
+        WHERE source_code = #{sourceCode}
+          AND published_generation = #{publishedGeneration}
+          AND published_catalog_fingerprint = #{catalogFingerprint}
+          AND published_program_count = #{programCount}
+    </update>
+
+    <insert id="insertSyncStatusIfAbsent">
+        INSERT IGNORE INTO support_program_sync_status (source_code)
+        VALUES (#{sourceCode})
+    </insert>
+
+    <update id="bootstrapSyncStatusIfUntrusted">
+        UPDATE support_program_sync_status
+        SET published_generation = 0,
+            published_catalog_fingerprint = #{catalogFingerprint},
+            published_program_count = #{programCount},
+            index_ready = TRUE
+        WHERE source_code = #{sourceCode}
+          AND published_catalog_fingerprint IS NULL
     </update>
 </mapper>

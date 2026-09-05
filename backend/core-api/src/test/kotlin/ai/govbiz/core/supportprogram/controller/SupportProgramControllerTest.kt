@@ -13,9 +13,13 @@ import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceServ
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceUnavailableException
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
+import ai.govbiz.core.supportprogram.service.readiness.SupportProgramSearchReadinessService
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerResult
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerStatus
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceCitationResult
+import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchReadinessResult
+import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchState
+import java.time.OffsetDateTime
 import java.util.stream.Stream
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
@@ -50,6 +54,9 @@ class SupportProgramControllerTest {
     @Mock
     private lateinit var evidenceService: SupportProgramEvidenceService
 
+    @Mock
+    private lateinit var readinessService: SupportProgramSearchReadinessService
+
     private lateinit var ranking: StubSupportProgramRankingFacade
 
     private lateinit var mockMvc: MockMvc
@@ -66,6 +73,7 @@ class SupportProgramControllerTest {
             .standaloneSetup(
                 SupportProgramController(
                     searchService = service,
+                    readinessService = readinessService,
                     detailService = SupportProgramDetailService(supportProgramRepository),
                     evidenceService = evidenceService,
                 ),
@@ -119,6 +127,28 @@ class SupportProgramControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.query").value("서울"))
             .andExpect(jsonPath("$.programs").isEmpty())
+    }
+
+    @Test
+    fun returnsTheStableSearchReadinessContract() {
+        Mockito.doReturn(
+            SupportProgramSearchReadinessResult(
+                searchState = SupportProgramSearchState.SEARCHABLE_WITH_SYNC_FAILURE,
+                programCount = 17,
+                indexReady = true,
+                lastSuccessfulSyncAt = OffsetDateTime.parse("2026-09-05T09:00:00+09:00"),
+                lastFailedSyncAt = OffsetDateTime.parse("2026-09-05T10:00:00+09:00"),
+            ),
+        ).`when`(readinessService).get()
+
+        mockMvc.perform(get(READINESS_PATH))
+            .andExpect(status().isOk())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+            .andExpect(jsonPath("$.searchState").value("SEARCHABLE_WITH_SYNC_FAILURE"))
+            .andExpect(jsonPath("$.programCount").value(17))
+            .andExpect(jsonPath("$.indexReady").value(true))
+            .andExpect(jsonPath("$.lastSuccessfulSyncAt").value("2026-09-05T09:00:00+09:00"))
+            .andExpect(jsonPath("$.lastFailedSyncAt").value("2026-09-05T10:00:00+09:00"))
     }
 
     @Test
@@ -449,6 +479,7 @@ class SupportProgramControllerTest {
 
     private companion object {
         const val PATH = "/api/v1/support-programs/search"
+        const val READINESS_PATH = "/api/v1/support-programs/readiness"
         const val DETAIL_PATH = "/api/v1/support-programs/detail"
         const val EVIDENCE_ANSWER_PATH = "/api/v1/support-programs/detail/answers"
         const val PRIVATE_DETAIL = "private upstream detail"

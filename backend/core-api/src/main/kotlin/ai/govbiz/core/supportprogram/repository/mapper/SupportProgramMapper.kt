@@ -1,5 +1,6 @@
 package ai.govbiz.core.supportprogram.repository.mapper
 
+import java.time.LocalDateTime
 import org.apache.ibatis.annotations.Mapper
 import org.apache.ibatis.annotations.Param
 
@@ -32,5 +33,42 @@ interface SupportProgramMapper {
     fun updateLatestStartedGeneration(
         @Param("sourceCode") sourceCode: String,
         @Param("generation") generation: Long,
+    ): Int
+
+    fun findSyncStatus(@Param("sourceCode") sourceCode: String): SupportProgramSyncStatusDbRow?
+
+    fun upsertSyncSuccess(
+        @Param("sourceCode") sourceCode: String,
+        @Param("generation") generation: Long,
+        @Param("catalogFingerprint") catalogFingerprint: String,
+        @Param("programCount") programCount: Int,
+        @Param("occurredAt") occurredAt: LocalDateTime,
+    ): Int
+
+    fun upsertSyncFailure(
+        @Param("sourceCode") sourceCode: String,
+        @Param("occurredAt") occurredAt: LocalDateTime,
+    ): Int
+
+    fun markSyncIndexReady(
+        @Param("sourceCode") sourceCode: String,
+        @Param("publishedGeneration") publishedGeneration: Long,
+        @Param("catalogFingerprint") catalogFingerprint: String,
+        @Param("programCount") programCount: Int,
+    ): Int
+
+    fun markSyncIndexNotReady(
+        @Param("sourceCode") sourceCode: String,
+        @Param("publishedGeneration") publishedGeneration: Long,
+        @Param("catalogFingerprint") catalogFingerprint: String,
+        @Param("programCount") programCount: Int,
+    ): Int
+
+    fun insertSyncStatusIfAbsent(@Param("sourceCode") sourceCode: String): Int
+
+    fun bootstrapSyncStatusIfUntrusted(
+        @Param("sourceCode") sourceCode: String,
+        @Param("catalogFingerprint") catalogFingerprint: String,
+        @Param("programCount") programCount: Int,
     ): Int
 }

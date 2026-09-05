@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
 import { appContainer } from './app/appContainer'
@@ -13,6 +13,20 @@ import { supportPrograms } from './data/fixtures/supportPrograms'
 vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => ({
   CoreApiConnectionStatus: () => null,
 }))
+
+const readinessViewModelMock = vi.hoisted(() => ({
+  useSupportProgramSearchReadinessViewModel: vi.fn(),
+}))
+
+vi.mock('./presentation/features/chat/viewmodel/useSupportProgramSearchReadinessViewModel', () => (
+  readinessViewModelMock
+))
+
+beforeEach(() => {
+  readinessViewModelMock.useSupportProgramSearchReadinessViewModel.mockReturnValue(
+    createReadinessViewModel(),
+  )
+})
 
 afterEach(() => {
   cleanup()
@@ -378,6 +392,161 @@ describe('App navigation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('초기 공고 데이터 준비 중에는 검색을 막고 준비 완료를 안내한다', () => {
+    readinessViewModelMock.useSupportProgramSearchReadinessViewModel.mockReturnValue(
+      createReadinessViewModel({
+        canSearch: false,
+        data: {
+          searchState: 'PREPARING',
+          programCount: 0,
+          indexReady: false,
+          lastSuccessfulSyncAt: null,
+          lastFailedSyncAt: null,
+        },
+      }),
+    )
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore())
+
+    expect(screen.getByText('초기 공고 데이터를 준비하고 있습니다.')).toBeTruthy()
+    expect(screen.getByText('준비가 완료되면 자동으로 검색할 수 있습니다.')).toBeTruthy()
+    const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    expect((searchInput as HTMLTextAreaElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '검색 전송' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getAllByRole('button', { name: '서울 AI 창업지원 사업 찾아줘' })[0] as HTMLButtonElement).disabled)
+      .toBe(true)
+    fireEvent.submit(searchInput.closest('form')!)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('공고 상태를 처음 확인하는 동안에는 준비 중과 구분된 안내를 표시한다', () => {
+    readinessViewModelMock.useSupportProgramSearchReadinessViewModel.mockReturnValue(
+      createReadinessViewModel({
+        canSearch: false,
+        data: undefined,
+        isInitialLoading: true,
+      }),
+    )
+
+    renderApp(createAppStore())
+
+    expect(screen.getByText('공고 데이터 상태를 확인하고 있습니다.')).toBeTruthy()
+    expect((screen.getByRole('textbox', { name: '지원사업 검색어' }) as HTMLTextAreaElement).disabled)
+      .toBe(true)
+  })
+
+  it('최신 동기화가 실패해도 이전 공고 검색은 유지하고 동기화 시각을 보여 준다', async () => {
+    readinessViewModelMock.useSupportProgramSearchReadinessViewModel.mockReturnValue(
+      createReadinessViewModel({
+        data: {
+          searchState: 'SEARCHABLE_WITH_SYNC_FAILURE',
+          programCount: 12,
+          indexReady: true,
+          lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
+          lastFailedSyncAt: '2026-09-05T10:00:00+09:00',
+        },
+      }),
+    )
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      query: '서울 AI',
+      programs: [supportPrograms[0]],
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore())
+
+    expect(screen.getByText('이전 공고 데이터로 검색할 수 있습니다.')).toBeTruthy()
+    expect(screen.getByText('최신 공고 동기화에 실패했지만, 이전에 저장된 공고는 계속 검색할 수 있습니다.'))
+      .toBeTruthy()
+    expect(screen.getByText('마지막 성공 동기화')).toBeTruthy()
+    expect(screen.getByText('마지막 실패 동기화')).toBeTruthy()
+    expect(screen.getAllByText('12건').length).toBeGreaterThan(0)
+
+    const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    expect((searchInput as HTMLTextAreaElement).disabled).toBe(false)
+    fireEvent.change(searchInput, { target: { value: '서울 AI' } })
+    fireEvent.submit(searchInput.closest('form')!)
+    await screen.findByRole('heading', { name: supportPrograms[0].title, level: 2 })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('검색 불가 상태는 검색을 막고 상태 확인을 다시 요청할 수 있다', () => {
+    const refetch = vi.fn()
+    readinessViewModelMock.useSupportProgramSearchReadinessViewModel.mockReturnValue(
+      createReadinessViewModel({
+        canSearch: false,
+        data: {
+          searchState: 'UNAVAILABLE',
+          programCount: 0,
+          indexReady: false,
+          lastSuccessfulSyncAt: null,
+          lastFailedSyncAt: '2026-09-05T10:00:00+09:00',
+        },
+        refetch,
+      }),
+    )
+
+    renderApp(createAppStore())
+
+    expect(screen.getByRole('alert').textContent).toContain('현재 공고 데이터를 검색할 수 없습니다.')
+    expect((screen.getByRole('textbox', { name: '지원사업 검색어' }) as HTMLTextAreaElement).disabled)
+      .toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '상태 다시 확인' }))
+    expect(refetch).toHaveBeenCalledOnce()
+  })
+
+  it('검색 실패 뒤 공고 상태가 검색 불가로 바뀌면 다시 검색 버튼을 숨긴다', async () => {
+    let currentReadiness = createReadinessViewModel()
+    readinessViewModelMock.useSupportProgramSearchReadinessViewModel.mockImplementation(
+      () => currentReadiness,
+    )
+    const fetchMock = vi.fn(() => {
+      currentReadiness = createReadinessViewModel({
+        canSearch: false,
+        data: {
+          searchState: 'UNAVAILABLE',
+          programCount: 0,
+          indexReady: false,
+          lastSuccessfulSyncAt: null,
+          lastFailedSyncAt: '2026-09-05T10:00:00+09:00',
+        },
+      })
+      return Promise.reject(new Error('temporary search failure'))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore())
+
+    const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    fireEvent.change(searchInput, { target: { value: '서울 AI' } })
+    fireEvent.submit(searchInput.closest('form')!)
+
+    await screen.findByText('지원사업을 검색하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+    expect(screen.queryByRole('button', { name: '다시 검색' })).toBeNull()
+    expect((screen.getByRole('textbox', { name: '지원사업 검색어' }) as HTMLTextAreaElement).disabled)
+      .toBe(true)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('검색 가능한 상태에서 빈 검색 결과는 공고 없음으로 안내한다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      query: '존재하지 않는 조건',
+      programs: [],
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore())
+
+    const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    fireEvent.change(searchInput, { target: { value: '존재하지 않는 조건' } })
+    fireEvent.submit(searchInput.closest('form')!)
+
+    await screen.findByText('현재 일치하는 공고를 찾지 못했습니다. 지역이나 분야를 바꿔 다시 검색해 보세요.')
+    expect(screen.getByText('공고 검색이 가능합니다.')).toBeTruthy()
+  })
+
   it('진행 중인 검색은 취소할 수 있고 검색어를 유지한다', async () => {
     let requestSignal: AbortSignal | undefined
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>(
@@ -561,4 +730,22 @@ function getProgramCard(title: string): HTMLElement {
   const card = screen.getByRole('heading', { name: title, level: 2 }).closest('article')
   if (!card) throw new Error(`지원사업 카드가 없습니다: ${title}`)
   return card
+}
+
+function createReadinessViewModel(overrides: Record<string, unknown> = {}) {
+  return {
+    data: {
+      searchState: 'SEARCHABLE' as const,
+      programCount: 12,
+      indexReady: true,
+      lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
+      lastFailedSyncAt: null,
+    },
+    isError: false,
+    isInitialLoading: false,
+    isRefreshing: false,
+    canSearch: true,
+    refetch: vi.fn(),
+    ...overrides,
+  }
 }

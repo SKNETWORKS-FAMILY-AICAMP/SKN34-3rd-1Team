@@ -7,6 +7,7 @@ import type { SampleItemRepository } from '../domain/repositories/SampleItemRepo
 import type { SupportProgramRepository } from '../domain/repositories/SupportProgramRepository'
 import { AskSupportProgramEvidenceQuestionUseCase } from '../domain/usecases/AskSupportProgramEvidenceQuestionUseCase'
 import { GetSupportProgramDetailUseCase } from '../domain/usecases/GetSupportProgramDetailUseCase'
+import { GetSupportProgramSearchReadinessUseCase } from '../domain/usecases/GetSupportProgramSearchReadinessUseCase'
 import { PrepareSampleItemUseCase } from '../domain/usecases/PrepareSampleItemUseCase'
 import { SearchSupportProgramsUseCase } from '../domain/usecases/SearchSupportProgramsUseCase'
 import { appContainer } from './appContainer'
@@ -21,14 +22,17 @@ describe('Awilix application container and Service Locator', () => {
     const evidenceQuestionUseCase = appContainer.resolve('askSupportProgramEvidenceQuestionUseCase')
     const prepareUseCase = appContainer.resolve('prepareSampleItemUseCase')
     const detailUseCase = appContainer.resolve('getSupportProgramDetailUseCase')
+    const readinessUseCase = appContainer.resolve('getSupportProgramSearchReadinessUseCase')
     const searchUseCase = appContainer.resolve('searchSupportProgramsUseCase')
 
     expect(evidenceQuestionUseCase).toBeInstanceOf(AskSupportProgramEvidenceQuestionUseCase)
     expect(prepareUseCase).toBeInstanceOf(PrepareSampleItemUseCase)
     expect(detailUseCase).toBeInstanceOf(GetSupportProgramDetailUseCase)
+    expect(readinessUseCase).toBeInstanceOf(GetSupportProgramSearchReadinessUseCase)
     expect(searchUseCase).toBeInstanceOf(SearchSupportProgramsUseCase)
     expect(appContainer.resolve('askSupportProgramEvidenceQuestionUseCase')).toBe(evidenceQuestionUseCase)
     expect(appContainer.resolve('getSupportProgramDetailUseCase')).toBe(detailUseCase)
+    expect(appContainer.resolve('getSupportProgramSearchReadinessUseCase')).toBe(readinessUseCase)
     expect(appContainer.resolve('prepareSampleItemUseCase')).toBe(prepareUseCase)
     expect(appContainer.resolve('searchSupportProgramsUseCase')).toBe(
       searchUseCase,
@@ -80,6 +84,7 @@ describe('Awilix application container and Service Locator', () => {
     const repository: SupportProgramRepository = {
       answerEvidenceQuestion: vi.fn(),
       getDetail: vi.fn(),
+      getSearchReadiness: vi.fn(),
       search,
     }
     const container = createAppContainer()

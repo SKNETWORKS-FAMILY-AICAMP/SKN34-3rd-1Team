@@ -4,11 +4,16 @@ import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
+import ai.govbiz.core.supportprogram.domain.SupportProgramSyncOutcome
+import ai.govbiz.core.supportprogram.domain.SupportProgramSyncStatus
+import ai.govbiz.core.supportprogram.helper.SupportProgramCatalogFingerprintHelper
 import ai.govbiz.core.supportprogram.repository.mapper.SupportProgramDbRow
 import ai.govbiz.core.supportprogram.repository.mapper.SupportProgramMapper
 import ai.govbiz.core.supportprogram.repository.mapper.SupportProgramSourceDocumentDbRow
+import ai.govbiz.core.supportprogram.repository.mapper.SupportProgramSyncStatusDbRow
 import java.time.Clock
 import java.time.LocalDate
+import java.time.LocalDateTime
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
@@ -73,6 +78,75 @@ class SupportProgramRepository(
         if (latestGeneration != generation) return false
 
         replaceBizInfoSnapshot(programs)
+        supportProgramMapper.upsertSyncSuccess(
+            sourceCode = BIZINFO_SOURCE_CODE,
+            generation = generation,
+            catalogFingerprint = SupportProgramCatalogFingerprintHelper.calculate(programs),
+            programCount = programs.size,
+            occurredAt = LocalDateTime.now(clock),
+        )
+        return true
+    }
+
+    /** 색인 복구가 읽은 공개 스냅샷과 상태 행이 아직 같을 때만 준비 완료를 기록합니다. */
+    @Transactional
+    fun markBizInfoIndexReadyIfPublishedSnapshotMatches(
+        publishedGeneration: Long,
+        expectedCatalogFingerprint: String,
+        expectedProgramCount: Int,
+    ): Boolean =
+        supportProgramMapper.markSyncIndexReady(
+            sourceCode = BIZINFO_SOURCE_CODE,
+            publishedGeneration = publishedGeneration,
+            catalogFingerprint = expectedCatalogFingerprint,
+            programCount = expectedProgramCount,
+        ) == 1
+
+    /** 색인 복구가 읽은 공개 스냅샷과 상태 행이 아직 같을 때만 준비 실패를 기록합니다. */
+    @Transactional
+    fun markBizInfoIndexNotReadyIfPublishedSnapshotMatches(
+        publishedGeneration: Long,
+        expectedCatalogFingerprint: String,
+        expectedProgramCount: Int,
+    ): Boolean =
+        supportProgramMapper.markSyncIndexNotReady(
+            sourceCode = BIZINFO_SOURCE_CODE,
+            publishedGeneration = publishedGeneration,
+            catalogFingerprint = expectedCatalogFingerprint,
+            programCount = expectedProgramCount,
+        ) == 1
+
+    /**
+     * V4 상태 행이 없던 기존 공개 공고를 전체 색인 복구가 성공한 뒤에만 신뢰 가능한 준비 상태로 채택합니다.
+     *
+     * 실제 공개 세대를 복원할 수 없으므로 sentinel 세대 0을 사용합니다. 이미 지문이 있는 새 스냅샷은
+     * SQL의 조건부 갱신으로 절대 바꾸지 않습니다.
+     */
+    @Transactional
+    fun bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(programs: List<CatalogSupportProgram>): Boolean {
+        val bizInfoPrograms = programs.filter { it.program.sourceCode == BIZINFO_SOURCE_CODE }
+        if (bizInfoPrograms.isEmpty()) return false
+
+        supportProgramMapper.insertSyncStatusIfAbsent(BIZINFO_SOURCE_CODE)
+        return supportProgramMapper.bootstrapSyncStatusIfUntrusted(
+            sourceCode = BIZINFO_SOURCE_CODE,
+            catalogFingerprint = SupportProgramCatalogFingerprintHelper.calculate(bizInfoPrograms),
+            programCount = bizInfoPrograms.size,
+        ) > 0
+    }
+
+    /** 현재 세대의 수집 또는 필수 색인 실패만 기록하고, 이전 공개 카탈로그는 변경하지 않습니다. */
+    @Transactional
+    fun recordBizInfoSyncFailureIfCurrent(generation: Long): Boolean {
+        val latestGeneration = requireNotNull(
+            supportProgramMapper.lockLatestStartedGeneration(BIZINFO_SOURCE_CODE),
+        ) { "BizInfo sync generation row does not exist" }
+        if (latestGeneration != generation) return false
+
+        supportProgramMapper.upsertSyncFailure(
+            sourceCode = BIZINFO_SOURCE_CODE,
+            occurredAt = LocalDateTime.now(clock),
+        )
         return true
     }
 
@@ -91,6 +165,10 @@ class SupportProgramRepository(
                 .findPresent()
                 .map { it.toCatalogProgram() },
         )
+
+    /** 기업마당 동기화가 한 번도 성공·실패하지 않았으면 null을 반환합니다. */
+    fun findBizInfoSyncStatus(): SupportProgramSyncStatus? =
+        supportProgramMapper.findSyncStatus(BIZINFO_SOURCE_CODE)?.toSyncStatus()
 
     /** 현재 공개된 공고에 연결된 공식 원문 근거 문서를 조회합니다. */
     fun findPresentSourceDocument(
@@ -178,6 +256,18 @@ class SupportProgramRepository(
             content = content,
             contentHash = contentHash,
             fetchedAt = requireNotNull(fetchedAt) { "source document fetchedAt must not be null" },
+        )
+
+    private fun SupportProgramSyncStatusDbRow.toSyncStatus(): SupportProgramSyncStatus =
+        SupportProgramSyncStatus(
+            sourceCode = sourceCode,
+            publishedGeneration = publishedGeneration,
+            publishedCatalogFingerprint = publishedCatalogFingerprint,
+            publishedProgramCount = publishedProgramCount,
+            indexReady = indexReady,
+            lastSuccessfulSyncAt = lastSuccessfulSyncAt,
+            lastFailedSyncAt = lastFailedSyncAt,
+            lastSyncOutcome = SupportProgramSyncOutcome.valueOf(lastSyncOutcome),
         )
 
     private fun readStringList(value: String): List<String> =
