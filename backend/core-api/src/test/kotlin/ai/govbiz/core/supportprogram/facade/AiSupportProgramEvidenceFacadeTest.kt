@@ -81,6 +81,51 @@ class AiSupportProgramEvidenceFacadeTest {
         assertInvalid(chunks)
     }
 
+    @Test
+    fun acceptsAnswerAtTheUnicodeCodePointLimit() {
+        val answer = "가".repeat(1_199) + "😀"
+        assertEquals(1_200, answer.codePointCount(0, answer.length))
+        assertEquals(1_201, answer.length)
+
+        val chunks = chunks()
+        val indexRequest = indexRequest(chunks)
+        doReturn(AiSupportProgramEvidenceIndexPayload(2)).`when`(client).indexChunks(indexRequest)
+        doReturn(
+            AiSupportProgramEvidenceSearchPayload(
+                QUESTION,
+                listOf(match(chunks[0], 0.9), match(chunks[1], 0.8)),
+            ),
+        ).`when`(client).searchChunks(searchRequest(indexRequest))
+        doReturn(
+            AiSupportProgramEvidenceAnswerPayload(answer, "ANSWERED", listOf(chunks[0].id)),
+        ).`when`(client).answer(answerRequest(QUESTION, chunks))
+
+        val result = AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL)
+
+        assertEquals(answer, result.answer)
+    }
+
+    @Test
+    fun rejectsAnswerAboveTheUnicodeCodePointLimit() {
+        val answer = "가".repeat(1_200) + "😀"
+        assertEquals(1_201, answer.codePointCount(0, answer.length))
+
+        val chunks = chunks()
+        val indexRequest = indexRequest(chunks)
+        doReturn(AiSupportProgramEvidenceIndexPayload(2)).`when`(client).indexChunks(indexRequest)
+        doReturn(
+            AiSupportProgramEvidenceSearchPayload(
+                QUESTION,
+                listOf(match(chunks[0], 0.9), match(chunks[1], 0.8)),
+            ),
+        ).`when`(client).searchChunks(searchRequest(indexRequest))
+        doReturn(
+            AiSupportProgramEvidenceAnswerPayload(answer, "ANSWERED", listOf(chunks[0].id)),
+        ).`when`(client).answer(answerRequest(QUESTION, chunks))
+
+        assertInvalid(chunks)
+    }
+
     private fun assertInvalid(chunks: List<SupportProgramEvidenceChunk>) {
         val exception = assertThrows(AiServiceCallException::class.java) {
             AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL)

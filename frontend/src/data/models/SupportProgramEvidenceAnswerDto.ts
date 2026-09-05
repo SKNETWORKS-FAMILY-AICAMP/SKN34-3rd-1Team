@@ -13,7 +13,10 @@ const citationDtoSchema = z.object({
 })
 
 export const supportProgramEvidenceAnswerDtoSchema = z.object({
-  answer: z.string().trim().min(1).max(1_200),
+  answer: z.string().trim().min(1).refine(
+    (value) => Array.from(value).length <= 1_200,
+    '답변은 유니코드 코드 포인트 기준 1,200자 이하여야 합니다.',
+  ),
   answerStatus: z.enum(['ANSWERED', 'INSUFFICIENT_EVIDENCE']),
   citations: z.array(citationDtoSchema).max(5),
 }).superRefine((answer, context) => {

@@ -404,7 +404,7 @@ describe('App navigation', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('모바일 메뉴와 아이콘 검색 제어는 키보드·스크린리더로 조작할 수 있다', () => {
+  it('모바일 메뉴는 포커스를 사이드바에 가두고 닫을 때 메뉴 버튼으로 돌려준다', () => {
     renderApp(createAppStore())
 
     const sidebar = screen.getByLabelText('지원사업 검색 메뉴')
@@ -416,11 +416,49 @@ describe('App navigation', () => {
 
     const menuButton = screen.getByRole('button', { name: '메뉴 열기' })
     expect(menuButton.getAttribute('aria-expanded')).toBe('false')
+    menuButton.focus()
     fireEvent.click(menuButton)
     expect(menuButton.getAttribute('aria-expanded')).toBe('true')
+    expect(sidebar.getAttribute('role')).toBe('dialog')
+    expect(sidebar.getAttribute('aria-modal')).toBe('true')
+    expect(menuButton.closest('section')?.hasAttribute('inert')).toBe(true)
 
-    fireEvent.keyDown(window, { key: 'Escape' })
+    const sidebarCloseButton = within(sidebar).getByRole('button', { name: '메뉴 닫기' })
+    const sidebarFocusableElements = Array.from(
+      sidebar.querySelectorAll<HTMLElement>('button, a[href]'),
+    )
+    const firstSidebarElement = sidebarFocusableElements[0]
+    const lastSidebarElement = sidebarFocusableElements.at(-1)
+    expect(document.activeElement).toBe(sidebarCloseButton)
+
+    screen.getByRole('textbox', { name: '지원사업 검색어' }).focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(firstSidebarElement)
+
+    lastSidebarElement?.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(firstSidebarElement)
+
+    firstSidebarElement?.focus()
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(lastSidebarElement)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(menuButton.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(menuButton)
+    expect(menuButton.closest('section')?.hasAttribute('inert')).toBe(false)
+
+    fireEvent.click(menuButton)
+    fireEvent.click(screen.getByRole('button', { name: '메뉴 닫기' }))
+    expect(menuButton.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(menuButton)
+
+    fireEvent.click(menuButton)
+    const backdrop = document.querySelector('main > div[aria-hidden="true"]')
+    expect(backdrop).toBeTruthy()
+    fireEvent.click(backdrop!)
+    expect(menuButton.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(menuButton)
   })
 
   it('새로고침 또는 공유 URL의 직접 진입도 Core API에서 상세 정보를 다시 조회한다', async () => {

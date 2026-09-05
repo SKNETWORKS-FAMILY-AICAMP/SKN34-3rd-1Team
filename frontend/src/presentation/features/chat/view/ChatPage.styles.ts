@@ -10,7 +10,7 @@ export const chatPageStyles = {
   backdropOpen:
     'max-chat:fixed max-chat:inset-0 max-chat:z-[2] max-chat:block max-chat:border-0 max-chat:bg-[rgb(10_15_32_/_38%)]',
   sidebar: classes(
-    'flex flex-col gap-[1.35rem] px-5 py-[1.6rem]',
+    'relative flex flex-col gap-[1.35rem] px-5 py-[1.6rem]',
     'bg-[linear-gradient(180deg,#1c2342_0%,#11162e_100%)] text-[#e9edff]',
     'max-chat:fixed max-chat:inset-y-0 max-chat:left-0 max-chat:z-[3] max-chat:w-[min(278px,86vw)]',
     'max-chat:shadow-[12px_0_40px_rgb(11_17_40_/_25%)]',
@@ -19,6 +19,12 @@ export const chatPageStyles = {
   sidebarOpen: 'max-chat:translate-x-0',
   sidebarClosed:
     'max-chat:invisible max-chat:pointer-events-none max-chat:translate-x-[-102%]',
+  sidebarCloseButton: classes(
+    'hidden cursor-pointer border-0 bg-transparent text-[1.6rem] leading-none text-[#d9dff4]',
+    'max-chat:grid max-chat:size-9 max-chat:place-items-center max-chat:rounded-[0.6rem]',
+    'max-chat:absolute max-chat:top-3 max-chat:right-3',
+    'max-chat:focus:outline-2 max-chat:focus:outline-offset-2 max-chat:focus:outline-brand-accent',
+  ),
   brand: 'flex items-center gap-3 border-b border-[rgb(219_227_255_/_12%)] px-[0.35rem] pt-1 pb-5',
   brandMark:
     'grid size-[2.35rem] place-items-center rounded-[0.8rem] bg-brand-accent text-[1.25rem] font-black text-[#17203d]',

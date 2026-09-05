@@ -31,6 +31,9 @@ export function ChatPage() {
   } = useSupportProgramChatViewModel()
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const isComposingInput = useRef(false)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const sidebarRef = useRef<HTMLElement>(null)
+  const shouldRestoreMenuFocusRef = useRef(false)
   const timelineRef = useRef<HTMLDivElement>(null)
   const latestMessage = messages.at(-1)
   const searchStatusAnnouncement = isSearching
@@ -45,15 +48,61 @@ export function ChatPage() {
   }, [messages, isSearching])
 
   useEffect(() => {
-    function closeSidebarOnEscape(event: KeyboardEvent) {
+    if (!isSidebarOpen) {
+      if (shouldRestoreMenuFocusRef.current) {
+        menuButtonRef.current?.focus()
+        shouldRestoreMenuFocusRef.current = false
+      }
+      return
+    }
+
+    const sidebar = sidebarRef.current
+    if (!sidebar) return
+
+    focusFirstSidebarElement(sidebar)
+
+    function handleSidebarKeyboardNavigation(event: KeyboardEvent) {
+      const currentSidebar = sidebarRef.current
+      if (!currentSidebar) return
+
       if (event.key === 'Escape') {
-        setIsSidebarOpen(false)
+        event.preventDefault()
+        closeSidebar()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const focusableElements = getSidebarFocusableElements(currentSidebar)
+      if (focusableElements.length === 0) {
+        event.preventDefault()
+        currentSidebar.focus()
+        return
+      }
+
+      const firstElement = focusableElements[0]
+      const lastElement = focusableElements.at(-1)
+      const activeElement = document.activeElement
+      const isFocusInsideSidebar = currentSidebar.contains(activeElement)
+      const shouldMoveToFirst = !event.shiftKey && (
+        activeElement === lastElement || !isFocusInsideSidebar
+      )
+      const shouldMoveToLast = event.shiftKey && (
+        activeElement === firstElement || activeElement === currentSidebar || !isFocusInsideSidebar
+      )
+
+      if (shouldMoveToFirst) {
+        event.preventDefault()
+        firstElement.focus()
+      }
+      if (shouldMoveToLast && lastElement) {
+        event.preventDefault()
+        lastElement.focus()
       }
     }
 
-    window.addEventListener('keydown', closeSidebarOnEscape)
-    return () => window.removeEventListener('keydown', closeSidebarOnEscape)
-  }, [])
+    document.addEventListener('keydown', handleSidebarKeyboardNavigation)
+    return () => document.removeEventListener('keydown', handleSidebarKeyboardNavigation)
+  }, [isSidebarOpen])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -62,28 +111,49 @@ export function ChatPage() {
 
   function handleStartNewConversation() {
     startNewConversation()
-    setIsSidebarOpen(false)
+    closeSidebar()
   }
 
   function handleSelectSuggestion(suggestion: string) {
     selectSuggestion(suggestion)
+    closeSidebar()
+  }
+
+  function openSidebar() {
+    shouldRestoreMenuFocusRef.current = false
+    setIsSidebarOpen(true)
+  }
+
+  function closeSidebar() {
+    shouldRestoreMenuFocusRef.current = true
     setIsSidebarOpen(false)
   }
 
   return (
     <main className={chatPageStyles.page}>
-      <button
-        type="button"
+      <div
         className={chatBackdropClassName(isSidebarOpen)}
-        aria-label="메뉴 닫기"
-        onClick={() => setIsSidebarOpen(false)}
+        aria-hidden="true"
+        onClick={closeSidebar}
       />
 
       <aside
+        ref={sidebarRef}
         id="chat-sidebar"
         className={chatSidebarClassName(isSidebarOpen)}
         aria-label="지원사업 검색 메뉴"
+        aria-modal={isSidebarOpen || undefined}
+        role={isSidebarOpen ? 'dialog' : undefined}
+        tabIndex={-1}
       >
+        <button
+          type="button"
+          className={chatPageStyles.sidebarCloseButton}
+          aria-label="메뉴 닫기"
+          onClick={closeSidebar}
+        >
+          ×
+        </button>
         <div className={chatPageStyles.brand}>
           <span className={chatPageStyles.brandMark}>
             G
@@ -151,15 +221,16 @@ export function ChatPage() {
         </p>
       </aside>
 
-      <section className={chatPageStyles.workspace}>
+      <section className={chatPageStyles.workspace} inert={isSidebarOpen}>
         <header className={chatPageStyles.header}>
           <button
+            ref={menuButtonRef}
             type="button"
             className={chatPageStyles.menuButton}
             aria-controls="chat-sidebar"
             aria-expanded={isSidebarOpen}
             aria-label="메뉴 열기"
-            onClick={() => setIsSidebarOpen(true)}
+            onClick={openSidebar}
           >
             ☰
           </button>
@@ -375,4 +446,27 @@ function formatApplicationDeadline(program: SupportProgram) {
 
   const [, month, day] = program.applicationEndDate.split('-')
   return `마감 ${Number(month)}월 ${Number(day)}일`
+}
+
+const sidebarFocusableSelector = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
+function focusFirstSidebarElement(sidebar: HTMLElement) {
+  const [firstElement] = getSidebarFocusableElements(sidebar)
+  if (firstElement) {
+    firstElement.focus()
+    return
+  }
+  sidebar.focus()
+}
+
+function getSidebarFocusableElements(sidebar: HTMLElement): HTMLElement[] {
+  return Array.from(sidebar.querySelectorAll<HTMLElement>(sidebarFocusableSelector))
+    .filter((element) => element.getAttribute('aria-hidden') !== 'true')
 }
