@@ -17,6 +17,7 @@ CATALOG_METADATA_FIELDS = {
     "eligibleProgramCount",
     "eligibleCatalogFingerprint",
 }
+SOURCE_CODE_PATTERN = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 
 
 def _validate_fixture_identity(fixture, require_data_type=False):
@@ -102,7 +103,7 @@ def _is_canonical_document_id(identifier):
         return False
     source_code, source_program_id = identifier.split(":", 1)
     return bool(
-        source_code
+        SOURCE_CODE_PATTERN.fullmatch(source_code)
         and source_program_id
         and source_code == source_code.strip()
         and source_program_id == source_program_id.strip()

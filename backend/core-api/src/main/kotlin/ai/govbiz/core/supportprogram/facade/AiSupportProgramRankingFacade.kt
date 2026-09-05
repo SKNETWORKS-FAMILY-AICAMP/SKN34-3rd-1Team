@@ -29,6 +29,9 @@ class AiSupportProgramRankingFacade(
         require(limit in 1..SupportProgramRankingFacade.MAX_RESULTS) {
             "limit is outside the supported range"
         }
+        require(candidates.map { it.program.sourceQualifiedId }.distinct().size == candidates.size) {
+            "duplicate catalog identities"
+        }
 
         val request = AiSupportProgramRankingRequest(
             originalQuery = query,
@@ -56,7 +59,7 @@ class AiSupportProgramRankingFacade(
         val rankings = payload.rankings ?: return null
         if (rankings.size > maximumCount) return null
 
-        val candidatesById = candidates.associateBy { it.program.id }
+        val candidatesById = candidates.associateBy { it.program.sourceQualifiedId }
         val seenIds = HashSet<String>()
         var previousScore = MAX_TOTAL_SCORE + 1
         val programs = ArrayList<SupportProgram>(rankings.size)
@@ -133,7 +136,7 @@ class AiSupportProgramRankingFacade(
     private fun toRequestCandidate(candidate: CatalogSupportProgram): AiSupportProgramCandidateRequest {
         val program = candidate.program
         return AiSupportProgramCandidateRequest(
-            id = program.id,
+            id = program.sourceQualifiedId,
             title = program.title.take(MAX_TITLE_LENGTH),
             organization = program.organization.take(MAX_ORGANIZATION_LENGTH),
             summary = program.summary.take(MAX_SUMMARY_LENGTH),
@@ -155,7 +158,7 @@ class AiSupportProgramRankingFacade(
         )
 
     companion object {
-        const val SCORING_VERSION = "govbiz-support-program-ranking-v2"
+        const val SCORING_VERSION = "govbiz-support-program-ranking-v3"
         private const val MAX_TOTAL_SCORE = 100
         private const val MIN_SEMANTIC_RELEVANCE_SCORE = 20
         private const val MIN_TOTAL_RECOMMENDATION_SCORE = 60

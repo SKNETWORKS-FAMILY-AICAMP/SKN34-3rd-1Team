@@ -18,7 +18,7 @@ class BizInfoSupportProgramCatalogSyncService(
     fun sync(): Int? {
         val generation = supportProgramRepository.startBizInfoSyncGeneration()
         val programs = catalogFacade.load()
-        indexSyncService.indexBizInfoSnapshot(programs)
+        indexSyncService.indexSnapshot(programs)
         if (!supportProgramRepository.publishBizInfoSnapshotIfCurrent(programs, generation)) {
             logger.info("더 최근에 시작된 기업마당 동기화가 있어 이전 스냅샷 공개를 건너뜁니다.")
             return null

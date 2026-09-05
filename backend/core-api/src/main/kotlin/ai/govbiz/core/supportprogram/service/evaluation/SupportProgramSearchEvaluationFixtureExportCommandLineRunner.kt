@@ -20,7 +20,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunner(
 ) : CommandLineRunner {
 
     override fun run(vararg args: String) {
-        val presentPrograms = supportProgramRepository.findPresentBizInfo()
+        val presentPrograms = supportProgramRepository.findPresent()
         val eligiblePrograms = presentPrograms.filter { it.program.status == SupportProgramStatus.OPEN }
         require(eligiblePrograms.isNotEmpty()) { "cannot export an empty eligible support program catalog" }
 
@@ -31,7 +31,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunner(
                 }
                 FixtureDocument(
                     catalogProgram = catalogProgram,
-                    indexDocument = SupportProgramIndexDocumentMapper.fromBizInfo(catalogProgram),
+                    indexDocument = SupportProgramIndexDocumentMapper.fromCatalog(catalogProgram),
                 )
             }
             .sortedBy { it.indexDocument.id }

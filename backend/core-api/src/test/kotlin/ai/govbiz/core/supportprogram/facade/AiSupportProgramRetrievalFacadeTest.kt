@@ -23,7 +23,7 @@ class AiSupportProgramRetrievalFacadeTest {
     @Mock
     private lateinit var client: AiSupportProgramIndexClient
     private val programs = (1..25).map { catalogProgram("program-$it") }
-    private val documents = programs.map(SupportProgramIndexDocumentMapper::fromBizInfo)
+    private val documents = programs.map(SupportProgramIndexDocumentMapper::fromCatalog)
     private val request = AiSupportProgramIndexSearchRequest("서울 AI", documents.map { it.reference() }, 20)
 
     @Test
@@ -40,6 +40,38 @@ class AiSupportProgramRetrievalFacadeTest {
         assertThrows(UnsupportedOperationException::class.java) {
             (result as MutableList).clear()
         }
+    }
+
+    @Test
+    fun returnsBothSourcesWhenTheyShareTheSameRawProgramId() {
+        val bizInfo = programs.first().copy(
+            program = programs.first().program.copy(id = "SHARED", sourceCode = "BIZINFO"),
+        )
+        val other = bizInfo.copy(
+            program = bizInfo.program.copy(
+                sourceCode = "OTHER",
+                sourceName = "다른 제공처",
+                sourceUrl = "https://other.example/program/SHARED",
+            ),
+        )
+        val candidates = listOf(bizInfo, other)
+        val documents = candidates.map(SupportProgramIndexDocumentMapper::fromCatalog)
+        val request = AiSupportProgramIndexSearchRequest("서울 AI", documents.map { it.reference() }, 20)
+        doReturn(
+            AiSupportProgramIndexSearchPayload(
+                "서울 AI",
+                listOf(
+                    AiSupportProgramIndexMatchPayload(documents[1].id, documents[1].contentHash, 0.9),
+                    AiSupportProgramIndexMatchPayload(documents[0].id, documents[0].contentHash, 0.8),
+                ),
+            ),
+        ).`when`(client).search(request)
+
+        val result = AiSupportProgramRetrievalFacade(client).retrieve("서울 AI", candidates)
+
+        assertEquals(listOf("OTHER", "BIZINFO"), result.map { it.program.sourceCode })
+        assertEquals(listOf("SHARED", "SHARED"), result.map { it.program.id })
+        verify(client).search(request)
     }
 
     @Test

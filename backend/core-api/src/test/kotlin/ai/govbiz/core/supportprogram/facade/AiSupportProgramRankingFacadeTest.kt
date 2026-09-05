@@ -31,7 +31,7 @@ class AiSupportProgramRankingFacadeTest {
         val request = client.requests.single()
         assertEquals(AiSupportProgramRankingFacade.SCORING_VERSION, request.scoringVersion)
         assertEquals(2, request.resultLimit)
-        assertEquals(listOf("first", "second"), request.candidates.map { it.id })
+        assertEquals(listOf("BIZINFO:first", "BIZINFO:second"), request.candidates.map { it.id })
         assertEquals(listOf("second", "first"), programs.map { it.id })
         assertEquals(85, programs.first().recommendationScore)
         assertEquals(listOf("질의와 직접 관련"), programs.first().matchedReasons)
@@ -45,6 +45,27 @@ class AiSupportProgramRankingFacadeTest {
 
         assertEquals(listOf("second"), programs.map { it.id })
         assertEquals(85, programs.single().recommendationScore)
+    }
+
+    @Test
+    fun distinguishesCandidatesWithTheSameRawIdFromDifferentSources() {
+        val bizInfo = CatalogSupportProgram(program("SHARED", "BIZINFO"), "2026-08-20")
+        val other = CatalogSupportProgram(program("SHARED", "OTHER"), "2026-08-21")
+        client.reset(
+            response(
+                qualifiedScore("OTHER:SHARED", semantic = 40, total = 85, reason = "다른 제공처 공고"),
+                qualifiedScore("BIZINFO:SHARED", semantic = 20, total = 65, reason = "기업마당 공고"),
+            ),
+        )
+
+        val programs = facade().rank(QUERY, listOf(bizInfo, other), 5)
+
+        assertEquals(
+            listOf("BIZINFO:SHARED", "OTHER:SHARED"),
+            client.requests.single().candidates.map { it.id },
+        )
+        assertEquals(listOf("OTHER", "BIZINFO"), programs.map { it.sourceCode })
+        assertEquals(listOf("SHARED", "SHARED"), programs.map { it.id })
     }
 
     @Test
@@ -202,9 +223,9 @@ class AiSupportProgramRankingFacadeTest {
         CatalogSupportProgram(program("second"), "2026-08-21"),
     )
 
-    private fun program(id: String) = SupportProgram(
+    private fun program(id: String, sourceCode: String = "BIZINFO") = SupportProgram(
         id = id,
-        sourceCode = "BIZINFO",
+        sourceCode = sourceCode,
         title = "$id 지원사업",
         organization = "기관",
         summary = "$id 기업을 지원합니다.",
@@ -215,8 +236,8 @@ class AiSupportProgramRankingFacadeTest {
         applicationStartDate = null,
         applicationEndDate = null,
         status = SupportProgramStatus.OPEN,
-        sourceName = "기업마당",
-        sourceUrl = "https://www.bizinfo.go.kr/$id",
+        sourceName = if (sourceCode == "BIZINFO") "기업마당" else sourceCode,
+        sourceUrl = "https://${sourceCode.lowercase()}.example/$id",
         matchedReasons = emptyList(),
     )
 
@@ -238,8 +259,32 @@ class AiSupportProgramRankingFacadeTest {
         supportType: Int = 5,
         targetEligibility: AiSupportProgramEligibility = AiSupportProgramEligibility.MATCH,
         regionEligibility: AiSupportProgramEligibility = AiSupportProgramEligibility.MATCH,
+    ) = qualifiedScore(
+        programId = "BIZINFO:$id",
+        semantic = semantic,
+        total = total,
+        reason = reason,
+        target = target,
+        region = region,
+        applicationStatus = applicationStatus,
+        supportType = supportType,
+        targetEligibility = targetEligibility,
+        regionEligibility = regionEligibility,
+    )
+
+    private fun qualifiedScore(
+        programId: String,
+        semantic: Int,
+        total: Int,
+        reason: String,
+        target: Int = 20,
+        region: Int = 10,
+        applicationStatus: Int = 10,
+        supportType: Int = 5,
+        targetEligibility: AiSupportProgramEligibility = AiSupportProgramEligibility.MATCH,
+        regionEligibility: AiSupportProgramEligibility = AiSupportProgramEligibility.MATCH,
     ) = AiScoredSupportProgramPayload(
-        programId = id,
+        programId = programId,
         semanticRelevance = semantic,
         targetFit = target,
         targetEligibility = targetEligibility,

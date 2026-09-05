@@ -40,7 +40,7 @@ class SupportProgramSearchService(
 
     private fun execute(rawQuery: String?, acceptingOnly: Boolean): SearchExecution {
         val query = rawQuery?.trim().orEmpty()
-        val presentPrograms = supportProgramRepository.findPresentBizInfo()
+        val presentPrograms = supportProgramRepository.findPresent()
         val eligiblePrograms = presentPrograms
             .asSequence()
             .filter { !acceptingOnly || it.program.status == SupportProgramStatus.OPEN }
@@ -56,6 +56,7 @@ class SupportProgramSearchService(
             query.isBlank() -> eligiblePrograms
                 .sortedWith(
                     compareByDescending<CatalogSupportProgram> { it.sortTimestamp }
+                        .thenBy { it.program.sourceCode }
                         .thenBy { it.program.id },
                 )
                 .take(SupportProgramRankingFacade.MAX_RESULTS)
@@ -77,7 +78,7 @@ class SupportProgramSearchService(
     }
 
     private fun immutableCanonicalIds(programs: List<SupportProgram>): List<String> =
-        java.util.List.copyOf(programs.map { "${it.sourceCode}:${it.id}" })
+        java.util.List.copyOf(programs.map(SupportProgram::sourceQualifiedId))
 
     private data class SearchExecution(
         val query: String,

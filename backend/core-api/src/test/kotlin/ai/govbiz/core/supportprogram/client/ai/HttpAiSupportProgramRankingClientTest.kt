@@ -55,10 +55,10 @@ class HttpAiSupportProgramRankingClientTest {
                     """
                     {
                       "originalQuery":"서울 AI 스타트업 지원사업",
-                      "scoringVersion":"govbiz-support-program-ranking-v2",
+                      "scoringVersion":"govbiz-support-program-ranking-v3",
                       "resultLimit":1,
                       "candidates":[{
-                        "id":"program-1",
+                        "id":"BIZINFO:program-1",
                         "title":"서울 AI 사업화 지원",
                         "organization":"서울경제진흥원",
                         "summary":"AI 창업기업 사업화 지원",
@@ -78,7 +78,7 @@ class HttpAiSupportProgramRankingClientTest {
 
         assertEquals("서울 AI 스타트업 지원사업", response.originalQuery)
         assertEquals(95, response.rankings?.single()?.totalScore)
-        assertEquals("program-1", response.rankings?.single()?.programId)
+        assertEquals("BIZINFO:program-1", response.rankings?.single()?.programId)
         assertEquals(AiSupportProgramEligibility.MATCH, response.rankings?.single()?.targetEligibility)
         assertEquals(AiSupportProgramEligibility.MATCH, response.rankings?.single()?.regionEligibility)
     }
@@ -141,11 +141,11 @@ class HttpAiSupportProgramRankingClientTest {
 
     private fun rankingRequest() = AiSupportProgramRankingRequest(
         originalQuery = "서울 AI 스타트업 지원사업",
-        scoringVersion = "govbiz-support-program-ranking-v2",
+        scoringVersion = "govbiz-support-program-ranking-v3",
         resultLimit = 1,
         candidates = listOf(
             AiSupportProgramCandidateRequest(
-                id = "program-1",
+                id = "BIZINFO:program-1",
                 title = "서울 AI 사업화 지원",
                 organization = "서울경제진흥원",
                 summary = "AI 창업기업 사업화 지원",
@@ -165,9 +165,9 @@ class HttpAiSupportProgramRankingClientTest {
             """
             {
               "originalQuery":"서울 AI 스타트업 지원사업",
-              "scoringVersion":"govbiz-support-program-ranking-v2",
+              "scoringVersion":"govbiz-support-program-ranking-v3",
               "rankings":[{
-                "programId":"program-1",
+                "programId":"BIZINFO:program-1",
                 "semanticRelevance":38,
                 "targetFit":24,
                 "targetEligibility":"MATCH",
@@ -184,7 +184,7 @@ class HttpAiSupportProgramRankingClientTest {
             """
             {
               "originalQuery":"서울 AI 스타트업 지원사업",
-              "scoringVersion":"govbiz-support-program-ranking-v2",
+              "scoringVersion":"govbiz-support-program-ranking-v3",
               "rankings":[]
             }
             """.trimIndent()

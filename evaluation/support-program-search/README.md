@@ -1,6 +1,6 @@
 # 지원사업 후보 검색 회귀 평가
 
-이 자료는 **실제 기업마당 공고가 아닌 수작업 가상 공고 40개와 질문 30개**다. 최신순 20개 제한 때문에 오래된 관련 공고가 누락되는 문제를 재현하고, 같은 자료에서 후보 검색 방식을 비교하는 데 사용한다. 실제 사용자의 추천 정확도, 신청 자격, 운영 데이터 성능을 입증하는 자료가 아니다.
+이 자료는 **실제 운영 공고가 아닌 수작업 가상 공고 40개와 질문 30개**다. 최신순 20개 제한 때문에 오래된 관련 공고가 누락되는 문제를 재현하고, 같은 자료에서 후보 검색 방식을 비교하는 데 사용한다. 실제 사용자의 추천 정확도, 신청 자격, 운영 데이터 성능을 입증하는 자료가 아니다.
 
 ## 실행
 
@@ -50,7 +50,7 @@ python3 -m unittest discover -s evaluation/support-program-search -p 'test_*.py'
 ## 기존 의미 검색 후보 파일 비교
 
 가상 공고만 평가할 때는 이 공고 40개만 넣은 **평가 전용 Qdrant 컬렉션/환경**에서 질문을 실행한다.
-운영 기업마당 색인에 `SYNTH_*` 공고를 넣거나 운영 공고와 섞어 비교하지 않는다.
+운영 공고 색인에 `SYNTH_*` 공고를 넣거나 운영 공고와 섞어 비교하지 않는다.
 
 원문은 `docs[].text` 그대로 사용하고, 반환 후보를 공고 ID로 바꿔 JSON 파일에 저장한다. 입력 구조는 다음과 같다. 아래는 형식 예시일 뿐 실제 모델 결과가 아니며, 전체 실행에는 선택한 분할의 모든 라벨된 질문 결과가 필요하다.
 
@@ -70,7 +70,7 @@ python3 evaluation/support-program-search/evaluate.py --semantic-results /path/t
 ## 실제 데이터 fixture 초안 내보내기
 
 실데이터 평가를 시작할 때는 수작업으로 전체 공고를 복사하지 않고 `evaluation-fixture-export` Spring profile을
-실행한다. 이 비웹 profile은 현재 MySQL의 공개 기업마당 공고 중 `OPEN` 공고만 읽고, 운영 검색과 같은
+실행한다. 이 비웹 profile은 현재 MySQL의 모든 제공처 공개 공고 중 `OPEN` 공고만 읽고, 운영 검색과 같은
 `SupportProgramIndexDocumentMapper`로 `id`·`contentHash`·`text`를 만든다. 따라서 생성 파일에는 전체 적격
 카탈로그의 공고 수·지문·검색 문서가 들어가며, 이후 캡처 파일과 같은 스냅샷인지 검증할 수 있다.
 
@@ -82,7 +82,7 @@ cd backend/core-api
 ./gradlew bootJar
 
 SPRING_PROFILES_ACTIVE=evaluation-fixture-export \
-APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_NAME=bizinfo-20260905-v1 \
+APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_NAME=support-program-catalog-20260905-v1 \
 APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_OUTPUT_PATH=/absolute/path/support-program-fixture.json \
 java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ```
@@ -112,7 +112,7 @@ fixture의 `name`에는 앞뒤 공백을 넣지 않는다. 공백이 있으면 �
 ```json
 {
   "schemaVersion": "support-program-search-query-set-v1",
-  "name": "bizinfo-20260905-v1",
+  "name": "support-program-catalog-20260905-v1",
   "queries": [
     {"id": "Q01", "query": "서울 소재 AI 제품 개발비 지원사업", "split": "dev"}
   ]
@@ -152,8 +152,10 @@ ID만 일부 담는 파일이 아니라 **캡처 시점의 전체 적격 공고 
   `real_labeled_catalog_snapshot`처럼 자료 성격을 명시한다.
 - `catalog`의 `presentProgramCount`, `eligibleProgramCount`, `eligibleCatalogFingerprint`은 capture 파일의
   `catalog`과 정확히 같아야 한다.
-- `docs` 수는 `eligibleProgramCount`와 같아야 한다. 각 `docs[].id`와 `relevantIds`는 제공처를 포함한
-  `BIZINFO:PBLN_...` 형식이고, 각 행은 Core의 `SupportProgramIndexDocumentMapper`가 만든 검색 문서의
+- `docs` 수는 `eligibleProgramCount`와 같아야 한다. 각 `docs[].id`와 `relevantIds`는
+  `{sourceCode}:{sourceProgramId}` 형식이다. 예를 들어 `BIZINFO:PBLN_123`와 `OTHER:PBLN_123`은 원본 ID가
+  같아도 서로 다른 공고다. `sourceCode`는 `[A-Z][A-Z0-9_]{0,63}` 형태의 안정적인 제공처 코드이고, 원본 ID는
+  첫 번째 `:` 뒤의 전체 문자열로 취급한다. 각 행은 Core의 `SupportProgramIndexDocumentMapper`가 만든 검색 문서의
   `contentHash`(소문자 SHA-256)를 포함해야 한다.
 - 평가기는 각 `docs[].text`의 UTF-8 SHA-256이 `contentHash`와 일치하는지 확인하고,
   `id:contentHash`를 ID 순서로 정렬해 만든 지문도 다시 계산한다. 즉 다른 날의 capture, 공고가 누락된
@@ -163,12 +165,12 @@ ID만 일부 담는 파일이 아니라 **캡처 시점의 전체 적격 공고 
 
 ```json
 {
-  "name": "bizinfo-20260905-v1",
+  "name": "support-program-catalog-20260905-v1",
   "dataType": "real_labeled_catalog_snapshot",
   "catalog": {
-    "presentProgramCount": 1,
-    "eligibleProgramCount": 1,
-    "eligibleCatalogFingerprint": "c9c42090db18b14983851609533122a9492295f879178eaa43c296e2dad1ee56"
+    "presentProgramCount": 2,
+    "eligibleProgramCount": 2,
+    "eligibleCatalogFingerprint": "52434f38518394de4ab360f85e4ae132a23bbebe5908dee143762270fe2ee641"
   },
   "docs": [
     {
@@ -176,13 +178,19 @@ ID만 일부 담는 파일이 아니라 **캡처 시점의 전체 적격 공고 
       "contentHash": "ea87cd3309e776728d1cf1e5352de3f5256134133df956bbdebb38d38ed18a56",
       "text": "제목: 예시 공고\n기관: 예시 기관\n지원대상: 중소기업\n분야: AI\n지역: 서울\n신청기간: 상시 접수\n내용: 고정 시점의 평가용 공고 원문",
       "sortTimestamp": "20260905100000"
+    },
+    {
+      "id": "OTHER:PBLN_123",
+      "contentHash": "f29ebd37b4226d6e9259ad22447d88c9c2109ca9329ec4a2304c15b6c92ae474",
+      "text": "제목: 다른 제공처 예시 공고\n기관: 다른 수행 기관\n지원대상: 중소기업\n분야: AI\n지역: 서울\n신청기간: 상시 접수\n내용: 같은 원본 ID라도 제공처가 다르면 별도 공고입니다",
+      "sortTimestamp": "20260905100000"
     }
   ],
   "cases": [
     {
       "id": "Q01",
       "query": "서울 소재 AI 제품 개발비 지원사업",
-      "relevantIds": ["BIZINFO:PBLN_123"],
+      "relevantIds": ["BIZINFO:PBLN_123", "OTHER:PBLN_123"],
       "split": "dev"
     }
   ]

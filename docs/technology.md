@@ -302,7 +302,7 @@ MySQL의 `support_program`은 `(source_code, source_program_id)`를 고유키로
 
 검색 문서는 제목·기관·지원대상·분야·지역·신청기간·요약을 결합합니다. Core가 최대 12,000 코드 포인트로
 제한한 텍스트의 SHA-256을 계산하고, AI Service는 임베딩 입력을 최대 8,191 토큰으로 제한합니다.
-벡터 식별에는 `BIZINFO:원본ID`와 내용 해시를 함께 사용합니다. MySQL에 `content_hash` 컬럼은 있지만
+벡터 식별에는 `sourceCode:sourceProgramId`와 내용 해시를 함께 사용합니다. MySQL에 `content_hash` 컬럼은 있지만
 현재 Repository는 이를 읽고 쓰지 않으며, 해시는 [검색 문서 Mapper](../backend/core-api/src/main/kotlin/ai/govbiz/core/supportprogram/client/ai/mapper/SupportProgramIndexDocumentMapper.kt)에서 계산합니다.
 
 ## 동기화와 색인 공개
@@ -329,7 +329,7 @@ DB 반영은 기존 `BIZINFO` 공고를 미노출 처리한 뒤 이번 목록을
 
 ## 검색과 AI 점수화
 
-1. MySQL에서 현재 노출된 기업마당 공고를 읽고 접수 상태 조건을 적용합니다.
+1. MySQL에서 현재 노출된 모든 제공처 공고를 읽고 접수 상태 조건을 적용합니다.
 2. 공고 ID·해시 허용 목록을 AI Service에 보내 Qdrant 검색 범위를 제한합니다.
 3. OpenAI로 검색 문장을 임베딩하고 유사도 순으로 후보를 최대 20개 가져옵니다.
 4. OpenAI Agents SDK의 단일 Agent가 후보 전체를 구조화된 응답으로 점수화합니다.
@@ -349,7 +349,7 @@ DB 반영은 기존 `BIZINFO` 공고를 미노출 처리한 뒤 이번 목록을
 | 접수 상태 적합성 | 10 |
 | 지원 유형 적합성 | 10 |
 
-`govbiz-support-program-ranking-v2`는 의미 관련성 20점 이상·총점 60점 이상을 요구합니다.
+`govbiz-support-program-ranking-v3`는 의미 관련성 20점 이상·총점 60점 이상을 요구합니다.
 `targetEligibility` 또는 `regionEligibility`가 `INCOMPATIBLE`이면 제외하고, 정보가 부족한
 `UNKNOWN`은 그 이유만으로 제외하지 않습니다. 이 값과 추천 점수는 신청 자격이나 선정 확률을 확정하지 않습니다.
 상세한 필드와 오류 응답은 [검색 계약](support-program-search-contract.md)에 정리되어 있습니다.

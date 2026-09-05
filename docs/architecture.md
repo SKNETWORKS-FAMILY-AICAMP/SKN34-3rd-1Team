@@ -40,10 +40,10 @@ GET /api/v1/support-programs/search
           Core의 응답 검증 → 최종 추천 0~5개
 ```
 
-1. Repository는 `is_source_present = TRUE`인 `BIZINFO` 공고 전체를 읽고, 저장된 신청 기간과
+1. Repository는 `is_source_present = TRUE`인 모든 제공처 공고를 읽고, 저장된 신청 기간과
    서울 날짜로 접수 상태를 다시 계산합니다. `acceptingOnly=true`이면 `OPEN`만 남깁니다.
 2. 검색어는 앞뒤 공백을 제거합니다. 대상 공고가 없으면 빈 목록, 검색어가 비어 있으면
-   `source_sort_timestamp` 내림차순·원본 ID 오름차순의 최대 5개를 반환합니다. 이 두 경로는 AI를 호출하지 않습니다.
+   `source_sort_timestamp` 내림차순·제공처 코드·원본 ID 오름차순의 최대 5개를 반환합니다. 이 두 경로는 AI를 호출하지 않습니다.
 3. 비어 있지 않은 질의는 대상 공고 전체의 정확한 ID·내용 해시를 AI Service에 전달합니다.
    최신 공고 20개를 먼저 자르지 않습니다. Qdrant가 반환해야 할 개수는 `min(대상 공고 수, 20)`입니다.
 4. Core는 의미 검색 응답의 질의·ID·해시·중복·유한 점수·내림차순·개수를 검증하고,
@@ -51,7 +51,7 @@ GET /api/v1/support-programs/search
 5. AI Service는 모든 후보의 구조화된 점수화 결과를 검증한 후 총점순으로 정렬하고 추천 기준을 적용합니다.
    Core도 최종 응답의 후보 ID·질의·계약 버전·점수·순서·추천 이유를 재검증해 공개 응답으로 변환합니다.
 
-점수화 계약은 `govbiz-support-program-ranking-v2`입니다. 의미 관련성 20/40점 이상과 총점 60/100점 이상을
+점수화 계약은 `govbiz-support-program-ranking-v3`입니다. 의미 관련성 20/40점 이상과 총점 60/100점 이상을
 충족해야 하며, `targetEligibility` 또는 `regionEligibility`가 `INCOMPATIBLE`이면 추천에서 제외합니다.
 `UNKNOWN`은 정보 부족을 뜻해 자동 제외하지 않지만 신청 자격을 확인했다는 의미도 아닙니다.
 AI Service가 부적격 항목을 최종 응답에 넣으면 Core는 이를 응답 계약 위반으로 거부합니다.
@@ -74,7 +74,7 @@ GET /api/v1/support-programs/detail
 
 ```text
 evaluation-fixture-export profile (비웹 실행)
-  → MySQL의 현재 공개 BIZINFO 공고 조회 → OPEN 공고만 선정
+  → MySQL의 현재 공개 공고 전체 조회 → OPEN 공고만 선정
   → SupportProgramIndexDocumentMapper와 같은 ID·내용 해시·검색 문서 생성
   → 전체 적격 카탈로그와 cases: []인 미라벨 fixture 초안을 원자적으로 JSON 기록
   → 사람이 질문·관련 공고를 라벨링
@@ -95,8 +95,9 @@ fixture의 `cases`와 같은 순서·내용으로 맞춥니다.
 
 `evaluation-capture` profile도 자신의 웹 서버와 두 동기화 스케줄러를 끄며, 모든 질문이 성공하고 캡처 중
 카탈로그 지문이 같을 때만 출력 파일을 교체합니다. 별도 Core API 인스턴스가 카탈로그를 갱신한 경우에는 지문
-변화로 결과 파일 기록을 거부합니다. 후보 ID는 `sourceCode:sourceProgramId` 형태이고, 같은 Search Service가
-만든 후보·최종 결과를 기록하므로 평가 코드가 운영 검색 흐름을 별도로 재현하지 않습니다. 실제 AI Service를
+변화로 결과 파일 기록을 거부합니다. 후보 ID는 `sourceCode:sourceProgramId` 형태이며, 첫 번째 `:` 앞의
+`[A-Z][A-Z0-9_]{0,63}` 제공처 코드와 뒤의 원본 ID를 함께 사용합니다. 같은 Search Service가 만든
+후보·최종 결과를 기록하므로 평가 코드가 운영 검색 흐름을 별도로 재현하지 않습니다. 실제 AI Service를
 호출할 수 있으므로 기본 실행·CI에는 포함하지 않습니다. fixture 내보내기·라벨·캡처·평가 실행 규칙은
 [검색 평가 자료](../evaluation/support-program-search/README.md)를 따릅니다.
 
@@ -107,7 +108,7 @@ BizInfoSupportProgramCatalogSyncScheduler (기본: 최초 PT0S, 완료 후 PT6H)
   → Repository: 수집 시작 세대 발급 [짧은 DB transaction]
   → BizInfoSupportProgramCatalogFacade → BizInfoClient: 전체 페이지 수집·검증
   → BizInfoProgramMapper: 필수 필드 검증·공고 정규화
-  → SupportProgramIndexSyncService.indexBizInfoSnapshot: 모든 공고의 벡터 준비
+  → SupportProgramIndexSyncService.indexSnapshot: 모든 공고의 벡터 준비
       → AiSupportProgramIndexClient → AI Service → OpenAI 임베딩 → Qdrant
   → Repository: 최신 시작 세대일 때만 MySQL에 공개 [짧은 DB transaction]
       → BIZINFO 기존 행 미노출 처리 + 수집 목록 UPSERT
@@ -134,7 +135,8 @@ Scheduler는 실패를 기록하고 다음 주기에 계속 실행합니다.
 
 `SupportProgramIndexDocumentMapper`가 제목·기관·지원 대상·분야·지역·신청 기간 원문·요약으로 검색 문서를
 구성합니다. 제어·형식 문자는 개행·탭을 제외하고 정리하며 Unicode 코드 포인트 기준 최대 12,000자로
-제한합니다. UTF-8 문서의 SHA-256이 내용 해시이고, 내부 문서 ID는 `BIZINFO:{원본 ID}`입니다.
+제한합니다. UTF-8 문서의 SHA-256이 내용 해시이고, 내부 문서 ID는
+`{sourceCode}:{sourceProgramId}`입니다.
 
 AI Service는 문서 ID·내용 해시에서 Qdrant point ID를 결정하며, 임베딩 모델·차원·색인 규격에 따라
 컬렉션을 분리합니다. 현재 DB의 정확한 문서 버전에 해당하는 point ID만 검색하도록 필터링하므로
@@ -143,11 +145,11 @@ AI Service는 문서 ID·내용 해시에서 Qdrant point ID를 결정하며, �
 ```text
 SupportProgramIndexSyncScheduler (기본: 최초 PT0S, 완료 후 PT1M)
   → SupportProgramIndexSyncService.repair
-  → Repository: 현재 MySQL BIZINFO 목록 조회
+  → Repository: 현재 MySQL 공개 공고 목록 조회
   → AI Service: 해당 버전의 누락 벡터 생성·저장
 ```
 
-복구는 기업마당 수집과 별도 단일 스레드에서 실행합니다. `SUPPORT_PROGRAM_INDEX_ENABLED=false`는
+복구는 제공처 수집과 별도 단일 스레드에서 실행합니다. `SUPPORT_PROGRAM_INDEX_ENABLED=false`는
 이 복구 작업만 끄며, 새 카탈로그 공개 전의 필수 색인은 끄지 않습니다.
 
 공개 준비와 복구는 모두 `prune`을 호출하지 않습니다. 이전 스냅샷 기준의 삭제가 공개 준비 중인 새 벡터를
@@ -173,9 +175,9 @@ MySQL의 `support_program`은 `(source_code, source_program_id)` 고유키로 �
 규칙을 순서대로 적용하고 판단 근거가 없으면 `UNKNOWN`을 유지합니다. 따라서 `접수 종료` 표현이
 상시 접수보다 우선하더라도 파싱된 날짜를 무조건 덮어쓰지는 않습니다.
 
-DB·상세 식별자는 제공처 구분을 갖추었지만 production 수집·전체 검색·색인은 현재 `BIZINFO`만 지원합니다.
-AI 점수화 후보는 원본 ID를 사용하므로 두 번째 제공처를 추가할 때는 검색 범위, 색인 문서 ID,
-점수화 식별자와 제공처 표시 이름을 함께 확장해야 합니다.
+현재 수집 Client·동기화는 `BIZINFO` 한 제공처만 구현되어 있습니다. 반면 production 검색·색인·AI 점수화는
+`sourceCode:sourceProgramId`를 내부 식별자로 사용해 모든 현재 공개 공고를 함께 처리합니다. 두 번째 제공처를
+추가하려면 그 제공처의 Client·정규화·동기화와 표시 이름을 구현해야 합니다.
 
 ## Frontend와 내부 계약
 

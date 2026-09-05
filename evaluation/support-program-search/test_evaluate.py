@@ -55,7 +55,7 @@ class RetrievalEvaluationTest(unittest.TestCase):
             "search": {
                 "candidateLimit": 20,
                 "finalResultLimit": 5,
-                "scoringVersion": "govbiz-support-program-ranking-v2",
+                "scoringVersion": "govbiz-support-program-ranking-v3",
             },
             "observations": observations,
         }
@@ -163,6 +163,56 @@ class RetrievalEvaluationTest(unittest.TestCase):
         self.assertEqual(1.0, report["final"]["macroRecallAt5"])
         self.assertEqual(1.0, report["final"]["mrrAt5"])
         self.assertEqual(0.0, report["final"]["noMatchFalsePositiveRate"])
+
+    def test_capture_keeps_same_raw_id_from_different_sources_distinct(self):
+        documents = [
+            {"id": "BIZINFO:SHARED", "text": "같은 검색 문서"},
+            {"id": "OTHER:SHARED", "text": "같은 검색 문서"},
+        ]
+        for document in documents:
+            document["contentHash"] = hashlib.sha256(document["text"].encode("utf-8")).hexdigest()
+        fixture = {
+            "name": "shared-source-id-fixture-v1",
+            "dataType": "real_labeled_catalog_snapshot",
+            "docs": documents,
+            "cases": [
+                {
+                    "id": "Q1",
+                    "query": "같은 원본 ID를 가진 공고",
+                    "split": "dev",
+                    "relevantIds": ["BIZINFO:SHARED", "OTHER:SHARED"],
+                },
+            ],
+        }
+        fixture["catalog"] = {
+            "presentProgramCount": 2,
+            "eligibleProgramCount": 2,
+            "eligibleCatalogFingerprint": eligible_catalog_fingerprint(documents),
+        }
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(
+                    fixture,
+                    "Q1",
+                    ["BIZINFO:SHARED", "OTHER:SHARED"],
+                    ["OTHER:SHARED"],
+                ),
+            ],
+        )
+
+        stages = validate_capture(capture, fixture, fixture["cases"])
+
+        self.assertEqual(documents[0]["contentHash"], documents[1]["contentHash"])
+        self.assertEqual(
+            ["BIZINFO:SHARED", "OTHER:SHARED"],
+            stages["candidate"]["Q1"],
+        )
+        self.assertEqual(["OTHER:SHARED"], stages["final"]["Q1"])
+        self.assertNotEqual(
+            fixture["catalog"]["eligibleCatalogFingerprint"],
+            eligible_catalog_fingerprint([documents[0]]),
+        )
 
     def test_capture_rejects_a_different_catalog_snapshot(self):
         fixture = self.capture_fixture()
@@ -308,6 +358,22 @@ class RetrievalEvaluationTest(unittest.TestCase):
 
         capture["querySet"]["sha256"] = "0" * 64
         with self.assertRaisesRegex(ValueError, "sha256"):
+            validate_capture(capture, fixture, fixture["cases"])
+
+    def test_capture_rejects_a_nonstandard_source_code_in_a_canonical_id(self):
+        fixture = self.capture_fixture()
+        fixture["docs"][0]["id"] = "other:A"
+        fixture["cases"][0]["relevantIds"] = ["other:A"]
+        fixture["catalog"]["eligibleCatalogFingerprint"] = eligible_catalog_fingerprint(fixture["docs"])
+        capture = self.capture(
+            fixture,
+            [
+                self.observation(fixture, "Q1", ["other:A"], ["other:A"]),
+                self.observation(fixture, "Q2", [], []),
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "canonical"):
             validate_capture(capture, fixture, fixture["cases"])
 
     def test_capture_k_cannot_exceed_the_captured_candidate_limit(self):

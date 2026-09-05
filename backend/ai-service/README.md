@@ -99,7 +99,7 @@ RAG는 아직 구현하지 않았습니다. 벡터 유사도는 신청 자격 �
 
 ## 평가 기준
 
-`govbiz-support-program-ranking-v2`는 다음 배점을 사용합니다.
+`govbiz-support-program-ranking-v3`는 다음 배점을 사용합니다.
 
 | 항목 | 배점 |
 |---|---:|
@@ -120,6 +120,9 @@ Agent는 후보를 빠짐없이 점수화하고 각 후보의 `targetEligibility
 두 값은 `MATCH`(제공된 정보와 일치), `INCOMPATIBLE`(명백한 조건 불일치), `UNKNOWN`(정보 부족) 중 하나입니다.
 `UNKNOWN`은 자동 탈락이나 자격 충족 확정을 뜻하지 않습니다. Service는 아래 조건을 모두 충족한 공고만 추천으로
 반환합니다.
+
+후보의 `id`와 응답의 `programId`는 `sourceCode:sourceProgramId` 형태의 같은 정규 식별자입니다. 제공처가
+다르면 원본 공고 ID가 같아도 서로 다른 후보로 취급하며, Agent는 입력값을 변경하지 않고 그대로 반환해야 합니다.
 
 - `targetEligibility`와 `regionEligibility` 어느 쪽도 `INCOMPATIBLE`이 아님
 - `semanticRelevance >= 20`: 40점인 핵심 관련성 항목에서 절반 이상

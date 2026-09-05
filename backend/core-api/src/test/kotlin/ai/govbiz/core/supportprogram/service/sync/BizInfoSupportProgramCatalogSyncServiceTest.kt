@@ -37,7 +37,7 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
         val programs = listOf(catalogProgram("first"), catalogProgram("second"))
         doReturn(7L).`when`(supportProgramRepository).startBizInfoSyncGeneration()
         doReturn(programs).`when`(catalogFacade).load()
-        doReturn(2).`when`(indexSyncService).indexBizInfoSnapshot(programs)
+        doReturn(2).`when`(indexSyncService).indexSnapshot(programs)
         doReturn(true).`when`(supportProgramRepository).publishBizInfoSnapshotIfCurrent(programs, 7L)
 
         val synchronizedCount = service().sync()
@@ -46,7 +46,7 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
         inOrder(supportProgramRepository, catalogFacade, indexSyncService).apply {
             verify(supportProgramRepository).startBizInfoSyncGeneration()
             verify(catalogFacade).load()
-            verify(indexSyncService).indexBizInfoSnapshot(programs)
+            verify(indexSyncService).indexSnapshot(programs)
             verify(supportProgramRepository).publishBizInfoSnapshotIfCurrent(programs, 7L)
             verifyNoMoreInteractions()
         }
@@ -77,7 +77,7 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
         val failure = IllegalStateException("index unavailable")
         doReturn(9L).`when`(supportProgramRepository).startBizInfoSyncGeneration()
         doReturn(programs).`when`(catalogFacade).load()
-        doThrow(failure).`when`(indexSyncService).indexBizInfoSnapshot(programs)
+        doThrow(failure).`when`(indexSyncService).indexSnapshot(programs)
 
         assertSame(failure, assertThrows(IllegalStateException::class.java) { service().sync() })
 
@@ -90,7 +90,7 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
         val programs = listOf(catalogProgram("first"))
         doReturn(10L).`when`(supportProgramRepository).startBizInfoSyncGeneration()
         doReturn(programs).`when`(catalogFacade).load()
-        doReturn(1).`when`(indexSyncService).indexBizInfoSnapshot(programs)
+        doReturn(1).`when`(indexSyncService).indexSnapshot(programs)
         doReturn(false).`when`(supportProgramRepository).publishBizInfoSnapshotIfCurrent(programs, 10L)
 
         assertNull(service().sync())

@@ -50,7 +50,7 @@ class SupportProgramSearchServiceTest {
                 catalogProgram(id = "unknown", status = SupportProgramStatus.UNKNOWN),
                 catalogProgram(id = "closed", status = SupportProgramStatus.CLOSED),
             ),
-        ).`when`(supportProgramRepository).findPresentBizInfo()
+        ).`when`(supportProgramRepository).findPresent()
 
         val result = service().search("", false)
         val byId = result.programs.associateBy(SupportProgram::id)
@@ -68,7 +68,7 @@ class SupportProgramSearchServiceTest {
         assertEquals(emptyList<String>(), byId.getValue("open").matchedReasons)
         assertEquals(emptyList<RankingCall>(), ranking.calls)
         Mockito.verifyNoInteractions(retrieval)
-        Mockito.verify(supportProgramRepository).findPresentBizInfo()
+        Mockito.verify(supportProgramRepository).findPresent()
     }
 
     @Test
@@ -85,7 +85,7 @@ class SupportProgramSearchServiceTest {
                     status = SupportProgramStatus.CLOSED,
                 ),
             ),
-        ).`when`(supportProgramRepository).findPresentBizInfo()
+        ).`when`(supportProgramRepository).findPresent()
         ranking.response = { candidates ->
             listOf(
                 candidates.single().program.copy(
@@ -108,7 +108,7 @@ class SupportProgramSearchServiceTest {
         val query = "서울 AI 창업기업이 받을 지원사업"
         val open = catalogProgram(id = "open", summary = "AI 창업 지원")
         Mockito.doReturn(listOf(open)).`when`(retrieval).retrieve(query, listOf(open))
-        Mockito.doReturn(listOf(open)).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(listOf(open)).`when`(supportProgramRepository).findPresent()
         ranking.response = { emptyList() }
 
         val result = service().search(query, true)
@@ -126,7 +126,7 @@ class SupportProgramSearchServiceTest {
                     sortTimestamp = "2026-08-${index.toString().padStart(2, '0')} 10:00:00",
                 )
             }
-        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresent()
         Mockito.doReturn(listOf(programs.first())).`when`(retrieval).retrieve("서울 AI", programs)
         ranking.response = { it.map { candidate -> candidate.program } }
 
@@ -141,7 +141,7 @@ class SupportProgramSearchServiceTest {
     @Test
     fun changingTheQueryChangesTheSemanticCandidatesBeforeRanking() {
         val programs = listOf(catalogProgram("ai"), catalogProgram("export"))
-        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresent()
         Mockito.doReturn(listOf(programs.first())).`when`(retrieval).retrieve("AI", programs)
         Mockito.doReturn(listOf(programs.last())).`when`(retrieval).retrieve("수출", programs)
         ranking.response = { it.map { candidate -> candidate.program } }
@@ -155,7 +155,7 @@ class SupportProgramSearchServiceTest {
         val open = catalogProgram("old-open", sortTimestamp = "2020-01-01")
         val programs = (1..25).map { catalogProgram("closed-$it", status = SupportProgramStatus.CLOSED) } +
             catalogProgram("upcoming", status = SupportProgramStatus.UPCOMING) + open
-        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresent()
         Mockito.doReturn(listOf(open)).`when`(retrieval).retrieve("AI", listOf(open))
         ranking.response = { it.map { candidate -> candidate.program } }
 
@@ -166,7 +166,7 @@ class SupportProgramSearchServiceTest {
     @Test
     fun propagatesIndexNotReadyInsteadOfFallingBackToNewestPrograms() {
         val programs = listOf(catalogProgram("open"))
-        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresent()
         Mockito.doThrow(ai.govbiz.core._common.exception.AiServiceCallException.unavailable(null))
             .`when`(retrieval).retrieve("AI", programs)
 
@@ -177,23 +177,23 @@ class SupportProgramSearchServiceTest {
     }
 
     @Test
-    fun usesProgramIdAsATieBreakerForProgramsWithTheSameSortTimestamp() {
+    fun usesSourceQualifiedIdentityAsATieBreakerForProgramsWithTheSameSortTimestamp() {
+        val other = catalogProgram(id = "SHARED", sourceCode = "OTHER")
+        val bizInfo = catalogProgram(id = "SHARED", sourceCode = "BIZINFO")
         Mockito.doReturn(
-            listOf(
-                catalogProgram(id = "PBLN_B"),
-                catalogProgram(id = "PBLN_A"),
-            ),
-        ).`when`(supportProgramRepository).findPresentBizInfo()
+            listOf(other, bizInfo),
+        ).`when`(supportProgramRepository).findPresent()
 
         val result = service().search("", false)
 
-        assertEquals(listOf("PBLN_A", "PBLN_B"), result.programs.map(SupportProgram::id))
+        assertEquals(listOf("BIZINFO", "OTHER"), result.programs.map(SupportProgram::sourceCode))
+        assertEquals(listOf("SHARED", "SHARED"), result.programs.map(SupportProgram::id))
     }
 
     @Test
     fun returnsAnImmutableResultList() {
         Mockito.doReturn(listOf(catalogProgram(id = "open")))
-            .`when`(supportProgramRepository).findPresentBizInfo()
+            .`when`(supportProgramRepository).findPresent()
 
         val result = service().search("   ", true)
 
@@ -207,7 +207,7 @@ class SupportProgramSearchServiceTest {
         val query = "서울 AI 창업 지원"
         val open = catalogProgram(id = "PBLN_OPEN", summary = "서울 AI 창업 지원")
         val closed = catalogProgram(id = "PBLN_CLOSED", status = SupportProgramStatus.CLOSED)
-        Mockito.doReturn(listOf(open, closed)).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(listOf(open, closed)).`when`(supportProgramRepository).findPresent()
         Mockito.doReturn(listOf(open)).`when`(retrieval).retrieve(query, listOf(open))
         ranking.response = { candidates ->
             listOf(candidates.single().program.copy(recommendationScore = 91, matchedReasons = listOf("서울 AI 대상")))
@@ -221,6 +221,27 @@ class SupportProgramSearchServiceTest {
         assertEquals(2, trace.presentProgramCount)
         assertEquals(1, trace.eligibleProgramCount)
         assertTrue(trace.eligibleCatalogFingerprint.matches(Regex("[0-9a-f]{64}")))
+    }
+
+    @Test
+    fun keepsSameRawIdsFromDifferentSourcesDistinctInSearchTrace() {
+        val query = "서울 AI 지원"
+        val bizInfo = catalogProgram(id = "SHARED", sourceCode = "BIZINFO")
+        val other = catalogProgram(id = "SHARED", sourceCode = "OTHER")
+        val candidates = listOf(other, bizInfo)
+        Mockito.doReturn(candidates).`when`(supportProgramRepository).findPresent()
+        Mockito.doReturn(candidates).`when`(retrieval).retrieve(query, candidates)
+        ranking.response = { selected ->
+            selected.map { candidate ->
+                candidate.program.copy(recommendationScore = 90, matchedReasons = listOf("서울 AI 관련"))
+            }
+        }
+
+        val trace = service().searchWithTrace(query, acceptingOnly = true)
+
+        assertEquals(listOf("OTHER:SHARED", "BIZINFO:SHARED"), trace.candidateIds)
+        assertEquals(listOf("OTHER:SHARED", "BIZINFO:SHARED"), trace.finalProgramIds)
+        assertEquals(listOf("OTHER", "BIZINFO"), trace.result.programs.map(SupportProgram::sourceCode))
     }
 
     private fun service() = SupportProgramSearchService(
@@ -237,11 +258,12 @@ class SupportProgramSearchServiceTest {
         applicationPeriod: String = "상시 접수",
         applicationStartDate: LocalDate? = null,
         applicationEndDate: LocalDate? = null,
+        sourceCode: String = "BIZINFO",
         sortTimestamp: String = "2026-08-21 10:00:00",
     ) = CatalogSupportProgram(
         program = SupportProgram(
             id = id,
-            sourceCode = "BIZINFO",
+            sourceCode = sourceCode,
             title = title,
             organization = "수행기관",
             summary = summary,
@@ -252,8 +274,8 @@ class SupportProgramSearchServiceTest {
             applicationStartDate = applicationStartDate,
             applicationEndDate = applicationEndDate,
             status = status,
-            sourceName = "기업마당",
-            sourceUrl = "https://www.bizinfo.go.kr/detail?id=$id",
+            sourceName = if (sourceCode == "BIZINFO") "기업마당" else sourceCode,
+            sourceUrl = "https://${sourceCode.lowercase()}.example/detail?id=$id",
             matchedReasons = emptyList(),
             recommendationScore = null,
         ),

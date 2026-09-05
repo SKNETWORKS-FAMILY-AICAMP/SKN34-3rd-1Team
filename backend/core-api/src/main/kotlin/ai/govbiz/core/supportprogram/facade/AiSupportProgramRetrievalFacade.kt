@@ -16,7 +16,7 @@ class AiSupportProgramRetrievalFacade(private val client: AiSupportProgramIndexC
         if (eligiblePrograms.size > SupportProgramIndexDocumentMapper.MAX_DOCUMENTS) {
             throw AiServiceCallException.unavailable(null)
         }
-        val documents = eligiblePrograms.map(SupportProgramIndexDocumentMapper::fromBizInfo)
+        val documents = eligiblePrograms.map(SupportProgramIndexDocumentMapper::fromCatalog)
         val programsById = documents.mapIndexed { index, document -> document.id to eligiblePrograms[index] }.toMap()
         check(programsById.size == eligiblePrograms.size) { "duplicate catalog identities" }
         val hashesById = documents.associate { it.id to it.contentHash }

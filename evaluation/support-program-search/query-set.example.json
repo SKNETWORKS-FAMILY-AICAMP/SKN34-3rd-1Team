@@ -1,6 +1,6 @@
 {
   "schemaVersion": "support-program-search-query-set-v1",
-  "name": "bizinfo-YYYYMMDD-v1",
+  "name": "support-program-catalog-YYYYMMDD-v1",
   "queries": [
     {
       "id": "Q01",

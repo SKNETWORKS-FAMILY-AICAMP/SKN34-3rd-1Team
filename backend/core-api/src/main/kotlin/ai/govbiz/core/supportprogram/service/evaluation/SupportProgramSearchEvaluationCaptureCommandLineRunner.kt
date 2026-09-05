@@ -184,7 +184,8 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunner(
 
     private fun isCanonicalProgramId(value: String): Boolean {
         val separator = value.indexOf(':')
-        return separator > 0 && separator < value.lastIndex && value == value.trim()
+        if (separator !in 1 until value.lastIndex || value != value.trim()) return false
+        return SOURCE_CODE_PATTERN.matches(value.substring(0, separator))
     }
 
     private fun sha256(value: ByteArray): String =
@@ -216,6 +217,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunner(
         const val QUERY_SET_SCHEMA_VERSION = "support-program-search-query-set-v1"
         const val MAX_QUERY_LENGTH = 500
         const val MAX_QUERY_COUNT = 100
+        val SOURCE_CODE_PATTERN = Regex("[A-Z][A-Z0-9_]{0,63}")
         val SUPPORTED_SPLITS = setOf("dev", "heldout")
         val logger = LoggerFactory.getLogger(SupportProgramSearchEvaluationCaptureCommandLineRunner::class.java)
     }

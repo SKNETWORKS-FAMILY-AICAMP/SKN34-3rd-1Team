@@ -5,6 +5,7 @@ import ai.govbiz.core.supportprogram.controller.dto.SupportProgramResponse
 import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
 import jakarta.validation.constraints.NotBlank
+import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
@@ -27,7 +28,11 @@ class SupportProgramController(
 
     @GetMapping("/detail")
     fun detail(
-        @RequestParam @NotBlank @Size(max = 64) sourceCode: String,
+        @RequestParam
+        @NotBlank
+        @Size(max = 64)
+        @Pattern(regexp = "[A-Z][A-Z0-9_]{0,63}")
+        sourceCode: String,
         @RequestParam @NotBlank @Size(max = 255) sourceProgramId: String,
     ): SupportProgramResponse =
         SupportProgramResponse.from(detailService.get(sourceCode, sourceProgramId))
