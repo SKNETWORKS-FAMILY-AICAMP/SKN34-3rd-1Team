@@ -232,6 +232,25 @@ describe('answerSupportProgramEvidenceQuestionApi', () => {
     await expect(answerSupportProgramEvidenceQuestionApi(command)).resolves.toEqual(answer)
   })
 
+  it('AI 응답 길이를 UTF-16 길이가 아닌 유니코드 코드 포인트 기준으로 검증한다', async () => {
+    const answerAtMaximumLength = `${'가'.repeat(1_199)}😀`
+    const answerOverMaximumLength = `${'가'.repeat(1_200)}😀`
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        ...answeredEvidenceResponse(),
+        answer: answerAtMaximumLength,
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...answeredEvidenceResponse(),
+        answer: answerOverMaximumLength,
+      })))
+
+    await expect(answerSupportProgramEvidenceQuestionApi(command)).resolves.toMatchObject({
+      answer: answerAtMaximumLength,
+    })
+    await expect(answerSupportProgramEvidenceQuestionApi(command)).rejects.toThrow()
+  })
+
   it('keeps endpoint status private while allowing the Repository to distinguish unsupported and unavailable results', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('', { status: 422 })))
 

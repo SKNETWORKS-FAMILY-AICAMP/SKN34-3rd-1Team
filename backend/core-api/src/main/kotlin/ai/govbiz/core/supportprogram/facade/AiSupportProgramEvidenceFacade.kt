@@ -105,7 +105,7 @@ class AiSupportProgramEvidenceFacade(
         sourceUrl: String,
     ): SupportProgramEvidenceAnswerResult {
         val answer = rawAnswer?.trim()
-        if (answer.isNullOrEmpty() || answer.length > MAX_ANSWER_LENGTH) {
+        if (answer.isNullOrEmpty() || answer.codePointCount(0, answer.length) > MAX_ANSWER_CODE_POINTS) {
             throw AiServiceCallException.invalidResponse("AI evidence returned an invalid answer", null)
         }
         val status = try {
@@ -162,6 +162,6 @@ class AiSupportProgramEvidenceFacade(
     private companion object {
         const val MAX_CHUNKS = 50
         const val MAX_RETRIEVED_CHUNKS = 5
-        const val MAX_ANSWER_LENGTH = 1_200
+        const val MAX_ANSWER_CODE_POINTS = 1_200
     }
 }
