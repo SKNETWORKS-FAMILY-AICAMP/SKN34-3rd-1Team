@@ -2,6 +2,7 @@
 
 GovBiz Web은 공공데이터포털 키나 OpenAI 키를 보유하지 않습니다. 브라우저는 Core API만 호출하고,
 Core는 정기 동기화된 기업마당 공고 MySQL 카탈로그에서 후보를 읽어 AI Service에 점수화를 요청합니다.
+전체 구성은 [기술 문서](technology.md), 구현 범위와 후속 과제는 [구현 현황](implementation-status.md)을 참고하세요.
 
 ```text
 Browser
@@ -12,7 +13,8 @@ Browser
           → 질의 임베딩에 가까운 후보 최대 20개 선택
           → POST /internal/v1/support-program-rankings/rank
               → LLM이 버전된 평가 기준으로 모든 후보 점수화
-          → 최소 추천 기준을 통과한 0~5개를 Core가 검증해 반환
+          → 명백한 지원대상·지역 불일치 제외 + 최소 추천 기준 적용
+          → 0~5개를 Core가 검증해 반환
 ```
 
 ## 공개 요청
@@ -24,7 +26,7 @@ Accept: application/json
 
 | Query parameter | 필수 | 설명 |
 |---|---|---|
-| `query` | 예 | 사용자의 검색 문장. 최대 500자. 공백이면 LLM을 호출하지 않고 최신 공고를 반환 |
+| `query` | 예 | 사용자의 검색 문장. 요청값 최대 500자. 앞뒤 공백 제거 후 비어 있으면 임베딩·Qdrant·LLM을 호출하지 않고 최신 공고 최대 5개를 반환 |
 | `acceptingOnly` | 아니요 | `true`이면 Core가 `OPEN` 공고만 AI 후보로 전달. 기본값 `true` |
 
 ## 내부 LLM 점수화 요청
@@ -136,8 +138,10 @@ Core는 다음 불변식을 다시 검사합니다.
 }
 ```
 
-빈 검색어는 LLM을 호출하지 않으므로 `matchedReasons`는 빈 배열이고 `recommendationScore`는
-`null`입니다. 날짜를 확실히 해석할 수 없으면 시작·종료일은 `null`, 상태는 `UNKNOWN`으로 유지합니다.
+빈 검색어는 AI Service를 호출하지 않으므로 `matchedReasons`는 빈 배열이고 `recommendationScore`는
+`null`입니다. 해석할 수 없는 시작·종료일은 각각 `null`입니다. 접수 상태는 파싱된 날짜와 서울 기준
+오늘 날짜로 먼저 판단하고, 날짜만으로 판단할 수 없으면 접수 예정·종료·상시 접수 등의 문구를 사용합니다.
+따라서 날짜가 `null`이어도 상태가 `OPEN`, `UPCOMING`, `CLOSED`일 수 있으며, 판단 근거가 없을 때 `UNKNOWN`입니다.
 적격 공고가 없으면 `programs`는 빈 배열입니다. 원본에 없는 지원금액은 생성하지 않으며 `sourceUrl`로
 공식 원문을 확인할 수 있습니다.
 
@@ -223,8 +227,9 @@ Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지
 | `query`가 500자를 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 상세 조회의 `sourceCode`·`sourceProgramId`가 누락·공백·길이 제한을 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 상세 조회 대상이 없거나 현재 제공처 목록에서 사라짐 | 404 | `SUPPORT_PROGRAM_NOT_FOUND` |
-| AI Service 실패·잘못된 응답 | 502 | `AI_SERVICE_UPSTREAM_ERROR` / `AI_SERVICE_INVALID_RESPONSE` |
-| AI Service 연결 불가·시간 초과 | 503 / 504 | `AI_SERVICE_UNAVAILABLE` / `AI_SERVICE_TIMEOUT` |
+| AI Service의 예상하지 못한 HTTP 응답·응답 계약 위반 | 502 | `AI_SERVICE_UPSTREAM_ERROR` / `AI_SERVICE_INVALID_RESPONSE` |
+| AI Service 연결 불가·내부 503 응답 | 503 | `AI_SERVICE_UNAVAILABLE` |
+| AI Service 호출 시간 초과·내부 408/504 응답 | 504 | `AI_SERVICE_TIMEOUT` |
 | 현재 허용 공고의 색인 미완료 또는 Qdrant·임베딩 실패 | 503(내부 시간 초과 분류에 따라 504) | `AI_SERVICE_UNAVAILABLE` / `AI_SERVICE_TIMEOUT` |
 
 테스트는 가짜 Agent·임베딩과 HTTP mock을 사용하며 실제 OpenAI 호출을 수행하지 않습니다. CI에서는

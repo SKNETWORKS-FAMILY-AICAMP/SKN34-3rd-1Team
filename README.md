@@ -1,276 +1,67 @@
 # GovBiz
 
-자연어로 정부지원사업을 검색하고, 공고의 출처와 마감일을 확인할 수 있는 채팅형 웹앱입니다.
-[공공데이터포털의 중소기업 지원사업 공고 조회 서비스](https://www.data.go.kr/data/15157820/openapi.do)에서
-기업마당 공고를 백그라운드에서 MySQL 카탈로그로 동기화하고, 사용자 검색은 이 카탈로그를 조회합니다.
-브라우저에는 GovBiz의 안정적인 검색 계약만 공개합니다.
+자연어로 정부지원사업을 찾고 지원 대상·신청 기간·공식 원문을 확인하는 채팅형 웹앱입니다.
+기업마당 공고를 MySQL에 동기화하고, Qdrant 의미 검색과 AI 점수화로 관련 공고를 최대 5개 추천합니다.
 
-```text
-React Web
-  → Spring Boot Core API
-      ├→ MySQL 지원사업 카탈로그 (사용자 검색)
-      ├→ 공공데이터포털 지원사업 공고 API (백그라운드 동기화)
-      └→ FastAPI AI Service
-          ├→ Qdrant 공고 의미 검색
-          └→ OpenAI 임베딩 및 typed agent 점수화
-```
+## 주요 기능
 
-브라우저는 Core API만 호출하므로 공공데이터포털 인증키가 JavaScript bundle이나 브라우저 요청에
-노출되지 않습니다. AI Service는 Core API가 호출하는 내부 서비스입니다. 임베딩 API에는 공고 검색용
-텍스트와 질의를, 점수화 Agent에는 사용자의 검색 문장과 Core가 검증한 공고 후보를 전달합니다.
+- 자연어 공고 검색과 추천 이유·점수 표시
+- 공고 상세 조회, 원문 링크, 서울 날짜 기준 접수 상태 계산
+- 기업마당 전체 공고 자동 동기화와 누락 벡터 복구
+- 입력·응답 검증, 한글 입력 처리, 검색 취소 및 장애 안내
 
-## 현재 구현: 실제 공고 검색 채팅
+현재 연동한 공고 제공처는 기업마당입니다. 상세 원문·첨부문서에 근거한 RAG 질의응답과
+대화 맥락을 이어가는 검색은 아직 구현하지 않았습니다.
 
-브라우저에서 `/`로 진입하면 바로 GovBiz 채팅 화면이 열립니다.
+## 기술 구성
 
-상태관리 비교 예제는 React Router URL로 직접 열 수 있습니다.
-
-```text
-/                           → 지원사업 채팅
-/examples/sample-item/hook  → React Hook 예제
-/examples/sample-item/redux → Redux Toolkit 예제
-```
-
-```text
-사용자 메시지
-  → ChatPage
-      → useSupportProgramChatViewModel
-          → appContainer.resolve('searchSupportProgramsUseCase')
-          → ViewModel 안의 Redux Thunk
-              → SearchSupportProgramsUseCase.execute
-                  → SupportProgramRepository
-                      → GET /api/v1/support-programs/search
-                          → MySQL에서 현재 노출된 기업마당 공고 조회
-                          → 접수 상태 필터 후 현재 공고 ID·내용 해시로 Qdrant 검색 범위 제한
-                          → 질의 임베딩과 의미가 가까운 후보 최대 20개 선정
-                          → POST /internal/v1/support-program-rankings/rank
-                              → OpenAI typed agent가 버전된 기준으로 후보별 점수화
-                          → Core가 ID·점수 합계·순서를 검증하고 상위 5개 반환
-              → Redux Toolkit chat slice
-                  → 지원사업 카드·마감일·추천 이유 표시
-```
-
-현재 화면은 다음 질문을 처리할 수 있습니다.
-
-- `서울 AI 창업지원 사업 찾아줘`
-- `현재 접수 중인 수출 지원사업 알려줘`
-- `제조기업 R&D 사업을 찾아줘`
-
-Frontend는 HTTP 응답을 Zod로 검증하고, 화면 이탈이나 새 대화 시작 시 진행 중인 검색을 취소합니다.
-공고의 공식 원문 주소와 신청기간 원문을 함께 제공하며, 날짜를 확실히 해석하지 못한 경우 접수 상태를
-추정하지 않습니다. 공개 계약은 [지원사업 검색·추천 HTTP 계약](docs/support-program-search-contract.md)에
-정리되어 있습니다.
-
-LLM은 공식 공고 후보를 고정된 100점 평가 기준으로 점수화하는 필수 추천기입니다. OpenAI 설정 누락은 AI Service
-시작 실패로 드러나고, 인증·rate limit·timeout·refusal·응답 검증 실패는 안전한 502·503·504로
-반환합니다. Kotlin 단어 사전이나 고정 점수표로 자연어를 이해한 것처럼 성공시키지 않습니다.
-
-### 채팅 상태 관리
-
-React Hook은 사이드바·DOM 참조처럼 화면과 함께 사라지는 상태를 담당합니다. Redux Toolkit은
-메시지·검색 진행 상태를 보관하고, ViewModel은 전역 `appContainer`에서 검색 UseCase를 직접 조회한 뒤
-Thunk 안에서 검색 순서를 제어합니다. Health와 SampleItem도 같은 Service Locator에서 필요한 외부 함수와
-UseCase를 직접 조회합니다. SampleItem은 React Hook과 Redux Toolkit 두 구현을 제공해 상태 수명 차이를
-비교할 수 있습니다. 검색 중 중복 전송을 막고, 새
-대화를 시작한 뒤 도착한 이전 응답은 요청 ID를 비교해 무시합니다.
-
-Repository와 UseCase의 생성·연결·앱 단위 singleton 수명주기는 Awilix 컨테이너가 관리합니다.
-`frontend/src/app/appContainer.ts`가 GetIt처럼 하나의 root container를 Service Locator로 공개하고,
-ViewModel은 Repository가 아니라 필요한 UseCase만 resolve합니다. DI 등록은 `frontend/src/app/di`에서
-Repository, UseCase와 외부 서비스 역할별 모듈로 분리해 관리합니다.
-
-현재는 대화와 검색 결과를 브라우저 메모리에 보관합니다. Core API는 사용자 검색 때 동기화된 MySQL
-카탈로그를 조회하며, 기업마당 API는 백그라운드 동기화 스케줄러만 호출합니다. MySQL 카탈로그의
-테이블·저장·조회와 기업마당 전체 목록을 원자적으로 동기화하는 핵심 Service와 정기 실행 스케줄러를
-구현했습니다. 기본 설정에서는 앱 준비 뒤 즉시 한 번 동기화하고, 이후 이전 동기화가 끝난 시점부터
-6시간마다 다시 실행합니다. 수집을 시작하기 전에 동기화 세대를 발급하고, 들어온 전체 공고의 벡터를
-준비한 뒤 가장 최근에 시작된 세대만 MySQL 카탈로그를 공개합니다. 별도 색인 스케줄러는 기본
-1분마다 이미 공개된 MySQL 공고의 누락 벡터를 복구하며 기존 벡터는 삭제하지 않습니다.
-첫 공고 공개 전에는 결과가 비어 있고, 공개된 공고의 벡터가 유실되었거나 검색 인프라가 불가하면
-자연어 검색은 명시적인 오류를 반환합니다.
-현재 구현 평가와 구체적인 확장 원칙은
-[Frontend 상태 관리 설계](frontend/README.md#상태-관리-설계와-확장-원칙)와
-[Provider와 Service Locator에서 ViewModel까지 전달](frontend/README.md#redux-provider와-service-locator에서-viewmodel까지-전달)을
-참고하세요.
-
-## 포함한 기반
-
-- React의 View → ViewModel → UseCase → Repository → HTTP DTO 흐름
-- Awilix 컨테이너를 이용한 decorator 없는 Frontend 의존성 주입
-- Spring Boot의 기능별 controller → service → domain 레이어 구조
-- Zod와 Bean Validation을 이용한 요청·응답 계약 검증
-- FastAPI 내부 Health API와 Core API의 upstream 오류 변환
-- OpenAI Agents SDK의 필수 typed agent를 사용하는 공고 후보 점수화
-- 백그라운드 동기화에서 공공데이터포털 응답을 GovBiz 공고 모델로 변환하는 외부 API adapter
-- MySQL 8.4·Flyway·MyBatis Mapper XML 기반의 `support_program` 카탈로그 스키마와 공고 UPSERT·검색 Repository
-- 전체 수집·색인 성공 후 최신 시작 세대만 신규·변경·누락 공고를 하나의 트랜잭션으로 공개하는 동기화 Service
-- 실제 MySQL Testcontainers를 이용한 카탈로그 저장·갱신·비활성화·롤백 통합 테스트
-- OpenAI 임베딩과 Qdrant를 사용한 전체 공고 후보 검색, 내용 해시별 재처리·미노출 제외
-- Tailwind CSS 유틸리티와 Vite 프록시를 사용하는 Docker Compose 개발 환경
-- 실제 키 없이 로컬 공공데이터 스텁을 사용하는 결정적 Compose smoke 검증
-
-### 지원사업 카탈로그 MySQL, 안전한 동기화와 검색
-
-기업마당 전체 페이지와 필수 공고 값을 검증하고 전체 벡터를 준비한 뒤, 최신 시작 세대의 목록만 MySQL에 반영합니다.
-
-```text
-앱 시작
-  → Flyway가 support_program·support_program_sync_generation 테이블 생성
-
-BizInfoSupportProgramCatalogSyncScheduler
-  → 기본 설정: 앱 준비 뒤 즉시 한 번, 이후 완료 시점부터 6시간마다 실행
-  → 동기화 Service 호출
-      → MySQL에서 수집 시작 세대 발급
-      → 기업마당 전체 목록 수집·검증
-      → 전체 공고의 ID·해시별 벡터 색인 완료
-      → SupportProgramRepository가 최신 시작 세대인지 확인하고 하나의 DB transaction으로 공개
-          → 기존 BIZINFO 공고를 미노출 처리
-          → 이번 목록을 UPSERT하며 다시 노출 처리
-          → SupportProgramMapper.xml의 SQL로 MySQL 저장
-```
-
-- 공고의 원본 제공처와 원본 ID를 함께 저장해, 다른 제공처의 ID가 같아도 충돌하지 않습니다.
-- 카테고리·지역은 JSON 배열로 저장하고, 신청기간 원문과 해석된 시작·마감일을 함께 보관합니다.
-- `OPEN`·`CLOSED` 같은 접수 상태는 DB에 고정하지 않고, 조회 시 서울 날짜 기준으로 다시 계산합니다.
-- 같은 기업마당 공고를 다시 저장하면 새 행을 만들지 않고 최신 내용으로 갱신합니다.
-- 수집·정규화·색인 중 하나라도 실패하면 기존 공개 카탈로그를 유지합니다.
-- 더 최근에 시작된 동기화가 있으면 먼저 시작한 작업의 공개를 건너뛰어 오래된 결과의 덮어쓰기를 막습니다.
-- DB 반영 중 오류가 나면 비활성화와 UPSERT를 모두 롤백해 이전 카탈로그를 유지합니다.
-- 긴 UPSERT·SELECT SQL은 Kotlin 코드가 아니라 MyBatis Mapper XML에서 관리합니다.
-- 자동 동기화가 실패해도 Core API는 계속 실행하며 이전 MySQL 카탈로그를 유지합니다.
-
-`GET /api/v1/support-programs/search`는 MySQL의 현재 노출 공고를 읽어
-`검색 요청 → MySQL 현재 공고·접수 상태 확인 → Qdrant 관련 후보 검색 → AI 점수화 → 응답` 순서로 처리합니다. 사용자 검색 요청은 기업마당 API를
-직접 호출하지 않습니다. 기업마당 API 호출은 `BizInfoSupportProgramCatalogSyncScheduler`의 동기화에만
-있습니다. 자동 동기화를 `BIZINFO_SYNC_ENABLED=false`로 끄면 기존 MySQL 데이터는 검색할 수 있지만,
-새 공고는 갱신되지 않습니다. 세부 실행 방법과 환경변수는
-[Core API README](backend/core-api/README.md)를 참고하세요.
-
-### 전체 공고 의미 검색
-
-비어 있지 않은 검색어는 최신 공고 20개로 제한하지 않고, MySQL에서 읽은 현재 검색 가능 공고 전체를
-Qdrant 검색 범위로 사용합니다. 빈 검색어만 종전처럼 최신 공고 최대 5개를 반환하며 AI를 호출하지 않습니다.
-
-색인은 `제공처:원본ID`와 검색 텍스트 SHA-256으로 버전을 구분합니다. 이미 색인한 내용은 임베딩을
-재호출하지 않습니다. 새 카탈로그는 전체 색인 성공 후 공개하고, 이미 공개된 공고의 누락 벡터는
-별도 스케줄에서 복구합니다. 최신 DB에 없는 공고와 이전 내용의 벡터는 정확한 ID·해시 검색 허용 목록에
-포함되지 않습니다. 공개 전 준비 중인 벡터를 지우지 않도록 두 동기화 경로 모두 `prune`을 호출하지 않습니다.
-오래된 벡터의 저장 공간 정리는 진행 중인 작업·검색을 보호하는 수명주기를 설계한 뒤 구현할 후속 과제입니다.
-검색 대상 중 색인이 누락되거나 Qdrant·임베딩 호출이 실패하면 최신 공고 목록으로 대체하지 않고 오류를 반환합니다.
-
-AI의 `govbiz-support-program-ranking-v2` 계약은 점수와 별도로 지원대상·지역의 자격 적합성을 판정합니다.
-`targetEligibility`와 `regionEligibility` 중 하나라도 `INCOMPATIBLE`이면 높은 총점이어도 제외합니다.
-`UNKNOWN`은 정보 부족을 뜻하므로 자동 제외하지 않으며 신청 가능을 확정하는 값도 아닙니다.
-이 자격 조건과 의미 관련성 40점 중 20점 이상·총점 100점 중 60점 이상을 모두 통과한 공고만 추천합니다.
-따라서 자연어 검색 결과는 최대 5개이며, 기준을 통과한 공고가 없으면 정상적으로 빈 목록을 반환합니다.
-검색 결과의 `상세 조건 보기`는 제공처 코드와 원본 공고 ID로 MySQL에서 최신 공고를 다시 조회하는
-내부 상세 화면으로 이동합니다. 대상·분야·지역·신청 기간과 기업마당 원문 링크를 보여 주며,
-새로고침·공유 URL도 같은 공고를 조회할 수 있습니다. 추천 이유와 점수는 검색 질의에만 의미가 있으므로
-상세 조회에서는 표시하지 않습니다.
-
-이 단계는 공고 목록 의미 검색과 검색 결과 상세 화면까지입니다. 상세 원문·첨부문서에 근거한 RAG
-질의응답은 후속 범위입니다. 현재는 매 검색마다 전체 현재 공고를 MySQL에서 읽고 ID·해시 목록을 내부 API에
-보내므로, 대규모 카탈로그의 DB 조회 비용을 줄이는 최적화도 후속 범위입니다.
-[검색 계약](docs/support-program-search-contract.md)과 [평가 자료](evaluation/support-program-search/README.md)를 참고하세요.
-
-## SampleItem 예제
-
-GovBiz에는 같은 업무 계층을 두 가지 상태 관리 방식으로 실행하는 최소 수직 슬라이스 예제가
-포함되어 있습니다.
-
-```text
-React Hook 화면 ─┐
-                 ├→ PrepareSampleItemUseCase
-Redux 화면 ──────┘
-  → SampleItemRepository
-  → POST /api/v1/sample-items/prepare
-  → SampleItemPreparationService
-```
-
-`name`은 필수이고 `category`, `note`는 선택입니다. 성공 응답은 처리 시작 전의
-`READY_FOR_PROCESSING` / `NOT_STARTED` 상태만 반환합니다. 즉 실제 비동기 작업이나 영속성은
-의도적으로 포함하지 않습니다. Hook 버전은 화면 이동 시 상태가 초기화되고, Redux 버전은 최상위
-`Provider`의 `appStore` 안에 있는 `sampleItem` Slice가 상태를 보관하므로 화면을 이동해도 입력과
-결과가 유지됩니다. 새로고침하면 둘 다 초기화되며 API,
-UseCase와 Repository는 완전히 동일합니다. 자세한 비교는
-[SampleItem 상태 관리 비교](frontend/README.md#sampleitem-react-hook과-redux-비교)를 참고하세요.
+| 영역 | 주요 기술 |
+|---|---|
+| Frontend | React, TypeScript, Vite, Tailwind CSS, Redux Toolkit, Awilix, Zod |
+| Core API | Kotlin, Spring Boot, MyBatis, Flyway |
+| AI Service | Python, FastAPI, OpenAI Agents SDK, OpenAI 임베딩 |
+| 데이터·실행 | MySQL 8.4, Qdrant, Docker Compose, GitHub Actions |
 
 ## 빠른 시작
 
-Docker daemon과 Docker Compose가 준비되어 있어야 합니다.
-
-저장소 루트의 `.env`에 공공데이터포털에서 발급한 일반 인증키와 필수 `OPENAI_API_KEY`를 설정합니다.
-Encoding 또는 Decoding 키를 사용할 수 있으며 Core API가 호출 전에 정규화합니다. 새 환경에서는
-예시 파일을 복사한 뒤 값만 채웁니다. `.env`는 Git에서 제외됩니다.
+Docker와 Docker Compose를 준비합니다. 저장소 루트에서 **새 `.env`를 만들 때** 예시를 복사한 뒤
+`DATA_GO_KR_SERVICE_KEY`와 `OPENAI_API_KEY`를 입력합니다.
 
 ```bash
 cp .env.example .env
-# DATA_GO_KR_SERVICE_KEY=발급받은_인증키
-# OPENAI_API_KEY=발급받은_OpenAI_API_키
-```
-
-```bash
+# .env에 공공데이터포털 인증키와 OpenAI API 키 입력
 docker compose --env-file .env --file infrastructure/compose.yaml up --build
 ```
 
-브라우저에서 [http://127.0.0.1:5173](http://127.0.0.1:5173)을 열면 GovBiz 채팅 화면을 볼 수
-있습니다. 기본 설정에서는 시작 동기화가 끝난 뒤 MySQL에 저장된 기업마당 공고를 검색합니다.
+[http://127.0.0.1:5173](http://127.0.0.1:5173)에서 접속합니다. 첫 실행에서는 공고 수집과 벡터 색인이
+완료된 뒤 검색할 데이터가 공개됩니다. 공고·질의 임베딩과 AI 점수화에 OpenAI 사용 비용이 발생합니다.
+이 Compose 구성은 로컬 개발용입니다.
 
-| 주소 | 용도 |
-|---|---|
-| `http://127.0.0.1:5173` | React 개발 서버 |
-| `http://127.0.0.1:5173/api/v1/health` | Vite 프록시를 거친 Core API Health |
-| `http://127.0.0.1:5173/api/v1/support-programs/search?query=%EC%88%98%EC%B6%9C&acceptingOnly=true` | 실제 지원사업 검색 |
-| `http://127.0.0.1:5173/api/v1/health/ai-service` | Core API를 거친 AI Service Health |
-| `http://127.0.0.1:8080` | Core API 직접 디버깅 |
-
-종료와 생성된 Compose volume 정리:
+데이터 볼륨을 유지하며 종료하려면 다음 명령을 사용합니다.
 
 ```bash
-docker compose --file infrastructure/compose.yaml down --volumes --remove-orphans
+docker compose --env-file .env --file infrastructure/compose.yaml down
 ```
 
-## 검증
-
-전체 컨테이너 경로, MySQL 카탈로그 기반 지원사업 검색 계약, AI Service 장애·복구까지 확인합니다.
-이 검증은 로컬 공공데이터 스텁과 외부로 전송하지 않는 dummy OpenAI key를 사용하므로 개인 인증키나
-외부 네트워크가 필요하지 않습니다.
+실제 API 키 없이 로컬 스텁으로 전체 연결과 장애 복구를 확인할 수도 있습니다.
+Docker 이미지·의존성을 처음 내려받을 때는 네트워크가 필요하며, 검증 전에 개발 서버의
+`5173`·`8080` 포트를 비워야 합니다.
 
 ```bash
 ./infrastructure/scripts/verify-compose.sh
 ```
 
-각 서비스만 빠르게 검증하는 방법은 해당 README에 있습니다.
+## 상세 문서
 
-## 저장소 구조
+| 문서 | 내용 |
+|---|---|
+| [프로젝트 기술](docs/technology.md) | 기술별 역할, MySQL·Qdrant 구분, 검색·동기화 구조와 설계 선택 |
+| [구현 현황](docs/implementation-status.md) | 구현된 기능, 현재 제약, 검증 범위와 다음 개발 과제 |
+| [아키텍처](docs/architecture.md) | 코드 계층, 호출 흐름, 의존성 규칙 |
+| [검색·상세 API 계약](docs/support-program-search-contract.md) | 공개 API와 내부 AI 요청·응답 |
+| [실행·컨테이너 안내](infrastructure/README.md) | 환경변수, 서비스별 접속, 검증·초기화 방법 |
+| 서비스별 안내 | [Frontend](frontend/README.md) · [Core API](backend/core-api/README.md) · [AI Service](backend/ai-service/README.md) |
+| [검색 평가 자료](evaluation/support-program-search/README.md) | 가상 공고 회귀 평가와 실데이터 평가 준비 |
 
-```text
-govBiz/
-├── frontend/             # React Web과 Data Layer 예제
-├── backend/
-│   ├── core-api/         # Spring Boot 공개 API와 업무 흐름
-│   └── ai-service/       # FastAPI 내부 서비스
-├── infrastructure/       # Docker Compose와 통합 smoke
-└── docs/                 # 구조, 계약, 확장 안내
-```
-
-## 문서
-
-- [아키텍처와 의존성 규칙](docs/architecture.md)
-- [지원사업 검색 HTTP 계약](docs/support-program-search-contract.md)
-- [SampleItem HTTP 계약](docs/sample-item-contract.md)
-- [새 프로젝트로 바꾸는 방법](docs/customization-guide.md)
-- [Frontend 실행·구조](frontend/README.md)
-- [Core API 실행·구조](backend/core-api/README.md)
-- [AI Service 실행·구조](backend/ai-service/README.md)
-- [AI Agent 모듈 구조](backend/ai-service/docs/agent-structure.md)
-- [Docker Compose 안내](infrastructure/README.md)
-
-## 다음 단계
-
-1. 대표 검색 질문과 Top-5 관련성 기준으로 현재 검색 품질을 측정합니다.
-2. 데이터가 부족하다는 근거가 생기면 K-Startup 등 두 번째 공식 소스를 추가합니다.
-3. 이후 기업정보 기반 추천과 GovClause의 PDF·조건 판정을 결합합니다.
-
-GovBiz 계층을 유지하며 데이터 소스와 기능을 확장하는 방법은
-[GovBiz 확장·적용 안내](docs/customization-guide.md)를 참고하세요.
+학습용 SampleItem 예제는 [예제 계약](docs/sample-item-contract.md), 기능 추가 방법은
+[확장 안내](docs/customization-guide.md)를 참고하세요.

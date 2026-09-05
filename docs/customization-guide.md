@@ -3,6 +3,9 @@
 GovBiz는 기업마당 공고를 MySQL 카탈로그로 동기화해 검색하는 기능을 시작점으로, 추가 데이터 소스와
 기업 맞춤 추천을 단계적으로 연결하도록 구성했습니다. 다른 지원사업 데이터 소스나 유사한 공공 정보
 서비스에 적용할 때도 계층의 책임은 유지하고 도메인 계약과 adapter를 기능 단위로 교체합니다.
+이 문서는 확장 시 지킬 기준이며, 아래의 추가 데이터 소스·큐·worker가 이미 구현되었다는 뜻은 아닙니다.
+현재 범위는 [구현 현황](implementation-status.md), 기술 구성은 [프로젝트 기술 문서](technology.md)를
+참고하세요.
 
 ## 1. GovBiz 브랜드와 서비스 계약 확정
 
@@ -27,9 +30,15 @@ GovBiz는 기업마당 공고를 MySQL 카탈로그로 동기화해 검색하는
 
 1. 새 소스가 해결할 검색 누락 사례와 품질 기준을 먼저 기록합니다.
 2. 외부 응답·오류·timeout을 소스별 client 경계에서 처리합니다.
-3. 원문 ID, 출처와 날짜 근거를 잃지 않고 GovBiz 공고 모델로 변환합니다.
-4. 중복 공고 판정, 소스 우선순위와 정렬 규칙을 명시합니다.
-5. 동일한 검색 시나리오를 고정 fixture·HTTP 계약 테스트와 Compose smoke로 검증합니다.
+3. 원문 ID, 출처와 날짜 근거를 잃지 않고 GovBiz 공고 모델로 변환합니다. 원본 식별자는
+   `(source_code, source_program_id)` 조합으로 유지합니다.
+4. 수집 완전성, 소스별 UPSERT·비활성화, 벡터 준비 후 MySQL 공개와 동기화 실행 순서 보호를
+   새 소스에도 적용합니다. 현재 구현은 기업마당 전용이므로 설정값 추가만으로 새 소스가 동작하지 않습니다.
+5. 여러 소스에 같은 공고가 있을 때의 중복 판정, 소스 우선순위와 정렬 규칙을 명시합니다.
+6. 동일한 검색 시나리오를 고정 fixture·HTTP 계약 테스트, 실제 MySQL 통합 테스트와 Compose smoke로 검증합니다.
+
+현재 Frontend의 공고 URL 검증은 기업마당 도메인만 허용합니다. 소스를 늘릴 때는 Core API의
+소스별 조회·변환뿐 아니라 Frontend의 출처 URL 검증과 화면 표시도 함께 확장해야 합니다.
 
 ## 3. SampleItem 계층 패턴 재사용
 
@@ -41,7 +50,8 @@ Frontend
   앱 조립: Awilix → 전역 appContainer Service Locator
   채팅: View → ViewModel이 UseCase resolve → Thunk → UseCase → Repository
   단순 요청 A: View → ViewModel local state → UseCase → Repository
-  단순 요청 B: View → Redux ViewModel Thunk → slice → 같은 UseCase → Repository
+  단순 요청 B: View → Redux ViewModel Thunk → 같은 UseCase → Repository
+                                  └→ 요청·성공·실패 action → slice
 
 Core API
   Controller → Service → Domain
@@ -63,25 +73,32 @@ Awilix 등록과 조립은 `app/di`에 두고, `app/appContainer.ts`가 GetIt �
 최초 resolve 전에 역할에 맞는 등록 모듈에 추가합니다. 테스트에서 운영 컨테이너를 변경하지 말고 각
 테스트용 새 컨테이너나 plain Fake UseCase를 사용합니다.
 
-## 4. 데이터베이스와 비동기 처리 추가 시점
+## 4. 저장과 비동기 처리 확장 기준
 
-SampleItem은 의도적으로 비영속입니다. 실제 공고 수집, 전체 대화 이력, 사용자별 기업 정보처럼
-새로고침 후에도 남아야 하는 데이터가 생길 때 Core API에 Repository와 migration을 추가합니다.
-외부 API 수집, PDF 분석, 임베딩처럼 시간이 오래 걸리는 작업은 재시도·중복 방지·상태 조회 규칙을
-확정한 뒤 큐와 worker를 도입합니다.
+공고 카탈로그는 이미 MySQL·MyBatis·Flyway로 저장하며, 벡터는 Qdrant에 저장합니다. 기업마당 동기화와
+누락 벡터 복구도 현재 Core API의 스케줄러가 실행합니다. SampleItem은 의도적으로 비영속이며,
+채팅 메시지는 브라우저 Redux 메모리에만 있습니다.
+
+전체 대화 이력이나 사용자별 기업 정보를 추가한다면 해당 기능의 Repository와 새 Flyway migration을
+추가합니다. 적용될 수 있는 기존 migration은 수정하지 않습니다. 현재 스케줄러만으로 처리하기
+어려운 작업량·재시도·상태 조회 요구가 확인되면 큐와 worker를 검토합니다. PDF 분석, 큐, 별도
+worker는 현재 구현되어 있지 않습니다.
 
 ## 5. 검증 순서
 
 기능을 확장한 뒤에는 변경한 계약에서 시작해 전체 서비스 흐름으로 넓혀 갑니다.
+아래 명령은 저장소 루트에서 시작합니다. Node.js 24·pnpm 11.22, JDK 21, Python 3.11·uv와
+실행 중인 Docker가 필요합니다. Core API 통합 테스트는 실제 MySQL 8.4 Testcontainers를 사용합니다.
 
 ```bash
 cd frontend && pnpm test && pnpm lint && pnpm build
-cd ../backend/core-api && ./gradlew clean build --no-daemon
+cd ../backend/core-api && ./gradlew clean test --no-daemon
 cd ../ai-service && uv lock --check && uv run --locked --extra dev python -m pytest
 cd ../.. && ./infrastructure/scripts/verify-compose.sh
 ```
 
-Docker Compose smoke는 Frontend → Core API → 공공데이터 adapter 연결과 AI Service 장애·복구까지
-검증합니다. 공공데이터포털 호출은 검증 profile의 로컬 스텁으로 대체하므로 실제 개인 키나 외부
-네트워크가 필요하지 않습니다. 외부 데이터 소스를 추가할 때도 실제 서비스에 테스트 데이터를
-밀어넣지 말고 고정 fixture나 mock server로 재현 가능한 시나리오를 먼저 추가합니다.
+Docker Compose smoke는 Web 프록시 → Core API → MySQL → AI Service → Qdrant의 HTTP 흐름과
+Qdrant·AI Service 장애·복구를 검증합니다. 브라우저 클릭을 수행하는 E2E 테스트는 아닙니다.
+공공데이터포털·OpenAI 호출은 검증 profile의 로컬 스텁으로 대체하므로 실제 API 키나 모델 호출
+비용은 필요하지 않습니다. 다만 최초 이미지·의존성 다운로드에는 네트워크가 필요합니다.
+외부 데이터 소스를 추가할 때도 고정 fixture나 mock server로 재현 가능한 시나리오를 먼저 추가합니다.
