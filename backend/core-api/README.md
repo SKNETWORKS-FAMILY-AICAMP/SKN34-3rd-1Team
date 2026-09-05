@@ -26,14 +26,42 @@ cd backend/core-api
 색인이 있어야 성공합니다. 새 카탈로그 공개에도 색인 준비가 필수이므로 기업마당 키만으로 동기화가
 완료되지는 않습니다.
 
-## 검색 품질 평가 캡처
+## 검색 품질 평가 fixture 내보내기와 캡처
 
-실제 검색 품질을 확인할 때는 공개 API를 반복 호출하지 않고 `evaluation-capture` 프로필을 실행합니다.
-이 프로필은 웹 서버·기업마당 동기화·누락 색인 복구를 끈 뒤, 질문 묶음의 각 항목을 현재
-`SupportProgramSearchService`에 전달합니다. 따라서 MySQL의 적격 공고 선정, Qdrant 후보 최대 20개,
-AI 최종 추천 최대 5개라는 운영 검색 흐름에서 나온 ID를 그대로 JSON 파일에 기록합니다.
+### 실제 공고 fixture 초안 내보내기
+
+실데이터 평가의 시작점은 `evaluation-fixture-export` 프로필입니다. 이 비웹 프로필은 현재 MySQL의
+공개 기업마당 공고 중 `OPEN` 공고만 읽고, 운영 색인과 같은 `SupportProgramIndexDocumentMapper`로
+`id`·`contentHash`·`text`를 만듭니다. 공고 수와 카탈로그 지문을 포함한 전체 fixture 초안을 기록하므로,
+이후 캡처 결과가 같은 공고 스냅샷에서 나왔는지 확인할 수 있습니다.
+
+이 프로필은 웹 서버·기업마당 동기화·누락 색인 복구를 끄며 Qdrant, AI Service, OpenAI를 호출하지 않습니다.
+`name`과 `output-path`는 반드시 지정해야 합니다.
+
+```bash
+cd backend/core-api
+./gradlew bootJar
+
+SPRING_PROFILES_ACTIVE=evaluation-fixture-export \
+APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_NAME=bizinfo-20260905-v1 \
+APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_OUTPUT_PATH=/absolute/path/support-program-fixture.json \
+java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
+```
+
+생성 파일의 `cases`는 빈 배열(`[]`)입니다. 사람이 각 질문의 `id`·`query`·`split`·`relevantIds`를 라벨링한
+뒤에만 질문 묶음과 캡처·평가를 진행할 수 있습니다. 질문 묶음의 `name`과 각 `cases`의 `id`·`query`·`split`은
+fixture와 순서·내용까지 같아야 합니다. 내보내기는 빈 적격 카탈로그, 누락된 정렬 시각, 중복 검색 문서 ID 등
+검증에 실패하면 기존 출력 파일을 바꾸지 않으며, 모든 검증이 끝난 결과만 원자적으로 교체합니다.
+
+### 실제 검색 흐름 캡처
+
+사람이 라벨링한 fixture와 같은 질문 묶음을 준비한 뒤에는 공개 API를 반복 호출하지 않고
+`evaluation-capture` 프로필을 실행합니다. 이 프로필은 웹 서버·기업마당 동기화·누락 색인 복구를 끈 뒤,
+질문 묶음의 각 항목을 현재 `SupportProgramSearchService`에 전달합니다. 따라서 MySQL의 적격 공고 선정,
+Qdrant 후보 최대 20개, AI 최종 추천 최대 5개라는 운영 검색 흐름에서 나온 ID를 그대로 JSON 파일에 기록합니다.
 
 질문 파일은 [예시](../../evaluation/support-program-search/query-set.example.json)를 복사해 준비합니다.
+fixture 내보내기는 `OPEN` 공고만 담으므로, 캡처도 기본값인 `acceptingOnly=true`로 실행해야 합니다.
 실행 환경의 MySQL·AI Service·Qdrant는 실제 검색과 같은 상태여야 하며, AI 점수화 호출 비용이 발생할 수
 있으므로 기본 실행이나 CI에는 포함하지 않습니다.
 
@@ -119,7 +147,7 @@ supportprogram/
 │   ├── search             # DB 조회 → 의미 검색 → AI 점수화
 │   ├── detail             # 현재 공고 상세 조회
 │   ├── sync               # 수집·색인 준비·DB 공개와 별도 벡터 복구
-│   ├── evaluation         # 비웹 검색 품질 평가 캡처 프로필
+│   ├── evaluation         # 비웹 fixture 내보내기·검색 품질 평가 캡처 프로필
 │   └── dto                # 검증된 내부 실행 결과
 ├── facade                 # 기업마당 수집·AI 응답 검증·도메인 변환
 ├── client/
@@ -128,6 +156,7 @@ supportprogram/
 ├── repository            # 도메인↔DB 행 변환·트랜잭션·저장·조회
 │   └── mapper            # MyBatis Mapper, DbRow
 ├── domain                 # 업무 모델·서울 날짜 기준 접수 상태 규칙
+├── helper                 # 지원사업 하위 흐름이 함께 쓰는 보조 작업
 └── config                 # 지원사업 공용 시계 설정
 _health                    # Core API Health
 _health_ai_service         # AI Service Health의 Controller → Service → Client
@@ -146,7 +175,7 @@ Facade와 Domain은 MyBatis Mapper를 직접 호출하지 않습니다.
 | `Result` | 검증된 실행 결과는 `service/dto` |
 | 업무 모델 | 프레임워크에 의존하지 않는 `domain` |
 | `DbRow` | `repository/mapper`의 DB 행 타입. Repository 밖으로 노출하지 않음 |
-| `Helper` | 실제 반복 보조 작업. 한 기능 전용이면 해당 기능, 공유되면 `_common/helper` |
+| `Helper` | 실제 반복 보조 작업. 특정 기능의 하위 흐름이 함께 쓰면 해당 기능의 `helper`, 둘 이상의 기능이 함께 쓰면 `_common/helper` |
 
 SQL은 [`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml)에
 명시하며 JPA·JdbcClient·annotation SQL을 혼용하지 않습니다. Repository가 JSON 배열과 DbRow를

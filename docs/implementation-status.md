@@ -86,13 +86,15 @@
 | AI Service | Agent 출력·점수·자격 필터·벡터 API 테스트, CI의 Qdrant 연동 검증 | 내부 계약과 검색 색인 동작 확인 |
 | Compose smoke | 실제 MySQL·Qdrant와 로컬 기업마당·OpenAI 스텁 | 전체 연결, 오래된 관련 공고 경로, 장애 격리와 재시작 복구 |
 | 가상 공고 평가 | 공고 40개·질문 30개, 최신순·키워드 비교, 외부 의미 검색 결과 파일 입력 | 후보 검색 회귀 평가 도구; 실제 추천 정확도 증거 아님 |
+| 실데이터 fixture 초안 내보내기 | `evaluation-fixture-export` profile이 MySQL의 현재 `OPEN` 기업마당 공고를 운영 색인 Mapper와 같은 ID·내용 해시·검색 문서로 JSON 기록 | 웹·동기화·Qdrant·AI·OpenAI 호출 없음; `cases: []`은 사람이 라벨링해야 함 |
 | 실제 검색 흐름 캡처 | `evaluation-capture` profile이 내부 Search Service의 Qdrant 후보·AI 최종 추천 ID와 카탈로그 지문을 JSON으로 기록 | 공개 endpoint·자동 실행 없음, 실제 MySQL·AI Service 연결과 명시적 실행 필요 |
-| 실데이터 검색 품질 | 고정 공고·사람이 검토한 정답·실제 모델 비교 보고서 없음 | 캡처·후보/최종 Top-5 분리 측정 도구는 준비됐고 라벨 데이터가 후속 필요 |
+| 실데이터 검색 품질 | 고정 공고·사람이 검토한 정답·실제 모델 비교 보고서 없음 | fixture 초안·캡처·후보/최종 Top-5 분리 측정 도구는 준비됐고 사람이 검토한 라벨 데이터와 보고서가 후속 필요 |
 
 평가 도구는 후보 단계의 `macroRecallAtK`·무결과 오추천율과 최종 단계의 `macroRecallAt5`·`MRR@5`·무결과
-오추천율을 분리해 계산합니다. `evaluation-capture`는 실제 Search Service를 다시 구현하지 않고 같은 호출
-흐름에서 나온 후보·최종 ID를 기록합니다. 사람이 검토한 실데이터 fixture가 없으면 점수는 주장하지 않으며,
-의미 검색 결과 파일이나 캡처 파일을 제공하지 않으면 각각 출력의 `semantic`·`capture`는 `null`입니다.
+오추천율을 분리해 계산합니다. `evaluation-fixture-export`는 현재 MySQL 카탈로그에서 미라벨 fixture 초안을
+만들고, 사람 라벨 후 `evaluation-capture`는 실제 Search Service를 다시 구현하지 않고 같은 호출 흐름에서 나온
+후보·최종 ID를 기록합니다. 사람이 검토한 실데이터 fixture가 없으면 점수는 주장하지 않으며, 의미 검색 결과
+파일이나 캡처 파일을 제공하지 않으면 각각 출력의 `semantic`·`capture`는 `null`입니다.
 [평가 자료와 실행법](../evaluation/support-program-search/README.md)을 참고하세요.
 
 현재 Health API는 서비스 응답과 Core→AI 연결을 확인합니다. 공고 최신성, MySQL·Qdrant·OpenAI 전체 상태를

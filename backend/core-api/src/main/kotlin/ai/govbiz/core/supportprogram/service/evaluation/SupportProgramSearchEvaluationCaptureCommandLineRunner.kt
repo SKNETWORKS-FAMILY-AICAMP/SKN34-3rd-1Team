@@ -4,13 +4,10 @@ import ai.govbiz.core.supportprogram.facade.AiSupportProgramRankingFacade
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchTrace
 import ai.govbiz.core.supportprogram.service.evaluation.config.SupportProgramSearchEvaluationCaptureProperties
+import ai.govbiz.core.supportprogram.service.evaluation.helper.SupportProgramSearchEvaluationFileHelper
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
-import java.nio.charset.StandardCharsets
-import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption.ATOMIC_MOVE
-import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
@@ -74,7 +71,10 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunner(
                 )
             },
         )
-        writeAtomically(properties.outputPath, objectMapper.writeValueAsBytes(capture))
+        SupportProgramSearchEvaluationFileHelper.writeAtomically(
+            properties.outputPath,
+            objectMapper.writeValueAsBytes(capture),
+        )
         logger.info("지원사업 검색 평가 캡처 {}건을 {}에 기록했습니다.", observations.size, properties.outputPath)
     }
 
@@ -169,24 +169,6 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunner(
         }
         if ((trace.candidateIds + trace.finalProgramIds).any { identifier -> !isCanonicalProgramId(identifier) }) {
             invalid("search trace contains a noncanonical program ID for ${query.id}")
-        }
-    }
-
-    private fun writeAtomically(configuredPath: Path, content: ByteArray) {
-        val outputPath = configuredPath.toAbsolutePath().normalize()
-        val parent = outputPath.parent ?: invalid("capture output path must have a parent directory")
-        Files.createDirectories(parent)
-        val prefix = ".${outputPath.fileName}."
-        val temporaryPath = Files.createTempFile(parent, prefix, ".tmp")
-        try {
-            Files.write(temporaryPath, content)
-            try {
-                Files.move(temporaryPath, outputPath, ATOMIC_MOVE, REPLACE_EXISTING)
-            } catch (exception: AtomicMoveNotSupportedException) {
-                throw IllegalStateException("capture output filesystem does not support atomic moves", exception)
-            }
-        } finally {
-            Files.deleteIfExists(temporaryPath)
         }
     }
 
