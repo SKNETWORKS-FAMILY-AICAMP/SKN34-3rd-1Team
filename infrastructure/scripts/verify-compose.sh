@@ -235,7 +235,7 @@ wait_for_http \
   '"id"[[:space:]]*:[[:space:]]*"PBLN_COMPOSE_EXPORT"' \
   '"applicationPeriod"[[:space:]]*:[[:space:]]*"2026-08-20 ~ 2099-09-11"' \
   '"status"[[:space:]]*:[[:space:]]*"OPEN"' \
-  '"sourceUrl"[[:space:]]*:[[:space:]]*"https://www.bizinfo.go.kr/compose-verification"'
+  '"sourceUrl"[[:space:]]*:[[:space:]]*"https://www\.bizinfo\.go\.kr/web/lay1/bbs/S1T122C128/AS/74/view\.do\?pblancId=PBLN_COMPOSE_EXPORT"'
 
 # This target is older than 25 irrelevant fixture programs. A latest-20 candidate
 # selector cannot pass this check. OpenAI is an HTTP fixture; Qdrant is real.

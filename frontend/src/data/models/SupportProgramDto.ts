@@ -3,19 +3,31 @@ import { z } from 'zod'
 import type { SupportProgram } from '../../domain/entities/SupportProgram'
 
 const isoLocalDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-const officialBizInfoUrlSchema = z.string().url().refine((value) => {
+const sourceCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)
+const officialSourceHostsByCode: Record<string, readonly string[]> = {
+  BIZINFO: ['bizinfo.go.kr'],
+}
+
+export function isOfficialSupportProgramSourceUrl(sourceCode: string, value: string): boolean {
   try {
     const url = new URL(value)
     const hostname = url.hostname.toLowerCase()
+    const officialHosts = officialSourceHostsByCode[sourceCode]
+
     return (url.protocol === 'https:' || url.protocol === 'http:')
-      && (hostname === 'bizinfo.go.kr' || hostname.endsWith('.bizinfo.go.kr'))
+      && !url.username
+      && !url.password
+      && !url.port
+      && officialHosts?.some((officialHost) => (
+        hostname === officialHost || hostname.endsWith(`.${officialHost}`)
+      )) === true
   } catch {
     return false
   }
-}, '기업마당 공식 http(s) URL이어야 합니다.')
+}
 
 export const supportProgramDtoSchema = z.object({
-  sourceCode: z.string().min(1),
+  sourceCode: sourceCodeSchema,
   id: z.string().min(1),
   title: z.string().min(1),
   organization: z.string(),
@@ -28,9 +40,17 @@ export const supportProgramDtoSchema = z.object({
   applicationEndDate: isoLocalDateSchema.nullable(),
   status: z.enum(['OPEN', 'UPCOMING', 'CLOSED', 'UNKNOWN']),
   sourceName: z.string().min(1),
-  sourceUrl: officialBizInfoUrlSchema,
+  sourceUrl: z.string().url(),
   matchedReasons: z.array(z.string()),
   recommendationScore: z.number().int().min(0).max(100).nullable(),
+}).superRefine((program, context) => {
+  if (isOfficialSupportProgramSourceUrl(program.sourceCode, program.sourceUrl)) return
+
+  context.addIssue({
+    code: 'custom',
+    path: ['sourceUrl'],
+    message: `${program.sourceCode} 제공처의 공식 http(s) URL이어야 합니다.`,
+  })
 })
 
 export const supportProgramSearchResponseDtoSchema = z.object({

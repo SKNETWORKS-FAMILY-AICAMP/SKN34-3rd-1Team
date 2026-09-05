@@ -4,9 +4,12 @@ import ai.govbiz.core._common.test.MySqlTestContainerConfig
 import ai.govbiz.core.supportprogram.client.ai.mapper.SupportProgramIndexDocumentMapper
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
+import ai.govbiz.core.supportprogram.helper.SupportProgramContentHashHelper
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
 import java.time.LocalDate
+import java.time.LocalDateTime
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -43,6 +46,7 @@ class SupportProgramRepositoryIntegrationTest {
 
     @BeforeEach
     fun deleteSupportPrograms() {
+        jdbcTemplate.update("DELETE FROM support_program_source_document")
         jdbcTemplate.update("DELETE FROM support_program")
     }
 
@@ -145,6 +149,96 @@ class SupportProgramRepositoryIntegrationTest {
     @Test
     fun returnsNullWhenProgramDoesNotExist() {
         assertNull(repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_NOT_FOUND"))
+    }
+
+    @Test
+    fun storesSourceDocumentsByCompositeIdentityAndHidesThemWhenTheProgramIsInactive() {
+        val program = catalogProgram(id = "PBLN_EVIDENCE", title = "근거 공고")
+        repository.upsert(program)
+        val content = "공식 원문입니다. 온라인으로 신청하고 문의는 수행기관에 합니다."
+        val document = SupportProgramSourceDocument(
+            sourceCode = "BIZINFO",
+            sourceProgramId = "PBLN_EVIDENCE",
+            sourceUrl = program.program.sourceUrl,
+            content = content,
+            contentHash = SupportProgramContentHashHelper.sha256(content),
+            fetchedAt = LocalDateTime.of(2026, 9, 5, 12, 0),
+        )
+
+        repository.upsertSourceDocument(document)
+
+        assertEquals(
+            document,
+            repository.findPresentSourceDocument("BIZINFO", "PBLN_EVIDENCE"),
+        )
+
+        repository.synchronizeBizInfo(emptyList())
+
+        assertNull(repository.findPresentSourceDocument("BIZINFO", "PBLN_EVIDENCE"))
+    }
+
+    @Test
+    fun replacesEverySourceDocumentValueWhenUpsertingTheSameCompositeIdentity() {
+        val program = catalogProgram(id = "PBLN_EVIDENCE_UPSERT", title = "근거 갱신 공고")
+        repository.upsert(program)
+        val originalContent = "최초 공식 원문입니다. 온라인으로 신청합니다."
+        val updatedContent = "갱신된 공식 원문입니다. 신청 방법과 제출 서류를 확인합니다."
+        val original = SupportProgramSourceDocument(
+            sourceCode = "BIZINFO",
+            sourceProgramId = program.program.id,
+            sourceUrl = program.program.sourceUrl,
+            content = originalContent,
+            contentHash = SupportProgramContentHashHelper.sha256(originalContent),
+            fetchedAt = LocalDateTime.of(2026, 9, 5, 10, 0),
+        )
+        val updated = original.copy(
+            content = updatedContent,
+            contentHash = SupportProgramContentHashHelper.sha256(updatedContent),
+            fetchedAt = LocalDateTime.of(2026, 9, 5, 12, 0),
+        )
+
+        repository.upsertSourceDocument(original)
+        repository.upsertSourceDocument(updated)
+
+        assertEquals(
+            updated,
+            repository.findPresentSourceDocument("BIZINFO", "PBLN_EVIDENCE_UPSERT"),
+        )
+        assertEquals(1, countSourceDocumentRows("BIZINFO", "PBLN_EVIDENCE_UPSERT"))
+    }
+
+    @Test
+    fun separatesSourceDocumentsWhoseRawProgramIdsMatchAcrossSources() {
+        val rawProgramId = "SHARED_EVIDENCE_ID"
+        val bizInfoProgram = catalogProgram(id = rawProgramId, title = "기업마당 근거 공고")
+        repository.upsert(bizInfoProgram)
+        insertProgram(sourceCode = "OTHER", sourceProgramId = rawProgramId, title = "다른 제공처 근거 공고")
+        val bizInfoContent = "기업마당 공식 원문입니다. 온라인 신청을 안내합니다."
+        val otherContent = "다른 제공처 공식 원문입니다. 별도 신청 절차를 안내합니다."
+        val bizInfoDocument = SupportProgramSourceDocument(
+            sourceCode = "BIZINFO",
+            sourceProgramId = rawProgramId,
+            sourceUrl = bizInfoProgram.program.sourceUrl,
+            content = bizInfoContent,
+            contentHash = SupportProgramContentHashHelper.sha256(bizInfoContent),
+            fetchedAt = LocalDateTime.of(2026, 9, 5, 12, 0),
+        )
+        val otherDocument = SupportProgramSourceDocument(
+            sourceCode = "OTHER",
+            sourceProgramId = rawProgramId,
+            sourceUrl = "https://example.com/program/$rawProgramId",
+            content = otherContent,
+            contentHash = SupportProgramContentHashHelper.sha256(otherContent),
+            fetchedAt = LocalDateTime.of(2026, 9, 5, 12, 0),
+        )
+
+        repository.upsertSourceDocument(bizInfoDocument)
+        repository.upsertSourceDocument(otherDocument)
+
+        assertEquals(bizInfoDocument, repository.findPresentSourceDocument("BIZINFO", rawProgramId))
+        assertEquals(otherDocument, repository.findPresentSourceDocument("OTHER", rawProgramId))
+        assertEquals(1, countSourceDocumentRows("BIZINFO", rawProgramId))
+        assertEquals(1, countSourceDocumentRows("OTHER", rawProgramId))
     }
 
     @Test
@@ -380,6 +474,21 @@ class SupportProgramRepositoryIntegrationTest {
                 """
                 SELECT COUNT(*)
                 FROM support_program
+                WHERE source_code = ?
+                  AND source_program_id = ?
+                """.trimIndent(),
+                Int::class.java,
+                sourceCode,
+                sourceProgramId,
+            ),
+        )
+
+    private fun countSourceDocumentRows(sourceCode: String, sourceProgramId: String): Int =
+        requireNotNull(
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM support_program_source_document
                 WHERE source_code = ?
                   AND source_program_id = ?
                 """.trimIndent(),

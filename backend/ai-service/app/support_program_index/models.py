@@ -3,21 +3,24 @@ from unicodedata import category
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.support_program_identity import (
+    MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH,
+    require_canonical_source_program_id,
+)
+
 
 class IndexedDocumentIdentity(BaseModel):
     """현재 MySQL 공고의 제공처 포함 ID와 검색 문서 버전."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
-    id: str = Field(min_length=3, max_length=320, pattern=r"^[A-Z][A-Z0-9_]{0,63}:.+$")
+    id: str = Field(min_length=3, max_length=MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH)
     content_hash: str = Field(alias="contentHash", pattern=r"^[0-9a-f]{64}$")
 
-    @field_validator("id")
+    @field_validator("id", mode="before")
     @classmethod
-    def require_unambiguous_id(cls, value: str) -> str:
-        if not value.split(":", 1)[1].strip() or any(category(character).startswith("C") for character in value):
-            raise ValueError("document id must have a nonblank suffix without control characters")
-        return value
+    def require_unambiguous_id(cls, value: object) -> object:
+        return require_canonical_source_program_id(value)
 
 
 class SupportProgramIndexDocument(IndexedDocumentIdentity):

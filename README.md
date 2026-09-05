@@ -7,12 +7,16 @@
 
 - 자연어 공고 검색과 추천 이유·점수 표시
 - 공고 상세 조회, 원문 링크, 서울 날짜 기준 접수 상태 계산
+- 기업마당 공식 상세 원문에 근거한 공고별 질문·답변과 인용 표시
 - 기업마당 전체 공고 자동 동기화와 누락 벡터 복구
 - 입력·응답 검증, 한글 입력 처리, 검색 취소 및 장애 안내
 
 현재 수집 연동한 공고 제공처는 기업마당입니다. 검색·색인 내부에서는 제공처 코드와 원본 ID를 함께
-사용하므로 서로 다른 제공처의 같은 원본 ID도 구분합니다. 상세 원문·첨부문서에 근거한 RAG 질의응답과
-대화 맥락을 이어가는 검색은 아직 구현하지 않았습니다.
+사용하므로 서로 다른 제공처의 같은 원본 ID도 구분합니다. 기업마당 공고는 사용자가 상세 화면에서
+명시적으로 질문할 때만 공식 HTTPS 상세 HTML을 읽어 MySQL에 저장하고, 결정적으로 나눈 최대 50개 청크를
+별도 Qdrant 근거 컬렉션에서 검색해 답변과 원문 인용을 반환합니다. 이 원문 근거 답변은 목록 검색과
+동기화 흐름을 바꾸지 않습니다. 첨부파일·PDF·OCR·다른 제공처 원문은 아직 지원하지 않으며, 대화 맥락을
+이어가는 검색도 구현하지 않았습니다.
 
 ## 기술 구성
 
@@ -90,14 +94,16 @@ Facade는 하위 시스템의 호출·응답 검증·모델 변환을 하나의 
 | Facade | 실제 책임 |
 |---|---|
 | `BizInfoSupportProgramCatalogFacade` | 전체 공고 조회 결과 정규화·검증, 기업마당 예외를 카탈로그 예외로 변환 |
+| `BizInfoSupportProgramSourceDocumentFacade` | 명시적 상세 질문에 필요한 기업마당 공식 HTML 원문만 읽고 정규화 |
 | `AiSupportProgramRetrievalFacade` | 현재 공고 ID·해시로 검색 범위 구성, 의미 검색 응답 검증 |
 | `AiSupportProgramRankingFacade` | 점수화 요청 구성, 후보 ID·점수 합계·자격·정렬 검증, 공고 모델 반환 |
+| `AiSupportProgramEvidenceFacade` | 원문 청크 색인·검색과 답변·인용 응답을 검증 |
 
 Spring은 Service·Facade·Repository·Client에 필요한 객체를 생성자로 주입합니다. DB 조회는 Repository를
 직접 사용하며, 단순한 AI Health 호출처럼 별도 Facade가 필요 없는 경로도 있습니다.
 [Core API 설계 상세](docs/technology.md#core-api-업무-흐름과-외부-경계)에서 각 계층과 DI의 적용 범위를 설명합니다.
 
-### AI Service: 기능별 모듈과 단일 Agent
+### AI Service: 기능별 모듈과 typed Agent
 
 AI Service는 FastAPI의 HTTP 경계, 점수화 업무 흐름, 모델 실행을 분리한 기능별 Python 모듈 구조입니다.
 
@@ -108,19 +114,15 @@ app/
 ├── bootstrap.py             # Client·Agent·Service 생성과 연결
 ├── health/                  # 내부 상태 확인
 ├── support_program_index/   # 공고 임베딩·Qdrant 색인·후보 검색
-└── support_program_ranking/ # 후보 점수화
-    ├── router.py            # HTTP 요청·응답과 오류 변환
-    ├── models.py            # 요청·점수화 결과 스키마와 검증
-    ├── prompt.py            # LLM 평가 지시
-    ├── agent.py             # OpenAI Agents SDK 실행·제한시간 처리
-    ├── service.py           # 후보 집합 검증·정렬·추천 기준 적용
-    └── errors.py            # 점수화 실행 오류
+├── support_program_ranking/ # 후보 점수화: Router·Models·Prompt·Agent·Service·Errors
+└── support_program_evidence/ # 상세 원문 청크 색인·근거 검색·답변
 ```
 
-점수화는 `HTTP API → Service → Agent → OpenAI → Response`로 실행됩니다. `bootstrap.py`가 객체를
-생성해 연결하고, Router는 FastAPI `Depends`를 통해 조립된 Service를 받습니다. 임베딩·Qdrant 검색은
-`support_program_index`의 Service가 직접 처리하며 별도 Agent를 거치지 않습니다.
-현재 업무 Agent는 점수화용 하나이며 tool·handoff·graph 없이 한 turn으로 실행합니다.
+점수화와 원문 근거 답변은 각각 `HTTP API → Service → Agent → OpenAI → Response`로 실행됩니다.
+`bootstrap.py`가 객체를 생성해 연결하고, Router는 FastAPI `Depends`를 통해 조립된 Service를 받습니다.
+일반 공고 검색의 임베딩·Qdrant 검색은 `support_program_index`의 Service가, 상세 원문의 청크 색인·검색은
+`support_program_evidence`의 Service가 직접 처리하며 둘 다 별도 컬렉션을 사용합니다. 두 업무 Agent는
+tool·handoff·graph 없이 각각 한 turn으로 실행합니다.
 [AI Service 설계 상세](docs/technology.md#ai-service-기능별-모듈과-객체-조립)에 파일별 역할과 요청 흐름을 정리했습니다.
 
 ## 빠른 시작

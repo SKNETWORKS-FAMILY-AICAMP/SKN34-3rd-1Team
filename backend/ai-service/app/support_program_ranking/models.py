@@ -1,17 +1,17 @@
-import re
 from enum import StrEnum
 from typing import Literal
-from unicodedata import category
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.support_program_identity import (
+    MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH,
+    require_canonical_source_program_id,
+)
 
 
 SCORING_VERSION = "govbiz-support-program-ranking-v3"
 MAX_CANDIDATES = 20
-MAX_CANONICAL_PROGRAM_ID_LENGTH = 320
-MAX_SOURCE_CODE_LENGTH = 64
-MAX_SOURCE_PROGRAM_ID_LENGTH = 255
-_SOURCE_CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+MAX_CANONICAL_PROGRAM_ID_LENGTH = MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH
 
 
 class SupportProgramStatus(StrEnum):
@@ -67,7 +67,7 @@ class SupportProgramCandidate(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def require_canonical_id(cls, value: object) -> object:
-        return _require_canonical_program_id(value)
+        return require_canonical_source_program_id(value)
 
     @field_validator("categories", "regions")
     @classmethod
@@ -142,7 +142,7 @@ class ScoredSupportProgram(BaseModel):
     @field_validator("program_id", mode="before")
     @classmethod
     def require_canonical_program_id(cls, value: object) -> object:
-        return _require_canonical_program_id(value)
+        return require_canonical_source_program_id(value)
 
     @field_validator("recommendation_reasons")
     @classmethod
@@ -210,21 +210,3 @@ class SupportProgramRankingResponse(BaseModel):
     original_query: str = Field(alias="originalQuery")
     scoring_version: Literal[SCORING_VERSION] = Field(alias="scoringVersion")
     rankings: list[ScoredSupportProgram] = Field(min_length=0, max_length=5)
-
-
-def _require_canonical_program_id(value: object) -> object:
-    if not isinstance(value, str):
-        return value
-    source_code, separator, source_program_id = value.partition(":")
-    if (
-        not separator
-        or value != value.strip()
-        or len(source_code) > MAX_SOURCE_CODE_LENGTH
-        or len(source_program_id) > MAX_SOURCE_PROGRAM_ID_LENGTH
-        or not _SOURCE_CODE_PATTERN.fullmatch(source_code)
-        or not source_program_id
-        or source_program_id != source_program_id.strip()
-        or any(category(character).startswith("C") for character in value)
-    ):
-        raise ValueError("program id must be canonical sourceCode:sourceProgramId")
-    return value

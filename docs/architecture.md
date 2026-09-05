@@ -8,22 +8,23 @@
 
 ```text
 브라우저 → React Web → Core API
-                       ├→ MySQL: 현재 공개된 공고 카탈로그
+                       ├→ MySQL: 현재 공개 공고 카탈로그·공고별 공식 원문
                        ├→ 공공데이터포털: 기업마당 전체 공고 수집
+                       ├→ 기업마당 공식 HTTPS 상세 페이지: 명시적 원문 질문 시 HTML 수집
                        └→ AI Service
-                           ├→ OpenAI: 문서·질의 임베딩과 후보 점수화
-                           └→ Qdrant: 공고 버전별 벡터 저장·의미 검색
+                           ├→ OpenAI: 문서·질의 임베딩, 후보 점수화·근거 답변
+                           └→ Qdrant: 공고 검색·원문 근거 청크의 분리된 벡터 컬렉션
 ```
 
 Core API는 공개 HTTP 계약, 기업마당 수집, MySQL 접근과 접수 상태 계산을 소유합니다. AI Service는
-Core가 전달한 문서의 색인·검색·점수화를 담당하며 MySQL에 직접 접근하지 않습니다.
+Core가 전달한 공고 문서·원문 청크의 색인·검색·점수화·근거 답변을 담당하며 MySQL에 직접 접근하지 않습니다.
 
 브라우저는 Core API의 `/api`만 호출합니다. Compose에서 Vite는 `/api`를 `core-api:8080`으로 프록시하며,
 AI Service는 호스트에 포트를 게시하지 않습니다. MySQL·Qdrant·Core API·Web의 개발용 포트는
 `127.0.0.1`에 바인딩합니다. 기업마당 키는 Core API에, OpenAI 키는 AI Service에만 주입합니다.
 이는 개발 환경의 서비스 배치이며 운영 인증·접근 제어가 구현됐다는 의미는 아닙니다.
 
-## 검색과 상세 조회
+## 검색·상세 조회·원문 근거 질문
 
 ```text
 GET /api/v1/support-programs/search
@@ -66,9 +67,51 @@ GET /api/v1/support-programs/detail
   → SupportProgramRepository → MyBatis Mapper → Mapper XML → MySQL
 ```
 
-상세는 외부 API·AI를 호출하지 않습니다. 현재 노출된 복합 식별자 행만 반환하며 없는·미노출 행은
+상세 GET은 외부 API·AI를 호출하지 않습니다. 현재 노출된 복합 식별자 행만 반환하며 없는·미노출 행은
 `SUPPORT_PROGRAM_NOT_FOUND`(404)입니다. 검색 문맥이 없으므로 추천 이유는 빈 배열, 점수는 `null`입니다.
 공개 입력 제한과 JSON·오류 코드의 전체 계약은 [지원사업 API 계약](support-program-search-contract.md)에 있습니다.
+
+### 공고별 공식 원문 근거 질문
+
+```text
+POST /api/v1/support-programs/detail/answers
+  → SupportProgramController → SupportProgramEvidenceService
+  → SupportProgramDetailService → 현재 공개 공고 확인
+  → SupportProgramRepository → MySQL의 공고별 원문 캐시 조회
+  → 캐시가 없거나 URL이 바뀌었거나 6시간이 지남:
+      BizInfoSupportProgramSourceDocumentFacade → BizInfoSourceDocumentClient
+        → 기업마당 공식 HTTPS 상세 페이지의 HTML만 수집·읽기 가능한 텍스트로 정규화
+      → SupportProgramRepository → MySQL 원문 UPSERT
+  → SupportProgramEvidenceChunker → 결정적 청크 최대 50개
+  → AiSupportProgramEvidenceFacade → AI Service
+      → 별도 Qdrant evidence 컬렉션에 청크 색인
+      → 질문과 가까운 청크 최대 5개 검색
+      → 단일 typed Agent → OpenAI 근거 답변·인용 청크 ID
+  → Core가 청크·인용을 검증 → 답변과 원문 발췌·URL 반환
+```
+
+이 경로는 `BIZINFO` 현재 공고에만 제공됩니다. 기업마당 공식 `https://bizinfo.go.kr` 및 그 하위 도메인의
+상세 HTML만 허용하며, URL에는 요청한 원본 공고 ID와 같은 `pblancId`가 정확히 하나 있어야 합니다.
+자동 리디렉션은 끄고 각 이동 URL을 같은 조건으로 검증해 최대 3회 따릅니다. 따라서 기존 상세 URL에서
+`/sii/siia/selectSIIA200Detail.do?pblancId=...`로 이동할 수 있으며, 외부 호스트·비 HTTPS·다른 공고 ID·순환 이동은
+거부합니다. 원문 HTML은 최대 500KB로 읽고 jsoup `1.23.2`로 파싱합니다. `.support_project_detail` 안의
+`.title_area .title`이 요청 공고 제목과 일치해야 하며, `.view_cont` 본문만 추출해 메뉴·다른 공고·푸터를
+제외합니다. 정규화 본문은 최대 30,000자로 제한합니다. 공식 원문을 성공적으로 읽고 검증한 뒤에만
+짧은 DB transaction으로 저장하므로 원문 수집·AI 오류가 공고 동기화·목록 검색·상세 GET을 바꾸지 않습니다.
+현재 공고의 제공처가 `BIZINFO`가 아니면 422 `SUPPORT_PROGRAM_EVIDENCE_NOT_SUPPORTED`, 공식 원문 수집·검증에
+실패하면 503 `SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE`을 반환합니다. AI 근거 색인·검색·답변의 연결·시간 초과·계약
+오류는 일반 AI 경계와 같은 502/503/504 분류를 사용합니다.
+
+원문은 제목·공식 URL을 포함한 텍스트로 저장하며, 같은 원문은 요청마다 다시 수집하지 않고 최대 6시간
+재사용합니다. 청크는 내용·원문 해시·순서에서 결정적으로 만들며 각 청크는 최대 1,500 UTF-16 코드 단위입니다. AI Service는
+일반 공고 검색 컬렉션과 다른 Qdrant 컬렉션만 사용하고, 요청 공고의 청크 집합으로 검색 범위를 제한합니다.
+답변이 충분한 근거를 찾지 못하면 `INSUFFICIENT_EVIDENCE`와 인용 없는 안내를 반환합니다. `ANSWERED`에는
+검색된 청크의 인용이 하나 이상 있어야 하며 Core는 인용이 전달한 청크 밖을 가리키면 응답을 거부합니다.
+인용 발췌문은 선택한 청크 전체를 반환해 청크 뒤쪽의 답변 근거도 화면에서 확인할 수 있습니다.
+
+첨부파일·PDF·OCR·다른 제공처 원문 수집은 이 흐름에 포함하지 않습니다. 공고 목록 검색의 Qdrant 후보 선정·AI
+점수화와도 별도 사용 사례이므로, 원문 질문을 하지 않으면 기업마당 상세 HTML을 수집하거나 evidence 컬렉션을
+사용하지 않습니다.
 
 ## 검색 품질 평가 fixture 내보내기와 캡처
 
@@ -169,6 +212,11 @@ MySQL의 `support_program`은 `(source_code, source_program_id)` 고유키로 �
 삭제하지 않고 `is_source_present=false`로 바꿉니다. UPSERT는 대소문자만 바뀐 원본 ID도 최신 표기로
 갱신하여 MySQL과 벡터 식별자를 맞춥니다. 고유키 비교는 MySQL의 `utf8mb4_0900_ai_ci` collation을 따릅니다.
 
+`support_program_source_document`는 원문 근거 답변에만 쓰는 공고별 공식 HTML 정규화 텍스트·원문 URL·해시·수집
+시각을 같은 복합 식별자로 저장하고 공고를 FK로 참조합니다. 조회 시 공고의 공개 상태를 확인하므로 미노출 공고에는
+원문 질문을 제공하지 않습니다. 이 테이블은 정기 목록 동기화에서 채우지 않고 명시적 원문 질문의 수집·검증이
+성공했을 때 UPSERT합니다.
+
 접수 상태는 `SupportProgramStatusResolver`가 읽을 때 계산합니다. 파싱된 시작일 전은 `UPCOMING`,
 종료일 이후는 `CLOSED`, 시작일·종료일 범위 안은 `OPEN`입니다. 날짜 경계는 포함합니다.
 날짜만으로 결정되지 않은 경우 예정 표현, 남아 있는 종료일, 명시적 종료 표현, 상시 접수 표현 등의
@@ -196,10 +244,11 @@ Core의 공개 계약은 기능별 `controller/dto`, 외부 계약은 시스템�
 `DbRow`를 Repository 밖으로 노출하지 않습니다. 같은 필드가 있어도 외부 입력과 공개 응답을 하나의
 타입으로 합치지 않습니다. 상세 배치 규칙은 [Core API README](../backend/core-api/README.md)에 있습니다.
 
-AI Service는 `HTTP API → Service → Agent → OpenAI → Response` 흐름으로 점수화를 실행합니다.
-`bootstrap.py`가 클라이언트와 서비스 수명주기를 구성하고, 단일 typed Agent를 `max_turns=1`로 실행합니다.
-현재 tool·handoff·multi-agent orchestration은 없습니다. 색인·검색은 별도 `support_program_index` 기능이
-OpenAI 임베딩과 Qdrant를 직접 호출합니다.
+AI Service는 점수화와 원문 근거 답변에서 각각 `HTTP API → Service → Agent → OpenAI → Response` 흐름으로
+실행합니다. `bootstrap.py`가 클라이언트와 서비스 수명주기를 구성하고, 두 typed Agent를 각각
+`max_turns=1`로 실행합니다. 현재 tool·handoff·multi-agent orchestration은 없습니다. 일반 공고 색인·검색은
+`support_program_index`, 원문 청크 색인·검색은 `support_program_evidence`가 OpenAI 임베딩과 분리된 Qdrant
+컬렉션을 직접 사용합니다.
 
 ## 오류 경계
 
@@ -212,6 +261,6 @@ Core의 Health는 프로세스 상태, AI Health는 AI Service의 정해진 Heal
 이들이 성공했다고 MySQL·Qdrant·OpenAI를 포함한 실제 검색 전체가 준비됐음을 보장하지 않습니다.
 전체 연결 동작은 [Compose 검증 절차](../infrastructure/README.md)로 확인합니다.
 
-현재 제품은 공고 요약의 의미 검색과 구조화된 추천 단계입니다. 실제 검색 후보·최종 추천을 캡처해 평가하는
-도구는 있으나, 실제 공고 정답 데이터와 사람이 검토한 품질 보고서는 아직 없습니다. 첨부문서 수집·청킹·근거
-인용 답변 RAG와 여러 제공처 수집도 구현 현황의 후속 범위로 구분합니다.
+현재 제품은 공고 요약의 의미 검색·구조화된 추천과, 기업마당 공식 HTML 한 종류의 공고별 근거 답변을 제공합니다.
+실제 검색 후보·최종 추천을 캡처해 평가하는 도구는 있으나, 실제 공고 정답 데이터와 사람이 검토한 품질 보고서는
+아직 없습니다. 근거 답변도 실제 공고 질문에 대한 인용 정확도 평가와 PDF·첨부·다른 제공처 확장은 후속 범위입니다.

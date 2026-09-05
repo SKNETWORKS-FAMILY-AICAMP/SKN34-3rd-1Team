@@ -4,8 +4,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.health.router import router as health_router
-from app.support_program_ranking.router import router as support_program_rankings_router
+from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
+from app.support_program_evidence.router import router as support_program_evidence_router
 from app.support_program_ranking.agent import SupportProgramRecommendationAgent
+from app.support_program_ranking.router import router as support_program_rankings_router
 from app.bootstrap import build_application_container
 from app.config import Settings
 from app.support_program_index.router import router as support_program_index_router
@@ -15,11 +17,13 @@ def create_app(
     *,
     settings: Settings | None = None,
     support_program_recommendation_agent: SupportProgramRecommendationAgent | None = None,
+    support_program_evidence_answer_agent: SupportProgramEvidenceAnswerAgent | None = None,
 ) -> FastAPI:
     """FastAPI 객체를 조립하는 애플리케이션 팩토리다."""
     container = build_application_container(
         settings or Settings.from_environment(),
         support_program_recommendation_agent=support_program_recommendation_agent,
+        support_program_evidence_answer_agent=support_program_evidence_answer_agent,
     )
 
     @asynccontextmanager
@@ -39,4 +43,5 @@ def create_app(
     application.include_router(health_router)
     application.include_router(support_program_rankings_router)
     application.include_router(support_program_index_router)
+    application.include_router(support_program_evidence_router)
     return application

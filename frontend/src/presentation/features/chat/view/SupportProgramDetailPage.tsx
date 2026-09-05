@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router'
 import type { SupportProgram, SupportProgramStatus } from '../../../../domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import { useSupportProgramDetailViewModel } from '../viewmodel/useSupportProgramDetailViewModel'
+import { SupportProgramEvidenceQuestionSection } from './SupportProgramEvidenceQuestionSection'
 import { supportProgramDetailStyles } from './SupportProgramDetailPage.styles'
 
 /** URL의 제공처·원본 공고 ID로 최신 상세 정보를 조회하는 화면입니다. */
@@ -142,6 +143,13 @@ function SupportProgramDetail({ program }: { program: SupportProgram }) {
           </ul>
         </section>
       ) : null}
+
+      <SupportProgramEvidenceQuestionSection
+        identity={{
+          sourceCode: program.sourceCode,
+          sourceProgramId: program.id,
+        }}
+      />
 
       <section className={supportProgramDetailStyles.sourceSection} aria-labelledby="source-information">
         <div>

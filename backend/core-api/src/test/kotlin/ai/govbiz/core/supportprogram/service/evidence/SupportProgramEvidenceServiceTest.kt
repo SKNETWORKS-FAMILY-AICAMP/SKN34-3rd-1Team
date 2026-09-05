@@ -1,0 +1,175 @@
+package ai.govbiz.core.supportprogram.service.evidence
+
+import ai.govbiz.core.supportprogram.domain.SupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
+import ai.govbiz.core.supportprogram.facade.AiSupportProgramEvidenceFacade
+import ai.govbiz.core.supportprogram.facade.BizInfoSupportProgramSourceDocumentFacade
+import ai.govbiz.core.supportprogram.facade.exception.SupportProgramSourceDocumentFacadeException
+import ai.govbiz.core.supportprogram.helper.SupportProgramContentHashHelper
+import ai.govbiz.core.supportprogram.helper.SupportProgramTestHelper
+import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
+import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
+import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerResult
+import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerStatus
+import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
+import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceUnavailableException
+import java.time.Clock
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
+import org.mockito.Mock
+import org.mockito.Mockito.doReturn
+import org.mockito.Mockito.doThrow
+import org.mockito.Mockito.never
+import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
+import org.mockito.junit.jupiter.MockitoExtension
+
+@ExtendWith(MockitoExtension::class)
+class SupportProgramEvidenceServiceTest {
+
+    @Mock
+    private lateinit var detailService: SupportProgramDetailService
+
+    @Mock
+    private lateinit var repository: SupportProgramRepository
+
+    @Mock
+    private lateinit var sourceDocumentFacade: BizInfoSupportProgramSourceDocumentFacade
+
+    @Mock
+    private lateinit var aiEvidenceFacade: AiSupportProgramEvidenceFacade
+
+    private lateinit var service: SupportProgramEvidenceService
+
+    @BeforeEach
+    fun setUp() {
+        service = SupportProgramEvidenceService(
+            detailService,
+            repository,
+            sourceDocumentFacade,
+            aiEvidenceFacade,
+            Clock.fixed(Instant.parse("2026-09-05T03:00:00Z"), ZoneId.of("Asia/Seoul")),
+        )
+    }
+
+    @Test
+    fun reusesAFreshCurrentDocumentWithoutFetchingTheSourceAgain() {
+        val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program
+        val cached = document(program, LocalDateTime.of(2026, 9, 5, 11, 0))
+        doReturn(program).`when`(detailService).get("BIZINFO", "PBLN_TEST")
+        doReturn(cached).`when`(repository).findPresentSourceDocument("BIZINFO", "PBLN_TEST")
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(
+            QUESTION,
+            SupportProgramEvidenceChunker.chunk(cached),
+            program.sourceUrl,
+        )
+
+        val result = service.answer("BIZINFO", "PBLN_TEST", "  $QUESTION  ")
+
+        assertEquals(answer(), result)
+        verify(sourceDocumentFacade, never()).load(program)
+        verify(repository, never()).upsertSourceDocument(cached)
+    }
+
+    @Test
+    fun refreshesStaleDocumentOutsideTheRepositoryTransactionThenStoresIt() {
+        val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program
+        val stale = document(program, LocalDateTime.of(2026, 9, 5, 4, 59))
+        val refreshed = document(program, LocalDateTime.of(2026, 9, 5, 11, 0), content = "갱신한 공식 원문입니다. 신청은 온라인으로 합니다.")
+        doReturn(program).`when`(detailService).get("BIZINFO", "PBLN_TEST")
+        doReturn(stale).`when`(repository).findPresentSourceDocument("BIZINFO", "PBLN_TEST")
+        doReturn(refreshed).`when`(sourceDocumentFacade).load(program)
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(
+            QUESTION,
+            SupportProgramEvidenceChunker.chunk(refreshed),
+            program.sourceUrl,
+        )
+
+        service.answer("BIZINFO", "PBLN_TEST", QUESTION)
+
+        verify(sourceDocumentFacade).load(program)
+        verify(repository).upsertSourceDocument(refreshed)
+    }
+
+    @Test
+    fun refusesUnsupportedSourceBeforeFetchingOrCallingAi() {
+        val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program.copy(
+            sourceCode = "OTHER",
+            sourceName = "다른 제공처",
+            sourceUrl = "https://support-programs.other.test/PBLN_TEST",
+        )
+        doReturn(program).`when`(detailService).get("OTHER", "PBLN_TEST")
+
+        assertThrows(SupportProgramEvidenceNotSupportedException::class.java) {
+            service.answer("OTHER", "PBLN_TEST", QUESTION)
+        }
+        verifyNoInteractions(repository, sourceDocumentFacade, aiEvidenceFacade)
+    }
+
+    @Test
+    fun hidesBizInfoDetailClientFailureAsEvidenceUnavailable() {
+        val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program
+        doReturn(program).`when`(detailService).get("BIZINFO", "PBLN_TEST")
+        doReturn(null).`when`(repository).findPresentSourceDocument("BIZINFO", "PBLN_TEST")
+        doThrow(sourceFailure()).`when`(sourceDocumentFacade).load(program)
+
+        assertThrows(SupportProgramEvidenceUnavailableException::class.java) {
+            service.answer("BIZINFO", "PBLN_TEST", QUESTION)
+        }
+    }
+
+    @Test
+    fun turnsAnOversizedLegacyDocumentIntoAnEvidenceUnavailableResult() {
+        val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program
+        val oversizedDocument = document(
+            program = program,
+            fetchedAt = LocalDateTime.of(2026, 9, 5, 11, 0),
+            content = (1..51).joinToString("\n") { "가".repeat(1_500) },
+        )
+        doReturn(program).`when`(detailService).get("BIZINFO", "PBLN_TEST")
+        doReturn(oversizedDocument).`when`(repository)
+            .findPresentSourceDocument("BIZINFO", "PBLN_TEST")
+
+        assertThrows(SupportProgramEvidenceUnavailableException::class.java) {
+            service.answer("BIZINFO", "PBLN_TEST", QUESTION)
+        }
+
+        verifyNoInteractions(sourceDocumentFacade, aiEvidenceFacade)
+    }
+
+    private fun answer() = SupportProgramEvidenceAnswerResult(
+        answer = "공식 원문에서 온라인 신청을 확인했습니다.",
+        answerStatus = SupportProgramEvidenceAnswerStatus.ANSWERED,
+        citations = emptyList(),
+    )
+
+    private fun document(
+        program: SupportProgram,
+        fetchedAt: LocalDateTime,
+        content: String = "공식 공고 원문입니다. 온라인 신청 방법과 문의처를 안내합니다.",
+    ) = SupportProgramSourceDocument(
+        sourceCode = program.sourceCode,
+        sourceProgramId = program.id,
+        sourceUrl = program.sourceUrl,
+        content = content,
+        contentHash = SupportProgramContentHashHelper.sha256(content),
+        fetchedAt = fetchedAt,
+    )
+
+    private fun sourceFailure(): SupportProgramSourceDocumentFacadeException =
+        SupportProgramSourceDocumentFacadeException.fromClient(
+            SupportProgramSourceDocumentFacadeException.Failure.UNAVAILABLE,
+            "private upstream detail",
+            IllegalStateException("private upstream detail"),
+        )
+
+    private companion object {
+        const val QUESTION = "신청 방법이 무엇인가요?"
+    }
+}

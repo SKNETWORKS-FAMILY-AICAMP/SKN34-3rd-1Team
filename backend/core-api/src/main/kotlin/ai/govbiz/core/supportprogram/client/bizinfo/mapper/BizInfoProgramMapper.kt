@@ -7,6 +7,8 @@ import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
 import java.net.URI
 import java.net.URISyntaxException
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.text.Normalizer
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
@@ -76,12 +78,20 @@ internal object BizInfoProgramMapper {
                 "BizInfo API returned a program without an ID",
                 null,
             )
+        try {
+            SupportProgram.requireCanonicalSourceProgramId(id)
+        } catch (exception: IllegalArgumentException) {
+            throw BizInfoClientException.invalidResponse(
+                "BizInfo API returned a program with a non-canonical ID",
+                exception,
+            )
+        }
         val title = requiredPayload.title?.takeUnless { it.isBlank() }
             ?: throw BizInfoClientException.invalidResponse(
                 "BizInfo API returned a program without a title",
                 null,
             )
-        val sourceUrl = officialSourceUrl(requiredPayload.sourceUrl)
+        val sourceUrl = officialSourceUrl(requiredPayload.sourceUrl, id)
             ?: throw BizInfoClientException.invalidResponse(
                 "BizInfo API returned a program without an official source URL",
                 null,
@@ -97,7 +107,7 @@ internal object BizInfoProgramMapper {
 
         return CatalogSupportProgram(
             program = SupportProgram(
-                id = id.trim(),
+                id = id,
                 sourceCode = BIZINFO_SOURCE_CODE,
                 title = title.trim(),
                 organization = organization,
@@ -188,22 +198,60 @@ internal object BizInfoProgramMapper {
         ).replaceAll(" ").trim()
     }
 
-    private fun officialSourceUrl(value: String?): String? {
+    private fun officialSourceUrl(
+        value: String?,
+        rawProgramId: String,
+    ): String? {
         val source = value ?: return null
         if (source.isBlank()) return null
         return try {
-            val uri = URI(source.trim())
+            val uri = URI(source)
             val host = uri.host
-            val supportedScheme = uri.scheme.equals("https", ignoreCase = true) ||
-                uri.scheme.equals("http", ignoreCase = true)
             val officialHost = host != null &&
                 (host.equals("bizinfo.go.kr", ignoreCase = true) ||
                     host.lowercase(Locale.ROOT).endsWith(".bizinfo.go.kr"))
-            if (supportedScheme && officialHost) uri.toString() else null
+            val hasOfficialHttpsAuthority =
+                uri.scheme.equals("https", ignoreCase = true) &&
+                    uri.rawUserInfo == null &&
+                    (uri.port == -1 || uri.port == HTTPS_DEFAULT_PORT) &&
+                    officialHost
+            val hasDetailPath = !uri.rawPath.isNullOrBlank() && uri.rawPath != "/"
+
+            if (
+                hasOfficialHttpsAuthority &&
+                hasDetailPath &&
+                hasExactlyOneMatchingPblancId(uri, rawProgramId)
+            ) {
+                uri.toString()
+            } else {
+                null
+            }
+        } catch (_: IllegalArgumentException) {
+            null
         } catch (_: URISyntaxException) {
             null
         }
     }
+
+    private fun hasExactlyOneMatchingPblancId(
+        uri: URI,
+        rawProgramId: String,
+    ): Boolean {
+        val rawQuery = uri.rawQuery ?: return false
+        val pblancIds = rawQuery
+            .split('&')
+            .mapNotNull { parameter ->
+                val rawName = parameter.substringBefore('=')
+                if (decodeQueryComponent(rawName) != PBLANC_ID_QUERY_PARAMETER) return@mapNotNull null
+
+                decodeQueryComponent(parameter.substringAfter('=', ""))
+            }
+
+        return pblancIds.size == 1 && pblancIds.single() == rawProgramId
+    }
+
+    private fun decodeQueryComponent(value: String): String =
+        URLDecoder.decode(value, StandardCharsets.UTF_8)
 
     private fun firstPresent(vararg values: String?): String =
         values.firstOrNull { !it.isNullOrBlank() }?.trim().orEmpty()
@@ -217,4 +265,6 @@ internal object BizInfoProgramMapper {
     private data class DateRange(val start: LocalDate?, val end: LocalDate?)
 
     private const val BIZINFO_SOURCE_CODE = "BIZINFO"
+    private const val PBLANC_ID_QUERY_PARAMETER = "pblancId"
+    private const val HTTPS_DEFAULT_PORT = 443
 }

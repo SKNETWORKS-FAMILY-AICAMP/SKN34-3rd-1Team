@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.Mock
 import org.mockito.Mockito.doReturn
+import org.mockito.Mockito.verify
 import org.mockito.junit.jupiter.MockitoExtension
 
 @ExtendWith(MockitoExtension::class)
@@ -26,14 +27,24 @@ class SupportProgramDetailServiceTest {
     }
 
     @Test
-    fun findsTheCurrentProgramUsingBothTrimmedSourceIdentityValues() {
+    fun findsTheCurrentProgramUsingTheExactSourceIdentityValues() {
         val catalogProgram = SupportProgramTestHelper.catalogProgram("PBLN_TEST")
         doReturn(catalogProgram).`when`(supportProgramRepository)
             .findPresentBySourceAndProgramId("BIZINFO", "PBLN_TEST")
 
-        val result = service.get(" BIZINFO ", " PBLN_TEST ")
+        val result = service.get("BIZINFO", "PBLN_TEST")
 
         assertEquals(catalogProgram.program, result)
+    }
+
+    @Test
+    fun doesNotSilentlyChangeSourceIdentityValuesBeforeLookingThemUp() {
+        assertThrows(SupportProgramNotFoundException::class.java) {
+            service.get(" BIZINFO ", " PBLN_TEST ")
+        }
+
+        verify(supportProgramRepository)
+            .findPresentBySourceAndProgramId(" BIZINFO ", " PBLN_TEST ")
     }
 
     @Test
