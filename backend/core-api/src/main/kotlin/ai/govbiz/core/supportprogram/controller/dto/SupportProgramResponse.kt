@@ -5,6 +5,7 @@ import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 
 data class SupportProgramResponse(
     val id: String,
+    val sourceCode: String,
     val title: String,
     val organization: String,
     val summary: String,
@@ -24,6 +25,7 @@ data class SupportProgramResponse(
         fun from(program: SupportProgram): SupportProgramResponse =
             SupportProgramResponse(
                 id = program.id,
+                sourceCode = program.sourceCode,
                 title = program.title,
                 organization = program.organization,
                 summary = program.summary,

@@ -113,11 +113,15 @@ describe('App navigation', () => {
     expect(screen.getByRole('heading', { name: heading })).toBeTruthy()
   })
 
-  it('검색 결과의 상세 조건 보기를 내부 상세 화면과 원문 링크로 연결한다', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
-      query: '서울 AI',
-      programs: [supportPrograms[0]],
-    })))
+  it('검색 결과의 상세 조건 보기는 URL 기반 API 조회 화면으로 연결한다', async () => {
+    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        query: '서울 AI',
+        programs: [supportPrograms[0]],
+      }))
+      .mockResolvedValueOnce(jsonResponse(detail))
+    vi.stubGlobal('fetch', fetchMock)
 
     renderApp(createAppStore())
 
@@ -128,10 +132,15 @@ describe('App navigation', () => {
     const detailLink = await screen.findByRole('link', { name: '상세 조건 보기' })
     fireEvent.click(detailLink)
 
-    expect(screen.getByRole('heading', { name: supportPrograms[0].title })).toBeTruthy()
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
     expect(screen.getByText('서울 소재 창업 7년 이내 중소기업')).toBeTruthy()
-    expect(screen.getByText(/AI·기술 분야/)).toBeTruthy()
     expect(screen.getByText('접수 중')).toBeTruthy()
+    expect(screen.queryByText('이 공고를 추천한 이유')).toBeNull()
+
+    const detailRequestUrl = new URL(String(fetchMock.mock.calls[1]?.[0]))
+    expect(detailRequestUrl.pathname).toBe('/api/v1/support-programs/detail')
+    expect(detailRequestUrl.searchParams.get('sourceCode')).toBe(supportPrograms[0].sourceCode)
+    expect(detailRequestUrl.searchParams.get('sourceProgramId')).toBe(supportPrograms[0].id)
 
     const sourceLink = screen.getByRole('link', { name: /GovBiz 샘플 데이터 원문 보기/ })
     expect(sourceLink.getAttribute('href')).toBe(supportPrograms[0].sourceUrl)
@@ -142,44 +151,85 @@ describe('App navigation', () => {
     expect(screen.getByRole('heading', { name: 'GovBiz에게 물어보세요' })).toBeTruthy()
   })
 
-  it('공고 상태 없이 상세 URL에 직접 진입하면 검색 결과 복귀 안내를 보여 준다', () => {
-    renderApp(createAppStore(), '/support-programs/unknown-program')
+  it('새로고침 또는 공유 URL의 직접 진입도 Core API에서 상세 정보를 다시 조회한다', async () => {
+    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(detail))
+    vi.stubGlobal('fetch', fetchMock)
 
-    expect(screen.getByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })).toBeTruthy()
-    expect(screen.getByText('검색 결과에서 공고의 상세 조건 보기 버튼을 다시 선택해 주세요.')).toBeTruthy()
+    renderApp(
+      createAppStore(),
+      `/support-programs/detail?sourceCode=${encodeURIComponent(detail.sourceCode)}&sourceProgramId=${encodeURIComponent(detail.id)}`,
+    )
+
+    expect(screen.getByRole('heading', { name: '공고 정보를 불러오는 중입니다' })).toBeTruthy()
+    await screen.findByRole('heading', { name: detail.title })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('존재하지 않거나 비활성화된 공고는 404 안내를 보여 준다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 404 })))
+
+    renderApp(createAppStore(), '/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=unknown-program')
+
+    await screen.findByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })
+    expect(screen.getByText(/존재하지 않거나 더 이상 제공되지 않는 공고입니다/)).toBeTruthy()
     expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' })).toBeTruthy()
   })
 
-  it('URL의 공고 ID와 전달된 공고 ID가 다르면 상세 정보를 표시하지 않는다', () => {
-    renderApp(createAppStore(), {
-      pathname: '/support-programs/another-program',
-      state: { program: supportPrograms[0] },
-    })
+  it.each([
+    '/support-programs/detail',
+    '/support-programs/detail?sourceCode=BIZINFO',
+    '/support-programs/detail?sourceProgramId=missing-source-code',
+    '/support-programs/detail?sourceCode=%20&sourceProgramId=blank-source-code',
+    '/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=%20',
+  ])('식별자가 누락되거나 공백인 URL(%s)은 API를 호출하지 않는다', (path) => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(createAppStore(), path)
 
     expect(screen.getByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })).toBeTruthy()
-    expect(screen.queryByRole('heading', { name: supportPrograms[0].title })).toBeNull()
+    expect(screen.getByText('공고 주소가 올바르지 않습니다. 검색 결과에서 공고를 다시 선택해 주세요.'))
+      .toBeTruthy()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('퍼센트 문자가 포함된 공고 ID도 URL 인코딩 후 상세 화면을 연다', () => {
-    const program = { ...supportPrograms[0], id: 'fixture%20program' }
+  it('상세 조회 API가 실패하면 안전한 오류 안내를 보여 준다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 503 })))
 
-    renderApp(createAppStore(), {
-      pathname: `/support-programs/${encodeURIComponent(program.id)}`,
-      state: { program },
-    })
+    renderApp(
+      createAppStore(),
+      '/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=temporarily-unavailable',
+    )
 
-    expect(screen.getByRole('heading', { name: program.title })).toBeTruthy()
+    await screen.findByRole('heading', { name: '공고 정보를 불러오지 못했습니다' })
+    expect(screen.getByText(/잠시 후 다시 시도해 주세요/)).toBeTruthy()
+  })
+
+  it('퍼센트와 슬래시가 포함된 원본 공고 ID도 URL 인코딩 후 상세 조회한다', async () => {
+    const program = {
+      ...supportPrograms[0],
+      id: 'fixture%20/program?',
+      matchedReasons: [],
+      recommendationScore: null,
+    }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(program))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(
+      createAppStore(),
+      `/support-programs/detail?sourceCode=${encodeURIComponent(program.sourceCode)}&sourceProgramId=${encodeURIComponent(program.id)}`,
+    )
+
+    await screen.findByRole('heading', { name: program.title })
+    const detailRequestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]))
+    expect(detailRequestUrl.searchParams.get('sourceProgramId')).toBe(program.id)
   })
 })
 
-type TestRouteEntry = string | {
-  pathname: string
-  state?: Record<string, unknown>
-}
-
 function renderApp(
   appStore: ReturnType<typeof createAppStore>,
-  initialEntry: TestRouteEntry = '/',
+  initialEntry = '/',
 ) {
   return render(
     <Provider store={appStore}>

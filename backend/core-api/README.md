@@ -10,10 +10,11 @@ MySQL 기업마당 공고 카탈로그와 내부 AI Service 호출 결과를 안
 | `GET /api/v1/health` | Core API 자체 상태 |
 | `GET /api/v1/health/ai-service` | Core API를 통한 AI Service 상태 |
 | `GET /api/v1/support-programs/search?query=수출&acceptingOnly=true` | MySQL 기업마당 공고 카탈로그 검색 |
+| `GET /api/v1/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN_001` | 복합 원본 식별자로 현재 노출 공고 상세 조회 |
 | `POST /api/v1/sample-items/prepare` | 예제 수직 슬라이스의 입력 검증과 준비 상태 반환 |
 
-지원사업 검색의 요청·응답 필드, 날짜·상태 의미와 오류 코드는
-[지원사업 검색·추천 HTTP 계약](../../docs/support-program-search-contract.md)을 참고하세요. 검색 결과는
+지원사업 검색·상세의 요청·응답 필드, 날짜·상태 의미와 오류 코드는
+[지원사업 검색·상세 HTTP 계약](../../docs/support-program-search-contract.md)을 참고하세요. 검색 결과는
 추천 최소 기준을 통과한 공고를 LLM 총점 순으로 0~5개 반환합니다.
 
 `SampleItem`의 정확한 요청·응답은 [SampleItem 계약](../../docs/sample-item-contract.md)을
@@ -28,6 +29,7 @@ supportprogram/
 ├── controller/             # 지원사업 공개 HTTP API
 │   └── dto/                # 지원사업 공개 요청·응답 계약
 ├── service/
+│   ├── detail/             # 제공처·원본 ID로 현재 공고 상세를 조회
 │   ├── search/             # 전체 MySQL 공고의 의미 검색·점수화 흐름
 │   ├── sync/               # 기업마당→MySQL 및 MySQL→벡터 색인 동기화·정기 실행
 │   └── dto/                # 검증된 검색 실행 결과
@@ -208,6 +210,12 @@ AI Service 요청·응답은 `supportprogram/client/ai/dto`, 기업마당 응답
 전용 보조 코드는 `client/bizinfo/helper`에서 관리하고, 접수 상태 계산용 서울 기준 시계는
 `supportprogram/config`에 둡니다. Kotlin 단어 사전과 고정 관련도 가중치는 사용하지 않습니다.
 
+`service/detail/SupportProgramDetailService`는 외부 API나 AI를 다시 호출하지 않고 Repository에서 현재 노출된
+공고를 조회합니다. 공개 응답은 기존 `id`(제공처 원본 ID)에 `sourceCode`를 함께 제공하고, 상세 요청은 이 두 값을
+각각 전달합니다. 따라서 서로 다른 제공처가 같은 원본 ID를 사용해도 하나의 문자열로 합치거나 기업마당 ID로
+고정하지 않고 정확한 MySQL 행을 찾습니다. 현재 미노출이거나 없는 조합은
+`SUPPORT_PROGRAM_NOT_FOUND` ProblemDetail(404)로 반환합니다.
+
 계층 연결 예제인 SampleItem도 `_sampleitem/controller → service → domain`으로 독립되어 있으며 공개 요청·응답 형식은 `_sampleitem/controller/dto`가 소유합니다.
 
 Core API 프로세스 자체의 생존 상태는 `_health/controller`, 공개 응답 계약은 `_health/controller/dto`가 담당합니다. AI Service 연결 상태를 확인하는 `_health_ai_service` 기능과는 별개입니다. `_health_ai_service/client/AiServiceHealthClient`는 내부 Health API만 호출하고, 공개 Health 응답은 `_health_ai_service/controller/dto`, 지원사업 점수화 호출은 `supportprogram/client/ai/HttpAiSupportProgramRankingClient`가 담당합니다.
@@ -374,6 +382,11 @@ DB 반영이 실패해도 Scheduler는 오류를 기록하고 다음 실행을 �
 
 `GET /api/v1/support-programs/search`는 `is_source_present = TRUE`인 현재 기업마당 공고를 MySQL에서
 읽습니다. 기업마당 API 호출은 Scheduler의 동기화 경로에만 있습니다.
+
+`GET /api/v1/support-programs/detail`도 외부 기업마당 API를 호출하지 않습니다. `sourceCode`(최대 64자)와
+`sourceProgramId`(최대 255자)를 별도 query parameter로 받아 `is_source_present = TRUE`인 정확한 복합 키 행만
+조회합니다. 검색 점수는 검색 질의에만 의미가 있으므로 상세 응답의 `matchedReasons`는 빈 배열,
+`recommendationScore`는 `null`입니다.
 
 ## 지원사업 검색 동작
 

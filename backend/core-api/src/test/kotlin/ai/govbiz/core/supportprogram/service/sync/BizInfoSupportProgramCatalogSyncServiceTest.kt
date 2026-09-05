@@ -67,6 +67,7 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
     private fun catalogProgram(id: String) = CatalogSupportProgram(
         program = SupportProgram(
             id = id,
+            sourceCode = "BIZINFO",
             title = "$id 지원사업",
             organization = "수행기관",
             summary = "지원 내용",

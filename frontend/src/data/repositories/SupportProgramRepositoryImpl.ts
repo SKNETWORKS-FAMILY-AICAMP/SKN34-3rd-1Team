@@ -1,8 +1,12 @@
-import { searchSupportProgramsApi } from '../api/supportProgramApi'
+import {
+  getSupportProgramDetailApi,
+  searchSupportProgramsApi,
+} from '../api/supportProgramApi'
 import { toSupportProgram } from '../models/SupportProgramDto'
 import type { SupportProgram } from '../../domain/entities/SupportProgram'
 import type {
   SupportProgramRepository,
+  SupportProgramIdentity,
   SupportProgramSearch,
 } from '../../domain/repositories/SupportProgramRepository'
 
@@ -14,5 +18,13 @@ export class SupportProgramRepositoryImpl implements SupportProgramRepository {
   ): Promise<SupportProgram[]> {
     const response = await searchSupportProgramsApi(command, signal)
     return response.programs.map(toSupportProgram)
+  }
+
+  async getDetail(
+    identity: SupportProgramIdentity,
+    signal?: AbortSignal,
+  ): Promise<SupportProgram | null> {
+    const dto = await getSupportProgramDetailApi(identity, signal)
+    return dto ? toSupportProgram(dto) : null
   }
 }

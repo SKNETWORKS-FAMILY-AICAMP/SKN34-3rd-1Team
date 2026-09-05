@@ -4,6 +4,7 @@ import java.time.LocalDate
 
 data class SupportProgram(
     val id: String,
+    val sourceCode: String,
     val title: String,
     val organization: String,
     val summary: String,

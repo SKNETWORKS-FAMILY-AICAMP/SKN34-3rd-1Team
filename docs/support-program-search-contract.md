@@ -1,4 +1,4 @@
-# 지원사업 검색·추천 HTTP 계약
+# 지원사업 검색·상세 HTTP 계약
 
 GovBiz Web은 공공데이터포털 키나 OpenAI 키를 보유하지 않습니다. 브라우저는 Core API만 호출하고,
 Core는 정기 동기화된 기업마당 공고 MySQL 카탈로그에서 후보를 읽어 AI Service에 점수화를 요청합니다.
@@ -109,6 +109,7 @@ Core는 다음 불변식을 다시 검사합니다.
   "programs": [
     {
       "id": "PBLN_001",
+      "sourceCode": "BIZINFO",
       "title": "서울 AI 창업기업 사업화 지원",
       "organization": "서울경제진흥원",
       "summary": "AI 창업기업의 사업화를 지원합니다.",
@@ -132,6 +133,37 @@ Core는 다음 불변식을 다시 검사합니다.
 `null`입니다. 날짜를 확실히 해석할 수 없으면 시작·종료일은 `null`, 상태는 `UNKNOWN`으로 유지합니다.
 적격 공고가 없으면 `programs`는 빈 배열입니다. 원본에 없는 지원금액은 생성하지 않으며 `sourceUrl`로
 공식 원문을 확인할 수 있습니다.
+
+## 공개 상세 조회
+
+검색 결과의 `id`는 제공처 안에서의 원본 공고 ID입니다. 제공처가 다르면 같은 `id`가 존재할 수 있으므로,
+상세 조회는 검색 응답의 `sourceCode`와 `id`를 각각 전달합니다. 두 값을 `BIZINFO:PBLN_001`처럼 하나의
+문자열로 합치지 않아 URL 인코딩·구분자 충돌 없이 MySQL의 복합 원본 식별자와 정확히 대응합니다.
+
+```http
+GET /api/v1/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN_001
+Accept: application/json
+```
+
+| Query parameter | 필수 | 설명 |
+|---|---|---|
+| `sourceCode` | 예 | 제공처 코드. 공백일 수 없고 최대 64자입니다. |
+| `sourceProgramId` | 예 | 제공처가 부여한 원본 공고 ID. 공백일 수 없고 최대 255자입니다. 검색 응답의 `id`를 전달합니다. |
+
+성공하면 검색 결과 한 건과 같은 `SupportProgramResponse` 객체를 반환합니다. 상세 조회에는 검색 질의가
+없으므로 `matchedReasons`는 빈 배열, `recommendationScore`는 `null`입니다. `is_source_present = FALSE`인
+과거 공고와 존재하지 않는 복합 식별자는 모두 다음의 안정적인 404 오류로 처리합니다.
+
+```json
+{
+  "type": "urn:govbiz:problem:support-program-not-found",
+  "title": "Support Program Not Found",
+  "status": 404,
+  "detail": "The requested support program does not exist or is no longer available.",
+  "instance": "/api/v1/support-programs/detail",
+  "code": "SUPPORT_PROGRAM_NOT_FOUND"
+}
+```
 
 ## 전체 카탈로그 후보 검색
 
@@ -174,6 +206,8 @@ Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지
 | 상황 | HTTP | `code` |
 |---|---:|---|
 | `query`가 500자를 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
+| 상세 조회의 `sourceCode`·`sourceProgramId`가 누락·공백·길이 제한을 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
+| 상세 조회 대상이 없거나 현재 제공처 목록에서 사라짐 | 404 | `SUPPORT_PROGRAM_NOT_FOUND` |
 | AI Service 실패·잘못된 응답 | 502 | `AI_SERVICE_UPSTREAM_ERROR` / `AI_SERVICE_INVALID_RESPONSE` |
 | AI Service 연결 불가·시간 초과 | 503 / 504 | `AI_SERVICE_UNAVAILABLE` / `AI_SERVICE_TIMEOUT` |
 | 현재 허용 공고의 색인 미완료 또는 Qdrant·임베딩 실패 | 503(내부 시간 초과 분류에 따라 504) | `AI_SERVICE_UNAVAILABLE` / `AI_SERVICE_TIMEOUT` |

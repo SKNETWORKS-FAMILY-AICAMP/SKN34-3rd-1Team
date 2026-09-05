@@ -23,6 +23,7 @@ class BizInfoProgramMapperTest {
         )
 
         assertEquals(listOf("PBLN_1", "PBLN_2"), programs.map { it.program.id })
+        assertEquals(listOf("BIZINFO", "BIZINFO"), programs.map { it.program.sourceCode })
         assertEquals(listOf("서울 AI 사업", "부산 수출 사업"), programs.map { it.program.title })
     }
 

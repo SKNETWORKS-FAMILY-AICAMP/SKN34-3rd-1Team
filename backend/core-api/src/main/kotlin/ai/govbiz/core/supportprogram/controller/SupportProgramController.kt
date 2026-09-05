@@ -1,7 +1,10 @@
 package ai.govbiz.core.supportprogram.controller
 
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramSearchResponse
+import ai.govbiz.core.supportprogram.controller.dto.SupportProgramResponse
+import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
+import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
@@ -12,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1/support-programs")
 class SupportProgramController(
     private val searchService: SupportProgramSearchService,
+    private val detailService: SupportProgramDetailService,
 ) {
 
     @GetMapping("/search")
@@ -20,4 +24,11 @@ class SupportProgramController(
         @RequestParam(defaultValue = "true") acceptingOnly: Boolean,
     ): SupportProgramSearchResponse =
         SupportProgramSearchResponse.from(searchService.search(query, acceptingOnly))
+
+    @GetMapping("/detail")
+    fun detail(
+        @RequestParam @NotBlank @Size(max = 64) sourceCode: String,
+        @RequestParam @NotBlank @Size(max = 255) sourceProgramId: String,
+    ): SupportProgramResponse =
+        SupportProgramResponse.from(detailService.get(sourceCode, sourceProgramId))
 }

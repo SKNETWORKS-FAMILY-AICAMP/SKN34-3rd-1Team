@@ -98,6 +98,7 @@ internal object BizInfoProgramMapper {
         return CatalogSupportProgram(
             program = SupportProgram(
                 id = id.trim(),
+                sourceCode = BIZINFO_SOURCE_CODE,
                 title = title.trim(),
                 organization = organization,
                 summary = if (summary.isBlank()) "정보 없음" else summary,
@@ -214,4 +215,6 @@ internal object BizInfoProgramMapper {
     }
 
     private data class DateRange(val start: LocalDate?, val end: LocalDate?)
+
+    private const val BIZINFO_SOURCE_CODE = "BIZINFO"
 }

@@ -1,5 +1,6 @@
 package ai.govbiz.core._common.exception
 
+import ai.govbiz.core.supportprogram.service.detail.exception.SupportProgramNotFoundException
 import jakarta.servlet.http.HttpServletRequest
 import java.net.URI
 import org.springframework.http.HttpStatus
@@ -11,12 +12,28 @@ import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.validation.FieldError
 import org.springframework.web.HttpMediaTypeNotSupportedException
 import org.springframework.web.bind.MethodArgumentNotValidException
+import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.HandlerMethodValidationException
 
 @RestControllerAdvice
 class ApiExceptionHandler {
+
+    @ExceptionHandler(SupportProgramNotFoundException::class)
+    fun handleSupportProgramNotFoundException(
+        request: HttpServletRequest,
+    ): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            ProblemDefinition(
+                HttpStatus.NOT_FOUND,
+                URI.create("urn:govbiz:problem:support-program-not-found"),
+                "Support Program Not Found",
+                "The requested support program does not exist or is no longer available.",
+                "SUPPORT_PROGRAM_NOT_FOUND",
+            ),
+            request,
+        )
 
     @ExceptionHandler(AiServiceCallException::class)
     fun handleAiServiceCallException(
@@ -71,6 +88,21 @@ class ApiExceptionHandler {
             request,
         )
     }
+
+    @ExceptionHandler(MissingServletRequestParameterException::class)
+    fun handleMissingServletRequestParameterException(
+        exception: MissingServletRequestParameterException,
+        request: HttpServletRequest,
+    ): ResponseEntity<ProblemDetail> =
+        validationProblem(
+            HttpStatus.BAD_REQUEST,
+            URI.create("urn:govbiz:problem:request-validation-failed"),
+            "Request Validation Failed",
+            "One or more request fields are invalid.",
+            "REQUEST_VALIDATION_FAILED",
+            listOf(ValidationError(exception.parameterName, "INVALID_VALUE")),
+            request,
+        )
 
     @ExceptionHandler(HttpMessageNotReadableException::class)
     fun handleHttpMessageNotReadableException(

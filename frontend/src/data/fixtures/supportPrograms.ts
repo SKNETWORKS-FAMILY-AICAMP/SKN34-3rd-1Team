@@ -3,6 +3,7 @@ import type { SupportProgram } from '../../domain/entities/SupportProgram'
 /** 외부 API에 의존하지 않고 Domain·상태 흐름을 검증하기 위한 테스트 전용 공고입니다. */
 export const supportPrograms: SupportProgram[] = [
   {
+    sourceCode: 'BIZINFO',
     id: 'fixture-seoul-ai-business',
     title: '2026 서울 AI 서비스 사업화 지원사업',
     organization: '서울경제진흥원',
@@ -20,6 +21,7 @@ export const supportPrograms: SupportProgram[] = [
     recommendationScore: 94,
   },
   {
+    sourceCode: 'BIZINFO',
     id: 'fixture-national-startup',
     title: '2026 초기창업기업 사업화 지원',
     organization: '창업진흥원',
@@ -37,6 +39,7 @@ export const supportPrograms: SupportProgram[] = [
     recommendationScore: 90,
   },
   {
+    sourceCode: 'BIZINFO',
     id: 'fixture-gyeonggi-manufacturing',
     title: '2026 경기도 제조기업 스마트공장 고도화 지원',
     organization: '경기도경제과학진흥원',
@@ -54,6 +57,7 @@ export const supportPrograms: SupportProgram[] = [
     recommendationScore: 88,
   },
   {
+    sourceCode: 'BIZINFO',
     id: 'fixture-export-voucher',
     title: '2026 수출바우처 참여기업 모집',
     organization: '중소벤처기업진흥공단',
@@ -71,6 +75,7 @@ export const supportPrograms: SupportProgram[] = [
     recommendationScore: 86,
   },
   {
+    sourceCode: 'BIZINFO',
     id: 'fixture-content-innovation',
     title: '2026 콘텐츠 스타트업 오픈이노베이션',
     organization: '한국콘텐츠진흥원',
@@ -88,6 +93,7 @@ export const supportPrograms: SupportProgram[] = [
     recommendationScore: 84,
   },
   {
+    sourceCode: 'BIZINFO',
     id: 'fixture-closed-daejeon',
     title: '2026 대전 기술창업 액셀러레이팅',
     organization: '대전창조경제혁신센터',
