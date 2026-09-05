@@ -1,6 +1,7 @@
 package ai.govbiz.core.supportprogram.controller
 
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramSearchResponse
+import ai.govbiz.core.supportprogram.controller.dto.SupportProgramSearchReadinessResponse
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramResponse
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramEvidenceAnswerResponse
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramEvidenceQuestionRequest
@@ -8,6 +9,7 @@ import ai.govbiz.core.supportprogram.controller.validation.CodePointMax
 import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceService
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
+import ai.govbiz.core.supportprogram.service.readiness.SupportProgramSearchReadinessService
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1/support-programs")
 class SupportProgramController(
     private val searchService: SupportProgramSearchService,
+    private val readinessService: SupportProgramSearchReadinessService,
     private val detailService: SupportProgramDetailService,
     private val evidenceService: SupportProgramEvidenceService,
 ) {
@@ -32,6 +35,10 @@ class SupportProgramController(
         @RequestParam(defaultValue = "true") acceptingOnly: Boolean,
     ): SupportProgramSearchResponse =
         SupportProgramSearchResponse.from(searchService.search(query, acceptingOnly))
+
+    @GetMapping("/readiness")
+    fun readiness(): SupportProgramSearchReadinessResponse =
+        SupportProgramSearchReadinessResponse.from(readinessService.get())
 
     @GetMapping("/detail")
     fun detail(

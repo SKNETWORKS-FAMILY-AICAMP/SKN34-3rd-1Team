@@ -1,5 +1,6 @@
 import type { SupportProgram } from '../entities/SupportProgram'
 import type { SupportProgramEvidenceAnswer } from '../entities/SupportProgramEvidenceAnswer'
+import type { SupportProgramSearchReadiness } from '../entities/SupportProgramSearchReadiness'
 
 export type SupportProgramSearch = {
   query: string
@@ -26,6 +27,7 @@ export type SupportProgramEvidenceQuestionResult =
 /** 채팅 기능이 Data Layer의 구현 세부사항과 분리되도록 하는 Domain 포트입니다. */
 export interface SupportProgramRepository {
   search(command: SupportProgramSearch, signal?: AbortSignal): Promise<SupportProgram[]>
+  getSearchReadiness(signal?: AbortSignal): Promise<SupportProgramSearchReadiness>
   getDetail(identity: SupportProgramIdentity, signal?: AbortSignal): Promise<SupportProgram | null>
   answerEvidenceQuestion(
     command: SupportProgramEvidenceQuestion,

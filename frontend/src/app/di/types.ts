@@ -5,6 +5,7 @@ import type { SampleItemRepository } from '../../domain/repositories/SampleItemR
 import type { SupportProgramRepository } from '../../domain/repositories/SupportProgramRepository'
 import type { AskSupportProgramEvidenceQuestionUseCase } from '../../domain/usecases/AskSupportProgramEvidenceQuestionUseCase'
 import type { GetSupportProgramDetailUseCase } from '../../domain/usecases/GetSupportProgramDetailUseCase'
+import type { GetSupportProgramSearchReadinessUseCase } from '../../domain/usecases/GetSupportProgramSearchReadinessUseCase'
 import type { PrepareSampleItemUseCase } from '../../domain/usecases/PrepareSampleItemUseCase'
 import type { SearchSupportProgramsUseCase } from '../../domain/usecases/SearchSupportProgramsUseCase'
 
@@ -15,6 +16,7 @@ export type AppCradle = {
   askSupportProgramEvidenceQuestionUseCase: AskSupportProgramEvidenceQuestionUseCase
   fetchCoreApiHealth: FetchCoreApiHealth
   getSupportProgramDetailUseCase: GetSupportProgramDetailUseCase
+  getSupportProgramSearchReadinessUseCase: GetSupportProgramSearchReadinessUseCase
   prepareSampleItemUseCase: PrepareSampleItemUseCase
   sampleItemRepository: SampleItemRepository
   searchSupportProgramsUseCase: SearchSupportProgramsUseCase

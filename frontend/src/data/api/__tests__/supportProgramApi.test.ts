@@ -5,6 +5,7 @@ import { SupportProgramRepositoryImpl } from '../../repositories/SupportProgramR
 import {
   answerSupportProgramEvidenceQuestionApi,
   getSupportProgramDetailApi,
+  getSupportProgramSearchReadinessApi,
   SupportProgramEvidenceApiError,
   SupportProgramApiError,
   searchSupportProgramsApi,
@@ -125,6 +126,44 @@ describe('searchSupportProgramsApi', () => {
     controller.abort()
 
     await expect(request).rejects.toBe(aborted)
+  })
+})
+
+describe('getSupportProgramSearchReadinessApi', () => {
+  it('gets and validates the current readiness with the caller cancellation signal', async () => {
+    const controller = new AbortController()
+    const readiness = {
+      searchState: 'SEARCHABLE_WITH_SYNC_FAILURE',
+      programCount: 42,
+      indexReady: true,
+      lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
+      lastFailedSyncAt: '2026-09-05T10:00:00+09:00',
+    }
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(readiness)))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getSupportProgramSearchReadinessApi(controller.signal)).resolves.toEqual(readiness)
+    const [requestUrl, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(new URL(requestUrl).pathname).toBe('/api/v1/support-programs/readiness')
+    expect(init.headers).toEqual({ Accept: 'application/json' })
+    expect(init.signal).toBe(controller.signal)
+    expect(init.cache).toBe('no-store')
+    await expect(new SupportProgramRepositoryImpl().getSearchReadiness()).resolves.toEqual(readiness)
+  })
+
+  it('rejects malformed readiness payloads and HTTP failures at the data boundary', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        searchState: 'SEARCHABLE',
+        programCount: -1,
+        indexReady: true,
+        lastSuccessfulSyncAt: null,
+        lastFailedSyncAt: null,
+      }))
+      .mockResolvedValueOnce(new Response('', { status: 503 })))
+
+    await expect(getSupportProgramSearchReadinessApi()).rejects.toThrow()
+    await expect(getSupportProgramSearchReadinessApi()).rejects.toBeInstanceOf(SupportProgramApiError)
   })
 })
 

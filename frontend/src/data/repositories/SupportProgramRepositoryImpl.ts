@@ -1,12 +1,15 @@
 import {
   answerSupportProgramEvidenceQuestionApi,
   getSupportProgramDetailApi,
+  getSupportProgramSearchReadinessApi,
   searchSupportProgramsApi,
   SupportProgramEvidenceApiError,
 } from '../api/supportProgramApi'
 import { toSupportProgram } from '../models/SupportProgramDto'
 import { toSupportProgramEvidenceAnswer } from '../models/SupportProgramEvidenceAnswerDto'
+import { toSupportProgramSearchReadiness } from '../models/SupportProgramSearchReadinessDto'
 import type { SupportProgram } from '../../domain/entities/SupportProgram'
+import type { SupportProgramSearchReadiness } from '../../domain/entities/SupportProgramSearchReadiness'
 import type {
   SupportProgramRepository,
   SupportProgramEvidenceQuestion,
@@ -23,6 +26,12 @@ export class SupportProgramRepositoryImpl implements SupportProgramRepository {
   ): Promise<SupportProgram[]> {
     const response = await searchSupportProgramsApi(command, signal)
     return response.programs.map(toSupportProgram)
+  }
+
+  async getSearchReadiness(signal?: AbortSignal): Promise<SupportProgramSearchReadiness> {
+    return toSupportProgramSearchReadiness(
+      await getSupportProgramSearchReadinessApi(signal),
+    )
   }
 
   async getDetail(

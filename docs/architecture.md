@@ -52,6 +52,19 @@ GET /api/v1/support-programs/search
 5. AI Service는 모든 후보의 구조화된 점수화 결과를 검증한 후 총점순으로 정렬하고 추천 기준을 적용합니다.
    Core도 최종 응답의 후보 ID·질의·계약 버전·점수·순서·추천 이유를 재검증해 공개 응답으로 변환합니다.
 
+```text
+GET /api/v1/support-programs/readiness
+  → SupportProgramController → SupportProgramSearchReadinessService
+  → SupportProgramRepository → MyBatis Mapper → Mapper XML → MySQL
+  → 공개 스냅샷 공고 수·색인 준비·최근 동기화 성공/실패 시각을 반환
+```
+
+`support_program_sync_status`는 현재 공개된 기업마당 스냅샷의 세대·검색 문서 지문·공고 수와 색인 준비 상태를
+최근 카탈로그 동기화 결과와 분리해 보관합니다. `indexReady=true`이면 공고 수가 0이어도 `SEARCHABLE`입니다.
+색인이 준비된 이전 스냅샷을 유지한 채 새 수집·사전 색인이 실패하면 `SEARCHABLE_WITH_SYNC_FAILURE`이며,
+색인 준비가 확인되지 않은 상태 행은 `UNAVAILABLE`입니다. 상태 행 자체가 없는 초기 상태만 `PREPARING`입니다.
+시각은 서울 시계를 사용해 저장하고 API에서는 `+09:00` 오프셋이 포함된 ISO-8601 문자열로 반환합니다.
+
 점수화 계약은 `govbiz-support-program-ranking-v3`입니다. 의미 관련성 20/40점 이상과 총점 60/100점 이상을
 충족해야 하며, `targetEligibility` 또는 `regionEligibility`가 `INCOMPATIBLE`이면 추천에서 제외합니다.
 `UNKNOWN`은 정보 부족을 뜻해 자동 제외하지 않지만 신청 자격을 확인했다는 의미도 아닙니다.
@@ -155,6 +168,7 @@ BizInfoSupportProgramCatalogSyncScheduler (기본: 최초 PT0S, 완료 후 PT6H)
       → AiSupportProgramIndexClient → AI Service → OpenAI 임베딩 → Qdrant
   → Repository: 최신 시작 세대일 때만 MySQL에 공개 [짧은 DB transaction]
       → BIZINFO 기존 행 미노출 처리 + 수집 목록 UPSERT
+      → 공개 세대·카탈로그 지문·공고 수·indexReady·성공 시각 기록
 ```
 
 공공데이터포털의 전체 건수, 페이지 번호·크기, 페이지별 항목 수와 실제 수집 수가 일치해야 합니다.
@@ -163,16 +177,18 @@ BizInfoSupportProgramCatalogSyncScheduler (기본: 최초 PT0S, 완료 후 PT6H)
 
 색인은 전체 공고를 16개씩 나누어 요청합니다. AI Service는 동일 ID·해시의 벡터가 이미 있으면 재사용하고
 없는 버전만 생성합니다. 모든 배치의 성공과 처리 건수를 확인한 후에만 DB 공개를 시도합니다.
-색인 도중 실패하면 기존 공개 카탈로그를 유지하며, 이미 준비된 벡터는 재시도 시 재사용할 수 있습니다.
+색인 도중 실패하면 현재 세대일 때만 실패 시각을 기록하고 기존 공개 카탈로그·그 스냅샷의 색인 준비 상태를
+유지합니다. 이미 준비된 벡터는 재시도 시 재사용할 수 있습니다. 더 최신 세대가 시작되면 이전 세대의
+성공·실패 기록 모두 무시합니다.
 
 MySQL의 `support_program_sync_generation`은 제공처별 최신 **시작** 세대를 관리합니다. 이전 실행이 늦게
 끝나도 더 최근에 시작된 작업이 있으면 공개를 건너뜁니다. 후발 작업이 실패하더라도 이전 세대가 다시
 공개 권한을 얻지는 않으며 마지막으로 공개된 카탈로그를 다음 성공까지 유지합니다.
 
 시작 세대 발급과 공개는 각각 행 잠금을 사용하는 짧은 DB transaction입니다. 공개 transaction 안의
-미노출 처리와 UPSERT 중 하나라도 실패하면 전체를 rollback합니다. 외부 HTTP 수집·색인은 DB transaction
-밖에서 실행하며, 수집 실패를 이유로 기존 행을 삭제하거나 다른 제공처 데이터를 변경하지 않습니다.
-Scheduler는 실패를 기록하고 다음 주기에 계속 실행합니다.
+미노출 처리·UPSERT·상태 행 성공 기록 중 하나라도 실패하면 전체를 rollback합니다. 외부 HTTP 수집·색인은 DB
+transaction 밖에서 실행하며, 수집 실패를 이유로 기존 행을 삭제하거나 다른 제공처 데이터를 변경하지 않습니다.
+동기화 Service가 수집·사전 색인·공개 과정의 RuntimeException을 한 번 기록한 뒤 Scheduler가 다음 주기에 계속 실행합니다.
 
 ## 벡터 정합성과 복구
 
@@ -190,10 +206,16 @@ SupportProgramIndexSyncScheduler (기본: 최초 PT0S, 완료 후 PT1M)
   → SupportProgramIndexSyncService.repair
   → Repository: 현재 MySQL 공개 공고 목록 조회
   → AI Service: 해당 버전의 누락 벡터 생성·저장
+  → 상태 행의 공개 세대·지문·공고 수가 읽은 스냅샷과 같을 때만 indexReady 갱신
 ```
 
 복구는 제공처 수집과 별도 단일 스레드에서 실행합니다. `SUPPORT_PROGRAM_INDEX_ENABLED=false`는
 이 복구 작업만 끄며, 새 카탈로그 공개 전의 필수 색인은 끄지 않습니다.
+
+복구 색인이 실패하면 자신이 읽은 스냅샷과 상태 행이 여전히 같을 때만 `indexReady=false`로 바꾸며,
+최근 카탈로그 동기화 성공·실패 기록은 바꾸지 않습니다. 복구가 늦게 끝난 동안 새 스냅샷이 공개되면 조건부
+UPDATE가 0행이 되어 새 스냅샷 상태를 건드리지 않습니다. 이 상태는 마지막 전체 색인 준비 결과이며 실시간
+Qdrant Health를 뜻하지는 않습니다.
 
 공개 준비와 복구는 모두 `prune`을 호출하지 않습니다. 이전 스냅샷 기준의 삭제가 공개 준비 중인 새 벡터를
 지우는 상황을 피하기 위해 현재 자동 삭제를 연결하지 않았습니다. 내부 `prune` API는 존재하지만,
@@ -216,6 +238,11 @@ MySQL의 `support_program`은 `(source_code, source_program_id)` 고유키로 �
 시각을 같은 복합 식별자로 저장하고 공고를 FK로 참조합니다. 조회 시 공고의 공개 상태를 확인하므로 미노출 공고에는
 원문 질문을 제공하지 않습니다. 이 테이블은 정기 목록 동기화에서 채우지 않고 명시적 원문 질문의 수집·검증이
 성공했을 때 UPSERT합니다.
+
+`support_program_sync_status`는 V4 이후 성공적으로 공개된 기업마당 스냅샷의 공개 세대·지문·공고 수를 기록합니다.
+V4 적용 전부터 있던 공고는 과거 공개 세대를 복원하지 않습니다. 대신 현재 공개된 기업마당 공고가 1건 이상인 경우에
+한해, 전체 복구 색인이 성공한 뒤 그때 읽은 지문·공고 수를 sentinel 세대 `0`으로 조건부 채택할 수 있습니다.
+빈 초기 DB·복구 전 legacy 공고는 `PREPARING`이며, 이미 실제 지문이 있는 새 스냅샷은 bootstrap이 덮어쓰지 않습니다.
 
 접수 상태는 `SupportProgramStatusResolver`가 읽을 때 계산합니다. 파싱된 시작일 전은 `UPCOMING`,
 종료일 이후는 `CLOSED`, 시작일·종료일 범위 안은 `OPEN`입니다. 날짜 경계는 포함합니다.

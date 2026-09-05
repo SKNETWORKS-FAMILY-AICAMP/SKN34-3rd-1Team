@@ -85,6 +85,7 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 |---|---|
 | `GET /api/v1/health` | Core API 자체 생존 상태 |
 | `GET /api/v1/health/ai-service` | AI Service의 내부 Health 응답 확인 |
+| `GET /api/v1/support-programs/readiness` | 공개 공고 스냅샷·검색 색인·최근 동기화 결과 상태 |
 | `GET /api/v1/support-programs/search` | 현재 MySQL 공고 카탈로그의 검색 또는 최신 목록 |
 | `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회 |
 | `POST /api/v1/support-programs/detail/answers` | 특정 공고의 공식 원문 근거 질문·답변 |
@@ -93,6 +94,11 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 - 검색: 필수 `query`는 최대 500자이며 빈 문자열을 허용합니다. `acceptingOnly`의 기본값은 `true`이고
   이때 `OPEN` 공고만 대상으로 삼습니다. 검색어가 있으면 의미 검색 후보 최대 20개를 AI가 점수화하여
   기준을 통과한 0~5개를 반환합니다. 빈 검색어는 AI를 호출하지 않고 최신순 최대 5개를 반환합니다.
+- 검색 준비 상태: `readiness`는 현재 신뢰할 수 있는 공개 스냅샷의 공고 수, 마지막 동기화 성공·실패 시각,
+  해당 스냅샷의 전체 색인 준비 여부를 반환합니다. `SEARCHABLE`은 공고 수가 0인 성공 스냅샷도 포함하며,
+  `SEARCHABLE_WITH_SYNC_FAILURE`은 이전 스냅샷은 검색 가능하지만 최신 수집·사전 색인 시도가 실패한 경우입니다.
+  `PREPARING`은 아직 신뢰할 수 있는 상태 행이 없는 초기 상태이고, `UNAVAILABLE`은 상태 행은 있으나 현재
+  공개 스냅샷의 색인 준비가 확인되지 않은 경우입니다. 시각은 `Asia/Seoul` 오프셋을 포함한 ISO-8601 문자열입니다.
 - 상세: 필수 `sourceCode`는 `[A-Z][A-Z0-9_]{0,63}` 형식, `sourceProgramId`는 최대 255자이며 공백만 있는 값은 허용하지
   않습니다. 현재 노출된 행만 반환하며, 없는·미노출 공고는 404입니다. 검색 문맥이 없으므로 추천 이유는
   빈 배열, 추천 점수는 `null`입니다.
@@ -201,9 +207,18 @@ SQL은 [`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/re
 - Flyway [V1](src/main/resources/db/migration/V1__create_support_program.sql)은 공고 테이블,
   [V2](src/main/resources/db/migration/V2__add_support_program_sync_generation.sql)는 최신 수집 시작 세대,
   [V3](src/main/resources/db/migration/V3__create_support_program_source_document.sql)는 공고별 공식 원문
-  테이블을 만듭니다. 적용된 migration은 수정하지 않고 새 버전을 추가합니다.
+  테이블, [V4](src/main/resources/db/migration/V4__create_support_program_sync_status.sql)는 공개 스냅샷의
+  세대·지문·공고 수·색인 준비와 최근 동기화 결과를 만듭니다. 적용된 migration은 수정하지 않고 새 버전을 추가합니다.
 - 전체 수집·검증·색인이 끝난 뒤 최신 시작 세대만 공개합니다. BIZINFO 행 미노출 처리와 UPSERT를
-  하나의 짧은 DB transaction으로 묶으며 외부 HTTP 호출은 transaction 밖에서 수행합니다.
+  하나의 짧은 DB transaction으로 묶고, 같은 transaction에서 스냅샷 지문·공고 수·`indexReady=true`·성공
+  시각을 기록합니다. 외부 HTTP 호출은 transaction 밖에서 수행합니다.
+- 수집 또는 공개 전 필수 색인이 실패하면 현재 세대일 때만 실패 시각을 기록합니다. 이때 이전 공개 스냅샷의
+  공고·색인 준비 상태는 바꾸지 않습니다. 별도 복구가 실패하면 자신이 읽어 색인한 세대·지문·공고 수와 상태 행이
+  여전히 일치할 때만 `indexReady=false`로 바꿉니다. 복구 성공도 같은 조건에서만 준비 완료를 기록합니다.
+- V4 적용 전부터 있던 공고에는 공개 세대·검색 문서 지문·과거 색인 성공 여부가 없습니다. 다만 현재 공개된
+  기업마당 공고가 1건 이상이고 별도 전체 색인 복구가 성공하면, 그때 읽어 색인한 지문·공고 수를 sentinel 세대 `0`과
+  함께 한 번만 채택합니다. 빈 초기 DB·복구 전 legacy 공고는 `PREPARING`을 유지하며, 실제 새 스냅샷의 지문은 이
+  bootstrap이 덮어쓰지 않습니다.
 - 원본 ID 표기의 대소문자만 바뀌어도 UPSERT가 최신 표기를 저장하여 DB ID와 벡터 ID를 맞춥니다.
   DB 고유키의 비교는 `utf8mb4_0900_ai_ci` collation을 따릅니다.
 - 접수 상태를 DB에 고정 저장하지 않습니다. 조회 시 날짜를 우선 적용하고, 날짜만으로 판단할 수
@@ -236,5 +251,5 @@ AI Service는 LLM 실행 실패와 색인 미준비·Qdrant 실패를 내부 503
 ```
 
 테스트는 Controller 계약·Client/Facade 응답 검증·상태 계산·동기화 순서·공식 원문 HTML 검증·근거 청크/인용 계약과
-MySQL의 JSON, 복합 식별자, UPSERT, rollback, 시작 세대에 따른 공개 제어 등을 검증합니다. 전체 서비스 연결 검증은
+MySQL의 JSON, 복합 식별자, UPSERT, rollback, 시작 세대에 따른 공개 제어, 공개 스냅샷 준비 상태 전이를 검증합니다. 전체 서비스 연결 검증은
 [인프라 README](../../infrastructure/README.md)의 Compose 검증 절차를 참고하세요.

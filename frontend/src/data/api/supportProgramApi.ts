@@ -11,11 +11,16 @@ import {
   type SupportProgramSearchResponseDto,
 } from '../models/SupportProgramDto'
 import {
+  supportProgramSearchReadinessDtoSchema,
+  type SupportProgramSearchReadinessDto,
+} from '../models/SupportProgramSearchReadinessDto'
+import {
   parseSupportProgramEvidenceAnswerDto,
   type SupportProgramEvidenceAnswerDto,
 } from '../models/SupportProgramEvidenceAnswerDto'
 
 const SEARCH_SUPPORT_PROGRAMS_PATH = '/api/v1/support-programs/search'
+const SUPPORT_PROGRAM_SEARCH_READINESS_PATH = '/api/v1/support-programs/readiness'
 const SUPPORT_PROGRAM_DETAIL_PATH = '/api/v1/support-programs/detail'
 const SUPPORT_PROGRAM_EVIDENCE_ANSWER_PATH = '/api/v1/support-programs/detail/answers'
 
@@ -61,6 +66,29 @@ export async function searchSupportProgramsApi(
   }
 
   return supportProgramSearchResponseDtoSchema.parse(await response.json())
+}
+
+/** 검색 전에 공고 동기화와 검색 인덱스 준비 상태를 확인합니다. */
+export async function getSupportProgramSearchReadinessApi(
+  signal?: AbortSignal,
+): Promise<SupportProgramSearchReadinessDto> {
+  const response = await fetch(
+    `${getCoreApiBaseUrl()}${SUPPORT_PROGRAM_SEARCH_READINESS_PATH}`,
+    {
+      headers: { Accept: 'application/json' },
+      signal,
+      // 초기 동기화 중 폴링하므로 브라우저의 이전 상태 응답을 재사용하지 않습니다.
+      cache: 'no-store',
+    },
+  )
+
+  if (!response.ok) {
+    throw new SupportProgramApiError(
+      `Core API returned HTTP ${response.status} for the support program search readiness request.`,
+    )
+  }
+
+  return supportProgramSearchReadinessDtoSchema.parse(await response.json())
 }
 
 /** 공개 원본 식별자로 현재 노출 중인 공고의 상세 정보를 조회합니다. */

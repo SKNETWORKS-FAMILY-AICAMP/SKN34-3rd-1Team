@@ -2,10 +2,12 @@ import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
+import type { SupportProgramSearchReadiness } from '../../../../domain/entities/SupportProgramSearchReadiness'
 import {
   supportProgramChatSuggestions,
   useSupportProgramChatViewModel,
 } from '../viewmodel/useSupportProgramChatViewModel'
+import { useSupportProgramSearchReadinessViewModel } from '../viewmodel/useSupportProgramSearchReadinessViewModel'
 import {
   chatBackdropClassName,
   chatMessageBubbleClassName,
@@ -15,6 +17,7 @@ import {
 } from './ChatPage.styles'
 
 export function ChatPage() {
+  const readiness = useSupportProgramSearchReadinessViewModel()
   const {
     canRetrySearch,
     conversationCount,
@@ -106,6 +109,7 @@ export function ChatPage() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!readiness.canSearch) return
     void submitMessage()
   }
 
@@ -115,8 +119,14 @@ export function ChatPage() {
   }
 
   function handleSelectSuggestion(suggestion: string) {
+    if (!readiness.canSearch) return
     selectSuggestion(suggestion)
     closeSidebar()
+  }
+
+  function handleRetrySearch() {
+    if (!readiness.canSearch) return
+    void submitMessage()
   }
 
   function openSidebar() {
@@ -194,6 +204,7 @@ export function ChatPage() {
               type="button"
               className={chatPageStyles.popularQuestionButton}
               onClick={() => handleSelectSuggestion(suggestion)}
+              disabled={!readiness.canSearch}
             >
               {suggestion}
             </button>
@@ -205,8 +216,10 @@ export function ChatPage() {
             공고 데이터
           </p>
           <div className={chatPageStyles.dataSummaryCard}>
-            <strong className={chatPageStyles.dataSummaryValue}>공식</strong>
-            <span className={chatPageStyles.dataSummaryLabel}>기업마당</span>
+            <strong className={chatPageStyles.dataSummaryValue}>
+              {readiness.data ? `${readiness.data.programCount}건` : '확인 중'}
+            </strong>
+            <span className={chatPageStyles.dataSummaryLabel}>현재 동기화된 공고</span>
           </div>
           <div className={chatPageStyles.dataSummaryCard}>
             <strong className={chatPageStyles.dataSummaryValue}>{conversationCount}</strong>
@@ -284,6 +297,7 @@ export function ChatPage() {
                           type="button"
                           className={chatPageStyles.suggestedQuestionButton}
                           onClick={() => handleSelectSuggestion(suggestion)}
+                          disabled={!readiness.canSearch}
                         >
                           {suggestion}
                         </button>
@@ -317,16 +331,23 @@ export function ChatPage() {
           className={chatPageStyles.composer}
           onSubmit={handleSubmit}
         >
+          <SupportProgramSearchReadinessNotice
+            readiness={readiness.data}
+            isError={readiness.isError}
+            isInitialLoading={readiness.isInitialLoading}
+            isRefreshing={readiness.isRefreshing}
+            onRetry={() => {
+              void readiness.refetch()
+            }}
+          />
           {searchError ? (
             <div className={chatPageStyles.searchError} role="alert">
               <span>{searchError}</span>
-              {canRetrySearch ? (
+              {canRetrySearch && readiness.canSearch ? (
                 <button
                   type="button"
                   className={chatPageStyles.searchRetryButton}
-                  onClick={() => {
-                    void submitMessage()
-                  }}
+                  onClick={handleRetrySearch}
                 >
                   다시 검색
                 </button>
@@ -336,7 +357,9 @@ export function ChatPage() {
           <textarea
             className={chatPageStyles.composerInput}
             aria-label="지원사업 검색어"
+            aria-describedby="support-program-search-readiness"
             value={draft}
+            disabled={!readiness.canSearch}
             onChange={(event) => updateDraft(event.target.value)}
             onCompositionStart={() => {
               isComposingInput.current = true
@@ -371,7 +394,7 @@ export function ChatPage() {
               type="submit"
               className={chatPageStyles.submitButton}
               aria-label="검색 전송"
-              disabled={!isReadyToSubmit}
+              disabled={!isReadyToSubmit || !readiness.canSearch}
             >
               ↑
             </button>
@@ -383,6 +406,147 @@ export function ChatPage() {
       </section>
     </main>
   )
+}
+
+type SupportProgramSearchReadinessNoticeProps = {
+  readiness: SupportProgramSearchReadiness | undefined
+  isError: boolean
+  isInitialLoading: boolean
+  isRefreshing: boolean
+  onRetry: () => void
+}
+
+function SupportProgramSearchReadinessNotice({
+  readiness,
+  isError,
+  isInitialLoading,
+  isRefreshing,
+  onRetry,
+}: SupportProgramSearchReadinessNoticeProps) {
+  if (isInitialLoading) {
+    return (
+      <section
+        id="support-program-search-readiness"
+        className={chatPageStyles.readinessNotice}
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        공고 데이터 상태를 확인하고 있습니다.
+      </section>
+    )
+  }
+
+  if (isError || !readiness) {
+    return (
+      <section
+        id="support-program-search-readiness"
+        className={chatPageStyles.readinessErrorNotice}
+        role="alert"
+      >
+        <span>공고 데이터 상태를 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.</span>
+        <button
+          type="button"
+          className={chatPageStyles.readinessRetryButton}
+          onClick={onRetry}
+        >
+          상태 다시 확인
+        </button>
+      </section>
+    )
+  }
+
+  const content = getReadinessNoticeContent(readiness)
+  const isUnavailable = readiness.searchState === 'UNAVAILABLE'
+
+  return (
+    <section
+      id="support-program-search-readiness"
+      className={isUnavailable
+        ? chatPageStyles.readinessErrorNotice
+        : chatPageStyles.readinessNotice}
+      role={isUnavailable ? 'alert' : undefined}
+      aria-live={isUnavailable ? undefined : 'polite'}
+    >
+      <div>
+        <strong className={chatPageStyles.readinessTitle}>{content.title}</strong>
+        <p className={chatPageStyles.readinessDescription}>{content.description}</p>
+        <dl className={chatPageStyles.readinessDetails}>
+          <div>
+            <dt>현재 동기화된 공고</dt>
+            <dd>{readiness.programCount}건</dd>
+          </div>
+          <div>
+            <dt>검색 인덱스</dt>
+            <dd>{readiness.indexReady ? '준비됨' : '준비 중'}</dd>
+          </div>
+          <div>
+            <dt>마지막 성공 동기화</dt>
+            <dd>{formatSyncTime(readiness.lastSuccessfulSyncAt)}</dd>
+          </div>
+          <div>
+            <dt>마지막 실패 동기화</dt>
+            <dd>{formatSyncTime(readiness.lastFailedSyncAt)}</dd>
+          </div>
+        </dl>
+      </div>
+      {isUnavailable ? (
+        <button
+          type="button"
+          className={chatPageStyles.readinessRetryButton}
+          onClick={onRetry}
+        >
+          상태 다시 확인
+        </button>
+      ) : null}
+      {isRefreshing ? (
+        <span className={chatPageStyles.readinessRefreshing}>상태를 다시 확인하고 있습니다.</span>
+      ) : null}
+    </section>
+  )
+}
+
+function getReadinessNoticeContent(readiness: SupportProgramSearchReadiness) {
+  switch (readiness.searchState) {
+    case 'PREPARING':
+      return {
+        title: '초기 공고 데이터를 준비하고 있습니다.',
+        description: '준비가 완료되면 자동으로 검색할 수 있습니다.',
+      }
+    case 'SEARCHABLE':
+      if (readiness.programCount === 0) {
+        return {
+          title: '현재 제공 중인 공고가 없습니다.',
+          description: '새 공고가 동기화되면 검색 결과에 표시됩니다.',
+        }
+      }
+      return {
+        title: '공고 검색이 가능합니다.',
+        description: '현재 저장된 공고를 바로 검색할 수 있습니다.',
+      }
+    case 'SEARCHABLE_WITH_SYNC_FAILURE':
+      return {
+        title: '이전 공고 데이터로 검색할 수 있습니다.',
+        description: '최신 공고 동기화에 실패했지만, 이전에 저장된 공고는 계속 검색할 수 있습니다.',
+      }
+    case 'UNAVAILABLE':
+      return {
+        title: '현재 공고 데이터를 검색할 수 없습니다.',
+        description: '잠시 후 상태를 다시 확인해 주세요.',
+      }
+  }
+}
+
+function formatSyncTime(value: string | null) {
+  if (!value) return '기록 없음'
+
+  const date = new Date(value)
+  if (Number.isNaN(date.valueOf())) return value
+
+  return new Intl.DateTimeFormat('ko-KR', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Seoul',
+  }).format(date)
 }
 
 function ProgramCard({ program }: { program: SupportProgram }) {

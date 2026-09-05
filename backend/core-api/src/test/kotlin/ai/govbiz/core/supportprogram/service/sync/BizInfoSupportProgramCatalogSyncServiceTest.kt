@@ -16,6 +16,7 @@ import org.mockito.Mock
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.inOrder
+import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.Mockito.verifyNoMoreInteractions
@@ -68,6 +69,7 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
 
         assertSame(failure, thrown)
         verify(supportProgramRepository).startBizInfoSyncGeneration()
+        verify(supportProgramRepository).recordBizInfoSyncFailureIfCurrent(8L)
         verifyNoInteractions(indexSyncService)
     }
 
@@ -82,6 +84,7 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
         assertSame(failure, assertThrows(IllegalStateException::class.java) { service().sync() })
 
         verify(supportProgramRepository).startBizInfoSyncGeneration()
+        verify(supportProgramRepository).recordBizInfoSyncFailureIfCurrent(9L)
         verifyNoMoreInteractions(supportProgramRepository)
     }
 
@@ -96,6 +99,7 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
         assertNull(service().sync())
 
         verify(supportProgramRepository).publishBizInfoSnapshotIfCurrent(programs, 10L)
+        verify(supportProgramRepository, never()).recordBizInfoSyncFailureIfCurrent(10L)
     }
 
     private fun service() = BizInfoSupportProgramCatalogSyncService(

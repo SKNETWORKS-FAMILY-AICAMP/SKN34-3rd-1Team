@@ -17,14 +17,23 @@ class BizInfoSupportProgramCatalogSyncService(
     /** 최신 실행에 의해 대체된 경우 null, 공개한 공고 수는 0 이상으로 반환합니다. */
     fun sync(): Int? {
         val generation = supportProgramRepository.startBizInfoSyncGeneration()
-        val programs = catalogFacade.load()
-        indexSyncService.indexSnapshot(programs)
-        if (!supportProgramRepository.publishBizInfoSnapshotIfCurrent(programs, generation)) {
-            logger.info("더 최근에 시작된 기업마당 동기화가 있어 이전 스냅샷 공개를 건너뜁니다.")
-            return null
-        }
+        try {
+            val programs = catalogFacade.load()
+            indexSyncService.indexSnapshot(programs)
+            if (!supportProgramRepository.publishBizInfoSnapshotIfCurrent(programs, generation)) {
+                logger.info("더 최근에 시작된 기업마당 동기화가 있어 이전 스냅샷 공개를 건너뜁니다.")
+                return null
+            }
 
-        return programs.size
+            return programs.size
+        } catch (exception: RuntimeException) {
+            try {
+                supportProgramRepository.recordBizInfoSyncFailureIfCurrent(generation)
+            } catch (recordingException: RuntimeException) {
+                exception.addSuppressed(recordingException)
+            }
+            throw exception
+        }
     }
 
     private companion object {
