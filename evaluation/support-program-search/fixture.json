@@ -1,5 +1,6 @@
 {
   "name": "synthetic-support-program-retrieval-v1",
+  "dataType": "synthetic_not_real_programs",
   "description": "실제 공고가 아닌 수작업 가상 데이터. 검색 후보 선정 회귀 점검용이며 실제 추천 정확도를 나타내지 않는다. 모든 공고는 조회 가능한 상태라고 가정한다.",
   "docs": [
     {"id": "SYNTH_AI_SEOUL", "text": "서울 인공지능 제품 개발 지원. 서울 소재 중소기업의 AI 모델 학습, 데이터 구매, 시제품 제작 비용을 지원한다. 제조업 전용 사업은 아니다.", "sortTimestamp": "20260101090000"},

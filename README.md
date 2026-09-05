@@ -161,7 +161,7 @@ Docker 이미지·의존성을 처음 내려받을 때는 네트워크가 필요
 | [검색·상세 API 계약](docs/support-program-search-contract.md) | 공개 API와 내부 AI 요청·응답 |
 | [실행·컨테이너 안내](infrastructure/README.md) | 환경변수, 서비스별 접속, 검증·초기화 방법 |
 | 서비스별 안내 | [Frontend](frontend/README.md) · [Core API](backend/core-api/README.md) · [AI Service](backend/ai-service/README.md) |
-| [검색 평가 자료](evaluation/support-program-search/README.md) | 가상 공고 회귀 평가와 실데이터 평가 준비 |
+| [검색 평가 자료](evaluation/support-program-search/README.md) | 가상 공고 회귀 평가와 실제 검색 흐름 캡처·실데이터 평가 준비 |
 
 학습용 SampleItem 예제는 [예제 계약](docs/sample-item-contract.md), 기능 추가 방법은
 [확장 안내](docs/customization-guide.md)를 참고하세요.

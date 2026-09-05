@@ -10,6 +10,7 @@ import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
@@ -199,6 +200,27 @@ class SupportProgramSearchServiceTest {
         assertThrows(UnsupportedOperationException::class.java) {
             (result.programs as MutableList<SupportProgram>).add(result.programs.single())
         }
+    }
+
+    @Test
+    fun capturesCanonicalSemanticCandidatesAndFinalProgramsForEvaluation() {
+        val query = "서울 AI 창업 지원"
+        val open = catalogProgram(id = "PBLN_OPEN", summary = "서울 AI 창업 지원")
+        val closed = catalogProgram(id = "PBLN_CLOSED", status = SupportProgramStatus.CLOSED)
+        Mockito.doReturn(listOf(open, closed)).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(listOf(open)).`when`(retrieval).retrieve(query, listOf(open))
+        ranking.response = { candidates ->
+            listOf(candidates.single().program.copy(recommendationScore = 91, matchedReasons = listOf("서울 AI 대상")))
+        }
+
+        val trace = service().searchWithTrace(query, acceptingOnly = true)
+
+        assertEquals(query, trace.result.query)
+        assertEquals(listOf("BIZINFO:PBLN_OPEN"), trace.candidateIds)
+        assertEquals(listOf("BIZINFO:PBLN_OPEN"), trace.finalProgramIds)
+        assertEquals(2, trace.presentProgramCount)
+        assertEquals(1, trace.eligibleProgramCount)
+        assertTrue(trace.eligibleCatalogFingerprint.matches(Regex("[0-9a-f]{64}")))
     }
 
     private fun service() = SupportProgramSearchService(

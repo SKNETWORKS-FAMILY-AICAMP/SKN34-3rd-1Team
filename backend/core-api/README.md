@@ -26,6 +26,31 @@ cd backend/core-api
 색인이 있어야 성공합니다. 새 카탈로그 공개에도 색인 준비가 필수이므로 기업마당 키만으로 동기화가
 완료되지는 않습니다.
 
+## 검색 품질 평가 캡처
+
+실제 검색 품질을 확인할 때는 공개 API를 반복 호출하지 않고 `evaluation-capture` 프로필을 실행합니다.
+이 프로필은 웹 서버·기업마당 동기화·누락 색인 복구를 끈 뒤, 질문 묶음의 각 항목을 현재
+`SupportProgramSearchService`에 전달합니다. 따라서 MySQL의 적격 공고 선정, Qdrant 후보 최대 20개,
+AI 최종 추천 최대 5개라는 운영 검색 흐름에서 나온 ID를 그대로 JSON 파일에 기록합니다.
+
+질문 파일은 [예시](../../evaluation/support-program-search/query-set.example.json)를 복사해 준비합니다.
+실행 환경의 MySQL·AI Service·Qdrant는 실제 검색과 같은 상태여야 하며, AI 점수화 호출 비용이 발생할 수
+있으므로 기본 실행이나 CI에는 포함하지 않습니다.
+
+```bash
+cd backend/core-api
+./gradlew bootJar
+SPRING_PROFILES_ACTIVE=evaluation-capture \
+APP_SUPPORT_PROGRAM_SEARCH_CAPTURE_QUERY_SET_PATH=/absolute/path/query-set.json \
+APP_SUPPORT_PROGRAM_SEARCH_CAPTURE_OUTPUT_PATH=/absolute/path/capture.json \
+java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
+```
+
+질문은 최대 100개이며, 하나라도 실패하거나 실행 중 카탈로그가 바뀌면 결과 파일을 쓰지 않습니다.
+성공한 캡처에는 공고 수·카탈로그 지문·후보 ID·최종 추천 ID가 포함됩니다. 사람이 검토한 정답 fixture와
+비교해 실제 지표를 계산하는 방법은 [검색 평가 자료](../../evaluation/support-program-search/README.md)를
+참고하세요.
+
 ## 공개 API
 
 | 메서드·경로 | 용도 |
@@ -94,6 +119,7 @@ supportprogram/
 │   ├── search             # DB 조회 → 의미 검색 → AI 점수화
 │   ├── detail             # 현재 공고 상세 조회
 │   ├── sync               # 수집·색인 준비·DB 공개와 별도 벡터 복구
+│   ├── evaluation         # 비웹 검색 품질 평가 캡처 프로필
 │   └── dto                # 검증된 내부 실행 결과
 ├── facade                 # 기업마당 수집·AI 응답 검증·도메인 변환
 ├── client/
