@@ -97,4 +97,24 @@
           AND source_program_id = #{sourceProgramId}
           AND is_source_present = TRUE
     </select>
+
+    <select id="findPresentBySourceCode" resultMap="supportProgramDbRow">
+        SELECT
+            source_code,
+            source_program_id,
+            title,
+            organization,
+            summary,
+            categories,
+            regions,
+            target_description,
+            application_period_raw,
+            application_start_date,
+            application_end_date,
+            source_url,
+            source_sort_timestamp
+        FROM support_program
+        WHERE source_code = #{sourceCode}
+          AND is_source_present = TRUE
+    </select>
 </mapper>

@@ -1,13 +1,13 @@
 # 지원사업 검색·추천 HTTP 계약
 
 GovBiz Web은 공공데이터포털 키나 OpenAI 키를 보유하지 않습니다. 브라우저는 Core API만 호출하고,
-Core가 기업마당 공고를 검증한 뒤 AI Service에 제한된 후보를 점수화하도록 요청합니다.
+Core는 정기 동기화된 기업마당 공고 MySQL 카탈로그에서 후보를 읽어 AI Service에 점수화를 요청합니다.
 
 ```text
 Browser
   → GET /api/v1/support-programs/search
       → Core API
-          → 기업마당 공고 조회·검증·접수 상태 필터
+          → MySQL의 현재 노출 기업마당 공고 조회·접수 상태 필터
           → 최신 후보 최대 20개 선택
           → POST /internal/v1/support-program-rankings/rank
               → LLM이 버전된 평가 기준으로 모든 후보 점수화
@@ -133,20 +133,20 @@ Core는 다음 불변식을 다시 검사합니다.
 
 아직 DB 전문검색·벡터 검색이 없기 때문에 Core는 접수 상태를 적용한 뒤 갱신시각 기준 최신 20개를
 LLM 후보로 보냅니다. 이 20개 안의 의미 순위는 LLM이 결정하지만, 오래된 관련 공고가 후보에서 빠질
-수 있습니다. 실제 DB 수집 단계에서는 SQL/벡터 검색으로 의미 후보를 먼저 찾고 같은 LLM 점수화를
+수 있습니다. 이후 SQL 전문검색 또는 벡터 검색으로 의미 후보를 먼저 찾고 같은 LLM 점수화를
 재사용합니다. Kotlin 단어 사전이나 고정 점수표를 다시 추가하지 않습니다.
 
 ## 비밀정보와 오류 처리
 
-`DATA_GO_KR_SERVICE_KEY`는 Core에, `OPENAI_API_KEY`는 AI Service에만 주입합니다. 외부 오류 본문,
-사용자 질의나 인증키는 공개 오류에 포함하지 않습니다.
+`DATA_GO_KR_SERVICE_KEY`는 기업마당 동기화를 위해 Core에, `OPENAI_API_KEY`는 AI Service에만
+주입합니다. 기업마당 동기화 실패는 사용자 검색 요청의 오류가 아니라 백그라운드 동기화 실패로
+처리하며, 이전 MySQL 카탈로그가 있으면 계속 검색합니다. 첫 동기화 전이거나 카탈로그가 비어 있으면
+검색은 HTTP 200과 빈 `programs` 배열을 반환합니다. 외부 오류 본문, 사용자 질의나 인증키는 공개 오류에
+포함하지 않습니다.
 
 | 상황 | HTTP | `code` |
 |---|---:|---|
 | `query`가 500자를 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
-| 기업마당 인증키 미설정 | 503 | `SUPPORT_PROGRAM_SOURCE_NOT_CONFIGURED` |
-| 외부 API 실패·잘못된 응답 | 502 | `SUPPORT_PROGRAM_SOURCE_ERROR` / `SUPPORT_PROGRAM_INVALID_RESPONSE` |
-| 외부 API 연결 불가·시간 초과 | 503 / 504 | `SUPPORT_PROGRAM_SOURCE_UNAVAILABLE` / `SUPPORT_PROGRAM_SOURCE_TIMEOUT` |
 | AI Service 실패·잘못된 응답 | 502 | `AI_SERVICE_UPSTREAM_ERROR` / `AI_SERVICE_INVALID_RESPONSE` |
 | AI Service 연결 불가·시간 초과 | 503 / 504 | `AI_SERVICE_UNAVAILABLE` / `AI_SERVICE_TIMEOUT` |
 

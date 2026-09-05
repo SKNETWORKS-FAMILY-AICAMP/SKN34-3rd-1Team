@@ -15,4 +15,8 @@ interface SupportProgramMapper {
         @Param("sourceCode") sourceCode: String,
         @Param("sourceProgramId") sourceProgramId: String,
     ): SupportProgramDbRow?
+
+    fun findPresentBySourceCode(
+        @Param("sourceCode") sourceCode: String,
+    ): List<SupportProgramDbRow>
 }

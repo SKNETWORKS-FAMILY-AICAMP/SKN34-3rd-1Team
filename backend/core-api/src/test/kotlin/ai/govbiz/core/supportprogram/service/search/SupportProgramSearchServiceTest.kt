@@ -1,14 +1,12 @@
 package ai.govbiz.core.supportprogram.service.search
 
-import ai.govbiz.core.supportprogram.client.bizinfo.BizInfoClient
-import ai.govbiz.core.supportprogram.client.bizinfo.dto.BizInfoProgramPayload
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
-import ai.govbiz.core.supportprogram.facade.BizInfoSupportProgramCatalogFacade
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
+import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
+import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.BeforeEach
@@ -17,15 +15,12 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.Mock
 import org.mockito.Mockito
 import org.mockito.junit.jupiter.MockitoExtension
-import java.time.Clock
-import java.time.Instant
-import java.time.ZoneId
 
 @ExtendWith(MockitoExtension::class)
 class SupportProgramSearchServiceTest {
 
     @Mock
-    private lateinit var client: BizInfoClient
+    private lateinit var supportProgramRepository: SupportProgramRepository
 
     private lateinit var ranking: RecordingSupportProgramRankingFacade
 
@@ -35,23 +30,28 @@ class SupportProgramSearchServiceTest {
     }
 
     @Test
-    fun derivesDatesAndHonestStatusesForABlankLatestProgramsRequest() {
+    fun returnsCatalogProgramsWithoutRankingForABlankLatestProgramsRequest() {
         Mockito.doReturn(
             listOf(
-                payload("open", "<p>AI &amp; 기술<br>지원</p>", "2026-08-20 ~ 2026-09-11"),
-                payload("rolling", "상시 사업", "2026-08-01 ~ 예산 소진시까지"),
-                payload("upcoming", "예정 사업", "추후 공지"),
-                payload("unknown", "상이 사업", "세부사업별 상이"),
-                payload("closed", "종료 사업", "2026-07-01 ~ 2026-07-31"),
+                catalogProgram(
+                    id = "open",
+                    summary = "AI 기술 지원",
+                    applicationPeriod = "2026-08-20 ~ 2026-09-11",
+                    applicationStartDate = LocalDate.of(2026, 8, 20),
+                    applicationEndDate = LocalDate.of(2026, 9, 11),
+                ),
+                catalogProgram(id = "rolling", applicationPeriod = "상시 접수"),
+                catalogProgram(id = "upcoming", status = SupportProgramStatus.UPCOMING),
+                catalogProgram(id = "unknown", status = SupportProgramStatus.UNKNOWN),
+                catalogProgram(id = "closed", status = SupportProgramStatus.CLOSED),
             ),
-        ).`when`(client).fetchAll()
+        ).`when`(supportProgramRepository).findPresentBizInfo()
 
         val result = service().search("", false)
         val byId = result.programs.associateBy(SupportProgram::id)
 
         assertEquals(SupportProgramStatus.OPEN, byId.getValue("open").status)
-        assertEquals("AI & 기술 지원", byId.getValue("open").summary)
-        assertFalse(byId.getValue("open").summary.contains("<"))
+        assertEquals("AI 기술 지원", byId.getValue("open").summary)
         assertEquals("2026-08-20", byId.getValue("open").applicationStartDate.toString())
         assertEquals("2026-09-11", byId.getValue("open").applicationEndDate.toString())
         assertEquals(SupportProgramStatus.OPEN, byId.getValue("rolling").status)
@@ -62,17 +62,22 @@ class SupportProgramSearchServiceTest {
         assertNull(byId.getValue("open").recommendationScore)
         assertEquals(emptyList<String>(), byId.getValue("open").matchedReasons)
         assertEquals(emptyList<RankingCall>(), ranking.calls)
+        Mockito.verify(supportProgramRepository).findPresentBizInfo()
     }
 
     @Test
-    fun sendsFilteredOfficialCandidatesToLlmRankingAndReturnsItsResult() {
+    fun sendsFilteredCatalogCandidatesToLlmRankingAndReturnsItsResult() {
         val query = "서울에서 AI 창업기업이 받을 지원사업"
         Mockito.doReturn(
             listOf(
-                payload("open", "AI 창업 지원", "상시 접수"),
-                payload("closed", "지난 AI 지원", "2026-07-01 ~ 2026-07-31"),
+                catalogProgram(id = "open", summary = "AI 창업 지원"),
+                catalogProgram(
+                    id = "closed",
+                    summary = "지난 AI 지원",
+                    status = SupportProgramStatus.CLOSED,
+                ),
             ),
-        ).`when`(client).fetchAll()
+        ).`when`(supportProgramRepository).findPresentBizInfo()
         ranking.response = { candidates ->
             listOf(
                 candidates.single().program.copy(
@@ -94,10 +99,13 @@ class SupportProgramSearchServiceTest {
     fun capsTheTemporaryPreVectorCandidateWindowAtTwentyNewestPrograms() {
         Mockito.doReturn(
             (1..25).map { index ->
-                payload("program-$index", "공고 $index", "상시 접수")
-                    .copy(updatedAt = "2026-08-${index.toString().padStart(2, '0')} 10:00:00")
+                catalogProgram(
+                    id = "program-$index",
+                    title = "공고 $index",
+                    sortTimestamp = "2026-08-${index.toString().padStart(2, '0')} 10:00:00",
+                )
             },
-        ).`when`(client).fetchAll()
+        ).`when`(supportProgramRepository).findPresentBizInfo()
         ranking.response = { emptyList() }
 
         service().search("기술 지원", false)
@@ -109,9 +117,23 @@ class SupportProgramSearchServiceTest {
     }
 
     @Test
+    fun usesProgramIdAsATieBreakerForProgramsWithTheSameSortTimestamp() {
+        Mockito.doReturn(
+            listOf(
+                catalogProgram(id = "PBLN_B"),
+                catalogProgram(id = "PBLN_A"),
+            ),
+        ).`when`(supportProgramRepository).findPresentBizInfo()
+
+        val result = service().search("", false)
+
+        assertEquals(listOf("PBLN_A", "PBLN_B"), result.programs.map(SupportProgram::id))
+    }
+
+    @Test
     fun returnsAnImmutableResultList() {
-        Mockito.doReturn(listOf(payload("open", "AI 지원", "상시 접수")))
-            .`when`(client).fetchAll()
+        Mockito.doReturn(listOf(catalogProgram(id = "open")))
+            .`when`(supportProgramRepository).findPresentBizInfo()
 
         val result = service().search("   ", true)
 
@@ -121,36 +143,39 @@ class SupportProgramSearchServiceTest {
     }
 
     private fun service() = SupportProgramSearchService(
-        BizInfoSupportProgramCatalogFacade(client, CLOCK),
+        supportProgramRepository,
         ranking,
     )
 
-    private fun payload(
+    private fun catalogProgram(
         id: String,
-        summary: String,
-        period: String?,
-    ) = BizInfoProgramPayload(
-        "$id 공고",
-        "https://www.bizinfo.go.kr/detail?id=$id",
-        id,
-        "중소벤처기업부",
-        "수행기관",
-        summary,
-        "AI",
-        "2026-08-20 10:00:00",
-        period,
-        "2026-08-21 10:00:00",
-        "창업기업",
-        "AI,서울",
-        "온라인 신청",
+        title: String = "$id 공고",
+        summary: String = "AI 지원",
+        status: SupportProgramStatus = SupportProgramStatus.OPEN,
+        applicationPeriod: String = "상시 접수",
+        applicationStartDate: LocalDate? = null,
+        applicationEndDate: LocalDate? = null,
+        sortTimestamp: String = "2026-08-21 10:00:00",
+    ) = CatalogSupportProgram(
+        program = SupportProgram(
+            id = id,
+            title = title,
+            organization = "수행기관",
+            summary = summary,
+            categories = listOf("AI"),
+            regions = listOf("서울"),
+            targetDescription = "중소기업",
+            applicationPeriod = applicationPeriod,
+            applicationStartDate = applicationStartDate,
+            applicationEndDate = applicationEndDate,
+            status = status,
+            sourceName = "기업마당",
+            sourceUrl = "https://www.bizinfo.go.kr/detail?id=$id",
+            matchedReasons = emptyList(),
+            recommendationScore = null,
+        ),
+        sortTimestamp = sortTimestamp,
     )
-
-    private companion object {
-        val CLOCK: Clock = Clock.fixed(
-            Instant.parse("2026-08-24T03:00:00Z"),
-            ZoneId.of("Asia/Seoul"),
-        )
-    }
 
     private data class RankingCall(
         val query: String,

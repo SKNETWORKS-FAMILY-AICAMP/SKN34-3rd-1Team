@@ -4,6 +4,7 @@ import ai.govbiz.core._common.test.MySqlTestContainerConfig
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
+import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -34,6 +35,9 @@ class SupportProgramRepositoryIntegrationTest {
 
     @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
+
+    @Autowired
+    private lateinit var supportProgramSearchService: SupportProgramSearchService
 
     @BeforeEach
     fun deleteSupportPrograms() {
@@ -109,6 +113,41 @@ class SupportProgramRepositoryIntegrationTest {
     @Test
     fun returnsNullWhenProgramDoesNotExist() {
         assertNull(repository.findByProgramId("PBLN_NOT_FOUND"))
+    }
+
+    @Test
+    fun findsOnlyPresentBizInfoProgramsForSearch() {
+        val current = catalogProgram(id = "PBLN_CURRENT", title = "현재 노출 공고")
+        val missing = catalogProgram(id = "PBLN_MISSING", title = "사라진 공고")
+        repository.synchronizeBizInfo(listOf(current, missing))
+        repository.synchronizeBizInfo(listOf(current))
+        insertProgram(sourceCode = "OTHER", sourceProgramId = "PBLN_OTHER", title = "다른 제공처 공고")
+
+        assertEquals(listOf(current), repository.findPresentBizInfo())
+    }
+
+    @Test
+    fun excludesClosedAndUpcomingDatabaseProgramsWhenAcceptingOnly() {
+        val open = catalogProgram(id = "PBLN_OPEN", title = "접수 중 공고")
+        val closed = catalogProgram(
+            id = "PBLN_CLOSED",
+            title = "마감 공고",
+            applicationPeriod = "2000-01-01 ~ 2000-01-31",
+            applicationStartDate = LocalDate.of(2000, 1, 1),
+            applicationEndDate = LocalDate.of(2000, 1, 31),
+        )
+        val upcoming = catalogProgram(
+            id = "PBLN_UPCOMING",
+            title = "예정 공고",
+            applicationPeriod = "9999-01-01 ~ 9999-12-31",
+            applicationStartDate = LocalDate.of(9999, 1, 1),
+            applicationEndDate = LocalDate.of(9999, 12, 31),
+        )
+        repository.synchronizeBizInfo(listOf(open, closed, upcoming))
+
+        val result = supportProgramSearchService.search("", acceptingOnly = true)
+
+        assertEquals(listOf("PBLN_OPEN"), result.programs.map(SupportProgram::id))
     }
 
     @Test

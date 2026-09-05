@@ -1,6 +1,5 @@
 package ai.govbiz.core._common.exception
 
-import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchException
 import jakarta.servlet.http.HttpServletRequest
 import java.net.URI
 import org.springframework.http.HttpStatus
@@ -18,13 +17,6 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 
 @RestControllerAdvice
 class ApiExceptionHandler {
-
-    @ExceptionHandler(SupportProgramSearchException::class)
-    fun handleSupportProgramSearchException(
-        exception: SupportProgramSearchException,
-        request: HttpServletRequest,
-    ): ResponseEntity<ProblemDetail> =
-        problemResponse(supportProgramDefinitionFor(exception.failure), request)
 
     @ExceptionHandler(AiServiceCallException::class)
     fun handleAiServiceCallException(
@@ -172,47 +164,6 @@ class ApiExceptionHandler {
                 "AI Service Gateway Timeout",
                 "AI Service did not respond within the configured timeout.",
                 "AI_SERVICE_TIMEOUT",
-            )
-        }
-
-    private fun supportProgramDefinitionFor(
-        failure: SupportProgramSearchException.Failure,
-    ): ProblemDefinition =
-        when (failure) {
-            SupportProgramSearchException.Failure.NOT_CONFIGURED -> ProblemDefinition(
-                HttpStatus.SERVICE_UNAVAILABLE,
-                URI.create("urn:govbiz:problem:support-program-source-not-configured"),
-                "Support Program Search Unavailable",
-                "The support program data source is not configured.",
-                "SUPPORT_PROGRAM_SOURCE_NOT_CONFIGURED",
-            )
-            SupportProgramSearchException.Failure.UPSTREAM_ERROR -> ProblemDefinition(
-                HttpStatus.BAD_GATEWAY,
-                URI.create("urn:govbiz:problem:support-program-source-error"),
-                "Support Program Source Error",
-                "The support program data source returned an unexpected response.",
-                "SUPPORT_PROGRAM_SOURCE_ERROR",
-            )
-            SupportProgramSearchException.Failure.INVALID_RESPONSE -> ProblemDefinition(
-                HttpStatus.BAD_GATEWAY,
-                URI.create("urn:govbiz:problem:support-program-invalid-response"),
-                "Support Program Invalid Response",
-                "The support program data source returned an invalid response.",
-                "SUPPORT_PROGRAM_INVALID_RESPONSE",
-            )
-            SupportProgramSearchException.Failure.UNAVAILABLE -> ProblemDefinition(
-                HttpStatus.SERVICE_UNAVAILABLE,
-                URI.create("urn:govbiz:problem:support-program-source-unavailable"),
-                "Support Program Source Unavailable",
-                "The support program data source is currently unavailable.",
-                "SUPPORT_PROGRAM_SOURCE_UNAVAILABLE",
-            )
-            SupportProgramSearchException.Failure.TIMEOUT -> ProblemDefinition(
-                HttpStatus.GATEWAY_TIMEOUT,
-                URI.create("urn:govbiz:problem:support-program-source-timeout"),
-                "Support Program Source Timeout",
-                "The support program data source did not respond in time.",
-                "SUPPORT_PROGRAM_SOURCE_TIMEOUT",
             )
         }
 
