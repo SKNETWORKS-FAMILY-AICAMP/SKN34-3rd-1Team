@@ -31,7 +31,11 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunner(
     override fun run(vararg args: String) {
         val querySet = readQuerySet(properties.querySetPath)
         val observations = querySet.queries.map { query ->
-            val trace = searchService.searchWithTrace(query.query, properties.acceptingOnly)
+            val trace = searchService.searchWithTrace(
+                rawQuery = query.query,
+                acceptingOnly = properties.acceptingOnly,
+                referenceDate = properties.referenceDate,
+            )
             validateTrace(query, trace)
             CaptureObservation(
                 id = query.id,
@@ -50,6 +54,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunner(
                 "sha256" to querySet.sha256,
             ),
             "capturedAt" to Instant.now(clock).toString(),
+            "referenceDate" to properties.referenceDate.toString(),
             "acceptingOnly" to properties.acceptingOnly,
             "catalog" to linkedMapOf(
                 "presentProgramCount" to catalog.presentProgramCount,
@@ -213,7 +218,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunner(
     )
 
     private companion object {
-        const val CAPTURE_SCHEMA_VERSION = "support-program-search-capture-v1"
+        const val CAPTURE_SCHEMA_VERSION = "support-program-search-capture-v2"
         const val QUERY_SET_SCHEMA_VERSION = "support-program-search-query-set-v1"
         const val MAX_QUERY_LENGTH = 500
         const val MAX_QUERY_COUNT = 100

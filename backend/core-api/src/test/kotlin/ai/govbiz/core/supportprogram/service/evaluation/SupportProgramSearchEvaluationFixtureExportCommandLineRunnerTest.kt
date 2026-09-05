@@ -9,6 +9,7 @@ import ai.govbiz.core.supportprogram.service.evaluation.config.SupportProgramSea
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.LocalDate
 import java.security.MessageDigest
 import java.util.HexFormat
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -42,9 +43,19 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
         val earlierCanonicalId = catalogProgram("PBLN_A", summary = "먼저 공고")
             .copy(sortTimestamp = "2026-09-04 10:00:00")
         val closed = catalogProgram("PBLN_CLOSED")
-            .copy(program = catalogProgram("PBLN_CLOSED").program.copy(status = SupportProgramStatus.CLOSED))
+            .copy(
+                program = catalogProgram("PBLN_CLOSED").program.copy(
+                    applicationPeriod = "접수 종료",
+                    status = SupportProgramStatus.CLOSED,
+                ),
+            )
         val upcoming = catalogProgram("PBLN_UPCOMING")
-            .copy(program = catalogProgram("PBLN_UPCOMING").program.copy(status = SupportProgramStatus.UPCOMING))
+            .copy(
+                program = catalogProgram("PBLN_UPCOMING").program.copy(
+                    applicationPeriod = "접수 예정",
+                    status = SupportProgramStatus.UPCOMING,
+                ),
+            )
         doReturn(listOf(laterCanonicalId, closed, earlierCanonicalId, upcoming))
             .`when`(supportProgramRepository)
             .findPresent()
@@ -56,11 +67,12 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
 
         val fixture = objectMapper.readTree(Files.readAllBytes(output))
         assertEquals(
-            setOf("name", "dataType", "catalog", "docs", "cases"),
+            setOf("name", "dataType", "referenceDate", "catalog", "docs", "cases"),
             fixture.propertyNames().asSequence().toSet(),
         )
         assertEquals("bizinfo-20260905-v1", fixture.get("name").stringValue())
         assertEquals("real_catalog_snapshot_unlabeled", fixture.get("dataType").stringValue())
+        assertEquals("2026-09-05", fixture.get("referenceDate").stringValue())
         assertEquals(4, fixture.get("catalog").get("presentProgramCount").intValue())
         assertEquals(2, fixture.get("catalog").get("eligibleProgramCount").intValue())
         assertEquals(
@@ -120,9 +132,19 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
     @Test
     fun keepsThePreviousFixtureWhenThereIsNoOpenProgramToLabel() {
         val closed = catalogProgram("PBLN_CLOSED")
-            .copy(program = catalogProgram("PBLN_CLOSED").program.copy(status = SupportProgramStatus.CLOSED))
+            .copy(
+                program = catalogProgram("PBLN_CLOSED").program.copy(
+                    applicationPeriod = "접수 종료",
+                    status = SupportProgramStatus.CLOSED,
+                ),
+            )
         val upcoming = catalogProgram("PBLN_UPCOMING")
-            .copy(program = catalogProgram("PBLN_UPCOMING").program.copy(status = SupportProgramStatus.UPCOMING))
+            .copy(
+                program = catalogProgram("PBLN_UPCOMING").program.copy(
+                    applicationPeriod = "접수 예정",
+                    status = SupportProgramStatus.UPCOMING,
+                ),
+            )
         doReturn(listOf(closed, upcoming)).`when`(supportProgramRepository).findPresent()
         val output = directory.resolve("fixture.json")
         Files.writeString(output, "previous-fixture", UTF_8)
@@ -134,6 +156,38 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
         assertTrue(exception.message.orEmpty().contains("eligible"))
         assertEquals("previous-fixture", Files.readString(output, UTF_8))
         verify(supportProgramRepository).findPresent()
+    }
+
+    @Test
+    fun usesTheEvaluationReferenceDateInsteadOfTheStatusCalculatedWhenTheCatalogWasRead() {
+        val openOnReferenceDate = catalogProgram("PBLN_AT_REFERENCE_DATE")
+            .copy(
+                program = catalogProgram("PBLN_AT_REFERENCE_DATE").program.copy(
+                    applicationPeriod = "2026-09-01 ~ 2026-09-06",
+                    applicationStartDate = LocalDate.of(2026, 9, 1),
+                    applicationEndDate = LocalDate.of(2026, 9, 6),
+                    status = SupportProgramStatus.CLOSED,
+                ),
+            )
+        val closedOnReferenceDate = catalogProgram("PBLN_BEFORE_REFERENCE_DATE")
+            .copy(
+                program = catalogProgram("PBLN_BEFORE_REFERENCE_DATE").program.copy(
+                    applicationPeriod = "2026-08-01 ~ 2026-09-04",
+                    applicationStartDate = LocalDate.of(2026, 8, 1),
+                    applicationEndDate = LocalDate.of(2026, 9, 4),
+                    status = SupportProgramStatus.OPEN,
+                ),
+            )
+        doReturn(listOf(openOnReferenceDate, closedOnReferenceDate))
+            .`when`(supportProgramRepository)
+            .findPresent()
+
+        val output = directory.resolve("fixture.json")
+        runner("bizinfo-20260905-v1", output).run()
+
+        val fixture = objectMapper.readTree(Files.readAllBytes(output))
+        assertEquals(1, fixture.get("catalog").get("eligibleProgramCount").intValue())
+        assertEquals("BIZINFO:PBLN_AT_REFERENCE_DATE", fixture.get("docs").get(0).get("id").stringValue())
     }
 
     @Test
@@ -176,19 +230,19 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
 
         for (invalidName in listOf("", " ", " bizinfo-v1", "bizinfo-v1 ")) {
             val exception = assertThrows(IllegalArgumentException::class.java) {
-                SupportProgramSearchEvaluationFixtureExportProperties(invalidName, output)
+                SupportProgramSearchEvaluationFixtureExportProperties(invalidName, REFERENCE_DATE, output)
             }
             assertTrue(exception.message.orEmpty().contains("name"))
         }
 
         val exception = assertThrows(IllegalArgumentException::class.java) {
-            SupportProgramSearchEvaluationFixtureExportProperties("bizinfo-v1", Path.of(""))
+            SupportProgramSearchEvaluationFixtureExportProperties("bizinfo-v1", REFERENCE_DATE, Path.of(""))
         }
         assertTrue(exception.message.orEmpty().contains("output"))
     }
 
     private fun runner(name: String, output: Path) = SupportProgramSearchEvaluationFixtureExportCommandLineRunner(
-        properties = SupportProgramSearchEvaluationFixtureExportProperties(name, output),
+        properties = SupportProgramSearchEvaluationFixtureExportProperties(name, REFERENCE_DATE, output),
         supportProgramRepository = supportProgramRepository,
         objectMapper = objectMapper,
     )
@@ -204,4 +258,8 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
                     .toByteArray(UTF_8),
             ),
         )
+
+    private companion object {
+        val REFERENCE_DATE: LocalDate = LocalDate.of(2026, 9, 5)
+    }
 }

@@ -9,6 +9,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneOffset
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -37,7 +38,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
     private val objectMapper = JsonMapper.builder().build()
 
     @Test
-    fun writesACompleteV1CaptureOnlyAfterEveryQuerySucceeds() {
+    fun writesACompleteV2CaptureOnlyAfterEveryQuerySucceeds() {
         val input = writeQuerySet(
             """
             {
@@ -52,22 +53,23 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
         )
         doReturn(trace("서울 AI 지원", listOf("BIZINFO:A"), listOf("BIZINFO:A")))
             .`when`(searchService)
-            .searchWithTrace("서울 AI 지원", true)
+            .searchWithTrace("서울 AI 지원", true, REFERENCE_DATE)
         doReturn(trace("수출 바우처", listOf("OTHER:A"), emptyList()))
             .`when`(searchService)
-            .searchWithTrace("수출 바우처", true)
+            .searchWithTrace("수출 바우처", true, REFERENCE_DATE)
 
         val output = directory.resolve("capture.json")
         runner(input, output).run()
 
         val capture = objectMapper.readTree(Files.readAllBytes(output))
-        assertEquals("support-program-search-capture-v1", capture.get("schemaVersion").stringValue())
+        assertEquals("support-program-search-capture-v2", capture.get("schemaVersion").stringValue())
         assertEquals("real-catalog-v1", capture.get("querySet").get("name").stringValue())
         assertEquals(
             "eb70524c7e1a92a8250b525ceee8e1b432833aedc6730646b3a009bcb12b4356",
             capture.get("querySet").get("sha256").stringValue(),
         )
         assertEquals("2026-09-05T00:00:00Z", capture.get("capturedAt").stringValue())
+        assertEquals("2026-09-05", capture.get("referenceDate").stringValue())
         assertTrue(capture.get("acceptingOnly").booleanValue())
         assertEquals(2, capture.get("catalog").get("presentProgramCount").intValue())
         assertEquals(1, capture.get("catalog").get("eligibleProgramCount").intValue())
@@ -80,8 +82,8 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
         assertEquals("BIZINFO:A", capture.get("observations").get(0).get("candidateIds").get(0).stringValue())
         assertEquals("OTHER:A", capture.get("observations").get(1).get("candidateIds").get(0).stringValue())
         assertEquals(0, capture.get("observations").get(1).get("finalProgramIds").size())
-        verify(searchService).searchWithTrace("서울 AI 지원", true)
-        verify(searchService).searchWithTrace("수출 바우처", true)
+        verify(searchService).searchWithTrace("서울 AI 지원", true, REFERENCE_DATE)
+        verify(searchService).searchWithTrace("수출 바우처", true, REFERENCE_DATE)
     }
 
     @Test
@@ -128,10 +130,10 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
         Files.writeString(output, "previous-capture", UTF_8)
         doReturn(trace("서울 AI 지원", listOf("BIZINFO:A"), listOf("BIZINFO:A")))
             .`when`(searchService)
-            .searchWithTrace("서울 AI 지원", true)
+            .searchWithTrace("서울 AI 지원", true, REFERENCE_DATE)
         doReturn(trace("수출 바우처", listOf("BIZINFO:B"), emptyList(), fingerprint = OTHER_FINGERPRINT))
             .`when`(searchService)
-            .searchWithTrace("수출 바우처", true)
+            .searchWithTrace("수출 바우처", true, REFERENCE_DATE)
 
         val exception = assertThrows(IllegalArgumentException::class.java) {
             runner(input, output).run()
@@ -139,8 +141,8 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
 
         assertTrue(exception.message.orEmpty().contains("catalog changed"))
         assertEquals("previous-capture", Files.readString(output, UTF_8))
-        verify(searchService).searchWithTrace("서울 AI 지원", true)
-        verify(searchService).searchWithTrace("수출 바우처", true)
+        verify(searchService).searchWithTrace("서울 AI 지원", true, REFERENCE_DATE)
+        verify(searchService).searchWithTrace("수출 바우처", true, REFERENCE_DATE)
     }
 
     @Test
@@ -158,7 +160,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
         Files.writeString(output, "previous-capture", UTF_8)
         doThrow(IllegalStateException("semantic search unavailable"))
             .`when`(searchService)
-            .searchWithTrace("서울 AI 지원", true)
+            .searchWithTrace("서울 AI 지원", true, REFERENCE_DATE)
 
         assertThrows(IllegalStateException::class.java) {
             runner(input, output).run()
@@ -242,7 +244,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
         Files.writeString(output, "previous-capture", UTF_8)
         doReturn(trace("서울 AI 지원", listOf("BIZINFO:A", "BIZINFO:A"), listOf("BIZINFO:A")))
             .`when`(searchService)
-            .searchWithTrace("서울 AI 지원", true)
+            .searchWithTrace("서울 AI 지원", true, REFERENCE_DATE)
 
         val exception = assertThrows(IllegalArgumentException::class.java) {
             runner(input, output).run()
@@ -267,7 +269,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
         Files.writeString(output, "previous-capture", UTF_8)
         doReturn(trace("서울 AI 지원", listOf("BIZINFO:A"), listOf("BIZINFO:B")))
             .`when`(searchService)
-            .searchWithTrace("서울 AI 지원", true)
+            .searchWithTrace("서울 AI 지원", true, REFERENCE_DATE)
 
         val exception = assertThrows(IllegalArgumentException::class.java) {
             runner(input, output).run()
@@ -291,7 +293,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
         val output = directory.resolve("capture.json")
         doReturn(trace("서울 AI 지원", listOf("other:A"), listOf("other:A")))
             .`when`(searchService)
-            .searchWithTrace("서울 AI 지원", true)
+            .searchWithTrace("서울 AI 지원", true, REFERENCE_DATE)
 
         val exception = assertThrows(IllegalArgumentException::class.java) {
             runner(input, output).run()
@@ -302,7 +304,12 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
     }
 
     private fun runner(input: Path, output: Path) = SupportProgramSearchEvaluationCaptureCommandLineRunner(
-        properties = SupportProgramSearchEvaluationCaptureProperties(input, output, acceptingOnly = true),
+        properties = SupportProgramSearchEvaluationCaptureProperties(
+            querySetPath = input,
+            outputPath = output,
+            referenceDate = REFERENCE_DATE,
+            acceptingOnly = true,
+        ),
         searchService = searchService,
         objectMapper = objectMapper,
         clock = Clock.fixed(Instant.parse("2026-09-05T00:00:00Z"), ZoneOffset.UTC),
@@ -327,6 +334,7 @@ class SupportProgramSearchEvaluationCaptureCommandLineRunnerTest {
     }
 
     private companion object {
+        val REFERENCE_DATE: LocalDate = LocalDate.of(2026, 9, 5)
         const val FINGERPRINT = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         const val OTHER_FINGERPRINT = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
     }

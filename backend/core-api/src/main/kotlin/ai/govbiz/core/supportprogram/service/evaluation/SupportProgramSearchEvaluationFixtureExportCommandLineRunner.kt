@@ -4,6 +4,7 @@ import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramIndexDocument
 import ai.govbiz.core.supportprogram.client.ai.mapper.SupportProgramIndexDocumentMapper
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
+import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
 import ai.govbiz.core.supportprogram.helper.SupportProgramCatalogFingerprintHelper
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.evaluation.config.SupportProgramSearchEvaluationFixtureExportProperties
@@ -21,7 +22,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunner(
 
     override fun run(vararg args: String) {
         val presentPrograms = supportProgramRepository.findPresent()
-        val eligiblePrograms = presentPrograms.filter { it.program.status == SupportProgramStatus.OPEN }
+        val eligiblePrograms = presentPrograms.filter { it.isOpenAt(properties.referenceDate) }
         require(eligiblePrograms.isNotEmpty()) { "cannot export an empty eligible support program catalog" }
 
         val documents = eligiblePrograms
@@ -42,6 +43,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunner(
         val fixture = linkedMapOf<String, Any>(
             "name" to properties.name,
             "dataType" to DATA_TYPE,
+            "referenceDate" to properties.referenceDate.toString(),
             "catalog" to linkedMapOf(
                 "presentProgramCount" to presentPrograms.size,
                 "eligibleProgramCount" to eligiblePrograms.size,
@@ -63,6 +65,14 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunner(
         )
         logger.info("지원사업 검색 평가 fixture 공고 {}건을 {}에 기록했습니다.", documents.size, properties.outputPath)
     }
+
+    private fun CatalogSupportProgram.isOpenAt(referenceDate: java.time.LocalDate): Boolean =
+        SupportProgramStatusResolver.resolve(
+            applicationPeriod = program.applicationPeriod,
+            applicationStartDate = program.applicationStartDate,
+            applicationEndDate = program.applicationEndDate,
+            today = referenceDate,
+        ) == SupportProgramStatus.OPEN
 
     private data class FixtureDocument(
         val catalogProgram: CatalogSupportProgram,

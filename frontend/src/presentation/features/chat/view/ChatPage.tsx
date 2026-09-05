@@ -16,6 +16,8 @@ import {
   chatSidebarClassName,
 } from './ChatPage.styles'
 
+const chatMobileMediaQuery = '(max-width: 47.5rem)'
+
 export function ChatPage() {
   const readiness = useSupportProgramSearchReadinessViewModel()
   const {
@@ -36,6 +38,7 @@ export function ChatPage() {
   const isComposingInput = useRef(false)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const sidebarRef = useRef<HTMLElement>(null)
+  const sidebarPrimaryActionRef = useRef<HTMLButtonElement>(null)
   const shouldRestoreMenuFocusRef = useRef(false)
   const timelineRef = useRef<HTMLDivElement>(null)
   const latestMessage = messages.at(-1)
@@ -105,6 +108,23 @@ export function ChatPage() {
 
     document.addEventListener('keydown', handleSidebarKeyboardNavigation)
     return () => document.removeEventListener('keydown', handleSidebarKeyboardNavigation)
+  }, [isSidebarOpen])
+
+  useEffect(() => {
+    if (!isSidebarOpen) return
+
+    const mediaQuery = window.matchMedia(chatMobileMediaQuery)
+
+    function closeSidebarForDesktop(event: MediaQueryListEvent) {
+      if (event.matches) return
+
+      shouldRestoreMenuFocusRef.current = false
+      setIsSidebarOpen(false)
+      sidebarPrimaryActionRef.current?.focus()
+    }
+
+    mediaQuery.addEventListener('change', closeSidebarForDesktop)
+    return () => mediaQuery.removeEventListener('change', closeSidebarForDesktop)
   }, [isSidebarOpen])
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -178,6 +198,7 @@ export function ChatPage() {
 
         <div className={chatPageStyles.sidebarActions}>
           <button
+            ref={sidebarPrimaryActionRef}
             className={chatPageStyles.newConversationButton}
             type="button"
             onClick={handleStartNewConversation}
