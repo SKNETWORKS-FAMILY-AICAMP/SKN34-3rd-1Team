@@ -4,6 +4,7 @@ import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
+import ai.govbiz.core.supportprogram.facade.AiSupportProgramRetrievalFacade
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -21,6 +22,9 @@ class SupportProgramSearchServiceTest {
 
     @Mock
     private lateinit var supportProgramRepository: SupportProgramRepository
+
+    @Mock
+    private lateinit var retrieval: AiSupportProgramRetrievalFacade
 
     private lateinit var ranking: RecordingSupportProgramRankingFacade
 
@@ -62,15 +66,18 @@ class SupportProgramSearchServiceTest {
         assertNull(byId.getValue("open").recommendationScore)
         assertEquals(emptyList<String>(), byId.getValue("open").matchedReasons)
         assertEquals(emptyList<RankingCall>(), ranking.calls)
+        Mockito.verifyNoInteractions(retrieval)
         Mockito.verify(supportProgramRepository).findPresentBizInfo()
     }
 
     @Test
     fun sendsFilteredCatalogCandidatesToLlmRankingAndReturnsItsResult() {
         val query = "서울에서 AI 창업기업이 받을 지원사업"
+        val open = catalogProgram(id = "open", summary = "AI 창업 지원")
+        Mockito.doReturn(listOf(open)).`when`(retrieval).retrieve(query, listOf(open))
         Mockito.doReturn(
             listOf(
-                catalogProgram(id = "open", summary = "AI 창업 지원"),
+                open,
                 catalogProgram(
                     id = "closed",
                     summary = "지난 AI 지원",
@@ -96,24 +103,62 @@ class SupportProgramSearchServiceTest {
     }
 
     @Test
-    fun capsTheTemporaryPreVectorCandidateWindowAtTwentyNewestPrograms() {
-        Mockito.doReturn(
-            (1..25).map { index ->
+    fun searchesAllCurrentProgramsAndCanRankAnOlderProgramBeyondThePreviousTwentyNewest() {
+        val programs = (1..25).map { index ->
                 catalogProgram(
                     id = "program-$index",
-                    title = "공고 $index",
+                    title = if (index == 1) "서울 AI 기술 지원" else "수출 공고 $index",
                     sortTimestamp = "2026-08-${index.toString().padStart(2, '0')} 10:00:00",
                 )
-            },
-        ).`when`(supportProgramRepository).findPresentBizInfo()
-        ranking.response = { emptyList() }
+            }
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(listOf(programs.first())).`when`(retrieval).retrieve("서울 AI", programs)
+        ranking.response = { it.map { candidate -> candidate.program } }
 
-        service().search("기술 지원", false)
+        val result = service().search("서울 AI", false)
 
         val rankedCandidates = ranking.calls.single().candidates
-        assertEquals(20, rankedCandidates.size)
-        assertEquals("program-25", rankedCandidates.first().program.id)
-        assertEquals("program-6", rankedCandidates.last().program.id)
+        assertEquals(listOf("program-1"), rankedCandidates.map { it.program.id })
+        assertEquals("program-1", result.programs.single().id)
+        Mockito.verify(retrieval).retrieve("서울 AI", programs)
+    }
+
+    @Test
+    fun changingTheQueryChangesTheSemanticCandidatesBeforeRanking() {
+        val programs = listOf(catalogProgram("ai"), catalogProgram("export"))
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(listOf(programs.first())).`when`(retrieval).retrieve("AI", programs)
+        Mockito.doReturn(listOf(programs.last())).`when`(retrieval).retrieve("수출", programs)
+        ranking.response = { it.map { candidate -> candidate.program } }
+
+        assertEquals("ai", service().search("AI", false).programs.single().id)
+        assertEquals("export", service().search("수출", false).programs.single().id)
+    }
+
+    @Test
+    fun filtersClosedAndUpcomingBeforeSemanticCandidateSelection() {
+        val open = catalogProgram("old-open", sortTimestamp = "2020-01-01")
+        val programs = (1..25).map { catalogProgram("closed-$it", status = SupportProgramStatus.CLOSED) } +
+            catalogProgram("upcoming", status = SupportProgramStatus.UPCOMING) + open
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doReturn(listOf(open)).`when`(retrieval).retrieve("AI", listOf(open))
+        ranking.response = { it.map { candidate -> candidate.program } }
+
+        assertEquals("old-open", service().search("AI", true).programs.single().id)
+        Mockito.verify(retrieval).retrieve("AI", listOf(open))
+    }
+
+    @Test
+    fun propagatesIndexNotReadyInsteadOfFallingBackToNewestPrograms() {
+        val programs = listOf(catalogProgram("open"))
+        Mockito.doReturn(programs).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doThrow(ai.govbiz.core._common.exception.AiServiceCallException.unavailable(null))
+            .`when`(retrieval).retrieve("AI", programs)
+
+        assertThrows(ai.govbiz.core._common.exception.AiServiceCallException::class.java) {
+            service().search("AI", true)
+        }
+        assertEquals(emptyList<RankingCall>(), ranking.calls)
     }
 
     @Test
@@ -145,6 +190,7 @@ class SupportProgramSearchServiceTest {
     private fun service() = SupportProgramSearchService(
         supportProgramRepository,
         ranking,
+        retrieval,
     )
 
     private fun catalogProgram(

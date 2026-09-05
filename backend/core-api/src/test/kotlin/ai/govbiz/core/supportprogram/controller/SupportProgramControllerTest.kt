@@ -6,6 +6,7 @@ import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
+import ai.govbiz.core.supportprogram.facade.AiSupportProgramRetrievalFacade
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
 import java.util.stream.Stream
@@ -35,6 +36,9 @@ class SupportProgramControllerTest {
     @Mock
     private lateinit var supportProgramRepository: SupportProgramRepository
 
+    @Mock
+    private lateinit var retrieval: AiSupportProgramRetrievalFacade
+
     private lateinit var ranking: StubSupportProgramRankingFacade
 
     private lateinit var mockMvc: MockMvc
@@ -45,6 +49,7 @@ class SupportProgramControllerTest {
         val service = SupportProgramSearchService(
             supportProgramRepository,
             ranking,
+            retrieval,
         )
         mockMvc = MockMvcBuilders
             .standaloneSetup(SupportProgramController(service))
@@ -54,6 +59,8 @@ class SupportProgramControllerTest {
 
     @Test
     fun returnsTheStableFrontendContractIncludingNullableParsedDates() {
+        Mockito.doReturn(listOf(catalogProgram())).`when`(retrieval)
+            .retrieve("서울 AI", listOf(catalogProgram()))
         Mockito.doReturn(listOf(catalogProgram()))
             .`when`(supportProgramRepository)
             .findPresentBizInfo()
@@ -99,6 +106,8 @@ class SupportProgramControllerTest {
     @ParameterizedTest
     @MethodSource("aiServiceProblemCases")
     fun mapsEveryDirectAiClientFailureToAStableProblem(problemCase: ProblemCase) {
+        Mockito.doReturn(listOf(catalogProgram())).`when`(retrieval)
+            .retrieve("서울", listOf(catalogProgram()))
         Mockito.doReturn(listOf(catalogProgram()))
             .`when`(supportProgramRepository)
             .findPresentBizInfo()
@@ -114,6 +123,17 @@ class SupportProgramControllerTest {
     fun requiresASearchQueryParameter() {
         mockMvc.perform(get(PATH))
             .andExpect(status().isBadRequest())
+    }
+
+    @Test
+    fun mapsIncompleteSemanticIndexToServiceUnavailable() {
+        Mockito.doReturn(listOf(catalogProgram())).`when`(supportProgramRepository).findPresentBizInfo()
+        Mockito.doThrow(AiServiceCallException.unavailable(null)).`when`(retrieval)
+            .retrieve("서울", listOf(catalogProgram()))
+
+        mockMvc.perform(get(PATH).queryParam("query", "서울"))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("AI_SERVICE_UNAVAILABLE"))
     }
 
     @Test

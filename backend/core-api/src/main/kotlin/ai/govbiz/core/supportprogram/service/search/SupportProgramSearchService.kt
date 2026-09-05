@@ -3,6 +3,7 @@ package ai.govbiz.core.supportprogram.service.search
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
+import ai.govbiz.core.supportprogram.facade.AiSupportProgramRetrievalFacade
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchResult
 import org.springframework.stereotype.Service
@@ -12,26 +13,29 @@ import org.springframework.stereotype.Service
 class SupportProgramSearchService(
     private val supportProgramRepository: SupportProgramRepository,
     private val rankingFacade: SupportProgramRankingFacade,
+    private val retrievalFacade: AiSupportProgramRetrievalFacade,
 ) {
     fun search(rawQuery: String?, acceptingOnly: Boolean): SupportProgramSearchResult {
         val query = rawQuery?.trim().orEmpty()
-        val candidates = supportProgramRepository
+        val eligiblePrograms = supportProgramRepository
             .findPresentBizInfo()
             .asSequence()
             .filter { !acceptingOnly || it.program.status == SupportProgramStatus.OPEN }
-            .sortedWith(
-                compareByDescending<CatalogSupportProgram> { it.sortTimestamp }
-                    .thenBy { it.program.id },
-            )
-            .take(SupportProgramRankingFacade.MAX_CANDIDATES)
             .toList()
 
         val programs = when {
-            candidates.isEmpty() -> emptyList()
-            query.isBlank() -> candidates
+            eligiblePrograms.isEmpty() -> emptyList()
+            query.isBlank() -> eligiblePrograms
+                .sortedWith(
+                    compareByDescending<CatalogSupportProgram> { it.sortTimestamp }
+                        .thenBy { it.program.id },
+                )
                 .take(SupportProgramRankingFacade.MAX_RESULTS)
                 .map { it.program.copy(matchedReasons = emptyList(), recommendationScore = null) }
-            else -> rankingFacade.rank(query, candidates, SupportProgramRankingFacade.MAX_RESULTS)
+            else -> {
+                val candidates = retrievalFacade.retrieve(query, eligiblePrograms)
+                rankingFacade.rank(query, candidates, SupportProgramRankingFacade.MAX_RESULTS)
+            }
         }
 
         return SupportProgramSearchResult(

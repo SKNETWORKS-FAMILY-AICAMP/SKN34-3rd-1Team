@@ -39,6 +39,7 @@ class AiServiceClientPropertiesTest {
         assertEquals(URI.create(baseUrl), properties.baseUrl)
         assertEquals(CONNECT_TIMEOUT, properties.connectTimeout)
         assertEquals(READ_TIMEOUT, properties.readTimeout)
+        assertEquals(Duration.ofSeconds(30), properties.semanticSearchReadTimeout)
     }
 
     @ParameterizedTest
@@ -106,6 +107,15 @@ class AiServiceClientPropertiesTest {
     }
 
     @Test
+    fun rejectsNonPositiveSemanticSearchTimeout() {
+        for (timeout in listOf(Duration.ZERO, Duration.ofSeconds(-1))) {
+            assertThrows(IllegalArgumentException::class.java) {
+                AiServiceClientProperties(URI.create("http://127.0.0.1:8000"), CONNECT_TIMEOUT, READ_TIMEOUT, timeout)
+            }
+        }
+    }
+
+    @Test
     fun rejectsMissingRequiredValues() {
         assertConstructorRejectsNull(null, CONNECT_TIMEOUT, READ_TIMEOUT)
         assertConstructorRejectsNull(
@@ -129,9 +139,10 @@ class AiServiceClientPropertiesTest {
             URI::class.java,
             Duration::class.java,
             Duration::class.java,
+            Duration::class.java,
         )
         val exception = assertThrows(InvocationTargetException::class.java) {
-            constructor.newInstance(baseUrl, connectTimeout, readTimeout)
+            constructor.newInstance(baseUrl, connectTimeout, readTimeout, Duration.ofSeconds(30))
         }
         assertInstanceOf(
             NullPointerException::class.java,

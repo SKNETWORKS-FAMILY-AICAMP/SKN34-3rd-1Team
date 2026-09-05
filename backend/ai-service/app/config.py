@@ -15,6 +15,12 @@ class Settings:
     openai_model: str
     llm_model_timeout_seconds: float
     llm_run_timeout_seconds: float
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str | None = None
+    qdrant_timeout_seconds: float = 5.0
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_embedding_dimensions: int = 1536
+    embedding_timeout_seconds: float = 15.0
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -36,6 +42,16 @@ class Settings:
             llm_run_timeout_seconds=_positive_float(
                 environ.get("LLM_RUN_TIMEOUT_SECONDS", legacy_run_timeout),
                 default=DEFAULT_LLM_RUN_TIMEOUT_SECONDS,
+            ),
+            qdrant_url=_optional_value(environ.get("QDRANT_URL")) or "http://localhost:6333",
+            qdrant_api_key=_optional_value(environ.get("QDRANT_API_KEY")),
+            qdrant_timeout_seconds=_positive_float(
+                environ.get("QDRANT_TIMEOUT_SECONDS"), default=5.0,
+            ),
+            openai_embedding_model=_embedding_model(),
+            openai_embedding_dimensions=_embedding_dimensions(),
+            embedding_timeout_seconds=_positive_float(
+                environ.get("EMBEDDING_TIMEOUT_SECONDS"), default=15.0,
             ),
         )
 
@@ -59,3 +75,21 @@ def _positive_float(value: str | None, *, default: float) -> float:
     except ValueError:
         return default
     return parsed if 0 < parsed <= 30 else default
+
+
+def _embedding_model() -> str:
+    model = _optional_value(environ.get("OPENAI_EMBEDDING_MODEL")) or "text-embedding-3-small"
+    if model not in {"text-embedding-3-small", "text-embedding-3-large"}:
+        raise SettingsConfigurationError("OPENAI_EMBEDDING_MODEL is not supported")
+    return model
+
+
+def _embedding_dimensions() -> int:
+    maximum = 1536 if _embedding_model() == "text-embedding-3-small" else 3072
+    try:
+        dimensions = int(environ.get("OPENAI_EMBEDDING_DIMENSIONS", "1536"))
+    except ValueError as error:
+        raise SettingsConfigurationError("OPENAI_EMBEDDING_DIMENSIONS is invalid") from error
+    if not 1 <= dimensions <= maximum:
+        raise SettingsConfigurationError("OPENAI_EMBEDDING_DIMENSIONS is invalid")
+    return dimensions

@@ -11,12 +11,13 @@ React Web
       ├→ MySQL 지원사업 카탈로그 (사용자 검색)
       ├→ 공공데이터포털 지원사업 공고 API (백그라운드 동기화)
       └→ FastAPI AI Service
-          └→ OpenAI Agents SDK typed agent (설정된 경우)
+          ├→ Qdrant 공고 의미 검색
+          └→ OpenAI 임베딩 및 typed agent 점수화
 ```
 
 브라우저는 Core API만 호출하므로 공공데이터포털 인증키가 JavaScript bundle이나 브라우저 요청에
-노출되지 않습니다. AI Service는 Core API가 호출하는 내부 서비스이며, LLM에는 공고 사실이 아니라
-사용자의 검색 문장만 전달합니다.
+노출되지 않습니다. AI Service는 Core API가 호출하는 내부 서비스입니다. 임베딩 API에는 공고 검색용
+텍스트와 질의를, 점수화 Agent에는 사용자의 검색 문장과 Core가 검증한 공고 후보를 전달합니다.
 
 ## 현재 구현: 실제 공고 검색 채팅
 
@@ -40,7 +41,8 @@ React Web
                   → SupportProgramRepository
                       → GET /api/v1/support-programs/search
                           → MySQL에서 현재 노출된 기업마당 공고 조회
-                          → 접수 상태 필터와 최신 후보 최대 20개 선정
+                          → 접수 상태 필터 후 현재 공고 ID·내용 해시로 Qdrant 검색 범위 제한
+                          → 질의 임베딩과 의미가 가까운 후보 최대 20개 선정
                           → POST /internal/v1/support-program-rankings/rank
                               → OpenAI typed agent가 버전된 기준으로 후보별 점수화
                           → Core가 ID·점수 합계·순서를 검증하고 상위 5개 반환
@@ -81,7 +83,9 @@ Repository, UseCase와 외부 서비스 역할별 모듈로 분리해 관리합�
 카탈로그를 조회하며, 기업마당 API는 백그라운드 동기화 스케줄러만 호출합니다. MySQL 카탈로그의
 테이블·저장·조회와 기업마당 전체 목록을 원자적으로 동기화하는 핵심 Service와 정기 실행 스케줄러를
 구현했습니다. 기본 설정에서는 앱 준비 뒤 즉시 한 번 동기화하고, 이후 이전 동기화가 끝난 시점부터
-6시간마다 다시 실행합니다. 첫 동기화가 끝나기 전에는 검색 결과가 비어 있을 수 있습니다.
+6시간마다 다시 실행합니다. 별도 색인 스케줄러는 기본 1분마다 MySQL 공고와 Qdrant를 대조하여
+누락·변경된 검색 벡터를 생성합니다. 첫 공고 수집 전에는 결과가 비어 있고, 검색 대상 공고의
+벡터가 아직 준비되지 않았으면 자연어 검색은 명시적인 503을 반환합니다.
 현재 구현 평가와 구체적인 확장 원칙은
 [Frontend 상태 관리 설계](frontend/README.md#상태-관리-설계와-확장-원칙)와
 [Provider와 Service Locator에서 ViewModel까지 전달](frontend/README.md#redux-provider와-service-locator에서-viewmodel까지-전달)을
@@ -99,6 +103,7 @@ Repository, UseCase와 외부 서비스 역할별 모듈로 분리해 관리합�
 - MySQL 8.4·Flyway·MyBatis Mapper XML 기반의 `support_program` 카탈로그 스키마와 공고 UPSERT·검색 Repository
 - 전체 수집 성공 후에만 신규·변경·누락 공고를 하나의 트랜잭션으로 반영하는 기업마당 동기화 Service
 - 실제 MySQL Testcontainers를 이용한 카탈로그 저장·갱신·비활성화·롤백 통합 테스트
+- OpenAI 임베딩과 Qdrant를 사용한 전체 공고 후보 검색, 내용 해시별 재처리·미노출 제외
 - Tailwind CSS 유틸리티와 Vite 프록시를 사용하는 Docker Compose 개발 환경
 - 실제 키 없이 로컬 공공데이터 스텁을 사용하는 결정적 Compose smoke 검증
 
@@ -130,11 +135,26 @@ BizInfoSupportProgramCatalogSyncScheduler
 - 자동 동기화가 실패해도 Core API는 계속 실행하며 이전 MySQL 카탈로그를 유지합니다.
 
 `GET /api/v1/support-programs/search`는 MySQL의 현재 노출 공고를 읽어
-`검색 요청 → MySQL 조회 → AI 점수화 → 응답` 순서로 처리합니다. 사용자 검색 요청은 기업마당 API를
+`검색 요청 → MySQL 현재 공고·접수 상태 확인 → Qdrant 관련 후보 검색 → AI 점수화 → 응답` 순서로 처리합니다. 사용자 검색 요청은 기업마당 API를
 직접 호출하지 않습니다. 기업마당 API 호출은 `BizInfoSupportProgramCatalogSyncScheduler`의 동기화에만
 있습니다. 자동 동기화를 `BIZINFO_SYNC_ENABLED=false`로 끄면 기존 MySQL 데이터는 검색할 수 있지만,
 새 공고는 갱신되지 않습니다. 세부 실행 방법과 환경변수는
 [Core API README](backend/core-api/README.md)를 참고하세요.
+
+### 전체 공고 의미 검색
+
+비어 있지 않은 검색어는 최신 공고 20개로 제한하지 않고, MySQL에서 읽은 현재 검색 가능 공고 전체를
+Qdrant 검색 범위로 사용합니다. 빈 검색어만 종전처럼 최신 공고 최대 5개를 반환하며 AI를 호출하지 않습니다.
+
+색인은 `제공처:원본ID`와 검색 텍스트 SHA-256으로 버전을 구분합니다. 이미 색인한 내용은 임베딩을
+재호출하지 않으며, 변경·누락 색인은 다음 스케줄에서 다시 시도합니다. 최신 DB에 없는 공고와 이전 내용의
+벡터는 검색 허용 목록에 포함되지 않습니다. 모든 배치 저장이 끝난 후에만 같은 제공처의 불필요한 벡터를 정리합니다.
+검색 대상 중 색인이 누락되거나 Qdrant·임베딩 호출이 실패하면 최신 공고 목록으로 대체하지 않고 오류를 반환합니다.
+
+이 단계는 공고 목록의 의미 검색입니다. 상세 원문·첨부문서에 근거한 RAG 질의응답, 적합성 임계값과
+0~5개 추천 정책은 별도 후속 작업입니다. 현재는 매 검색마다 전체 현재 공고를 MySQL에서 읽고 ID·해시 목록을
+내부 API에 보내므로, 대규모 카탈로그의 DB 조회 비용을 줄이는 최적화도 후속 범위입니다.
+[검색 계약](docs/support-program-search-contract.md)과 [평가 자료](evaluation/support-program-search/README.md)를 참고하세요.
 
 ## SampleItem 예제
 

@@ -1,19 +1,21 @@
 # GovBiz AI Service
 
-FastAPI와 OpenAI Agents SDK로 공식 지원사업 후보를 점수화하는 내부 서비스입니다. 브라우저에 직접
-공개하지 않고 Spring Core API만 호출합니다.
+FastAPI, OpenAI 임베딩, Qdrant로 전체 공고에서 관련 후보를 찾고 OpenAI Agents SDK로 후보를
+점수화하는 내부 서비스입니다. 브라우저에 직접 공개하지 않고 Spring Core API만 호출합니다.
 
 ## 책임
 
 AI Service가 하는 일:
 
 - 사용자의 자연어 질문과 Core가 검증한 공고 후보를 함께 읽음
+- Core가 보낸 공고 검색 문서를 OpenAI로 임베딩하고 Qdrant에 색인
+- 현재 MySQL 공고 ID·내용 해시 목록 안에서 의미가 가까운 후보를 최대 20개 검색
 - 버전된 100점 평가 기준으로 모든 후보를 점수화
 - 공고별 세부 점수·총점·추천 이유를 strict structured output으로 반환
 
 AI Service가 하지 않는 일:
 
-- 기업마당 API 호출 또는 공고 저장
+- 기업마당 API 호출 또는 MySQL 원본 공고 저장
 - 접수 상태 계산과 공식 URL 검증
 - 존재하지 않는 공고 추가
 - 최종 HTTP 공개 DTO 조립
@@ -24,10 +26,58 @@ AI Service가 하지 않는 일:
 ```http
 GET /internal/v1/health
 POST /internal/v1/support-program-rankings/rank
+PUT /internal/v1/support-program-index/batch
+POST /internal/v1/support-program-index/prune
+POST /internal/v1/support-program-index/search
 ```
 
 점수화 요청은 최대 20개 후보와 상위 결과 개수 1~5개를 받습니다. 계약 예시는
 [지원사업 검색·추천 HTTP 계약](../../docs/support-program-search-contract.md)에 있습니다.
+
+## 전체 공고 의미 검색
+
+공고의 제목·요약·지원대상 등을 포함한 검색 문서는 Core가 구성합니다. `id`는
+`BIZINFO:PBLN_123`처럼 제공처를 포함하고, `contentHash`는 전달된 `text`의 UTF-8 SHA-256입니다.
+Qdrant point ID는 이 두 값에서 결정되므로 같은 문서를 반복 처리해도 중복되지 않습니다.
+
+| 요청 | 입력 | 응답 |
+|---|---|---|
+| `PUT .../batch` | `documents: [{id, contentHash, text}]`, 1~50개, text 최대 12,000자 | `{indexedCount}`: 기존 색인 포함 요청 건수 |
+| `POST .../prune` | `sourceCode`, `documents: [{id, contentHash}]`, 최대 20,000개 | `{retainedCount}` |
+| `POST .../search` | `query`: 공백 제외 1~500자, `eligibleDocuments: [{id, contentHash}]`, `limit`: 1~20 | `{query, matches: [{id, contentHash, score}]}` |
+
+```text
+Core의 색인 스케줄러
+→ HTTP batch API → SupportProgramIndexService
+→ Qdrant에서 동일 ID·해시 존재 여부 확인
+→ 누락·변경 문서만 OpenAI Embeddings API 호출
+→ 차원·유한 숫자·응답 인덱스·건수 검증 → Qdrant UPSERT → Response
+→ 모든 batch 성공 후 HTTP prune API → 현재 제공처의 이전 버전·누락 공고 정리
+
+사용자 검색 → Core가 현재 검색 가능한 MySQL 공고 ID·해시 전달
+→ HTTP search API → SupportProgramIndexService
+→ 요청한 모든 현재 버전이 색인됐는지 정확한 count 검증
+→ OpenAI로 검색어 임베딩
+→ Qdrant HasId 필터로 해당 ID·해시만 검색 → 관련 후보 Response
+→ 기존 HTTP ranking API → Service → Agent → OpenAI → Response
+```
+
+Qdrant는 ID·해시·제공처와 벡터만 보관합니다. 공식 공고 내용과 접수 상태의 기준은 MySQL이며,
+닫힌 공고나 미노출 공고를 제외할 책임은 Core에 있습니다. AI Service는 Core가 지정한 현재
+ID·해시 목록만 검색하여 이전 버전이 추천 후보로 섞이지 않게 합니다.
+
+색인이 없거나 현재 공고 중 하나라도 아직 색인되지 않았다면 `503`과
+`{"detail":{"code":"INDEX_NOT_READY"}}`를 반환합니다. 부분 색인이나 최신 20개 조회로 대체하지
+않습니다. Qdrant·OpenAI 장애, 임베딩 검증 실패는 `INDEX_UNAVAILABLE`로 구분합니다. 빈 검색
+가능 목록은 외부 호출 없이 빈 `matches`를 반환합니다.
+
+모델·차원·문서 처리 버전은 collection 이름에 반영합니다. 모델 또는 차원을 바꾸면 새 collection에
+전체 재색인이 필요하며, 기존 collection은 자동 삭제하지 않습니다. 현재 구현은 단일 Core 색인
+스케줄러를 전제로 합니다. 다중 인스턴스의 오래된 snapshot이 최신 snapshot을 prune하지 않도록
+분산 잠금이나 snapshot 버전 비교가 필요하므로 다중 스케줄러 배포는 지원 범위에 포함하지 않습니다.
+
+이번 단계는 공고 단위 후보 검색입니다. 첨부문서의 문단 검색이나 원문 인용 답변을 제공하는
+RAG는 아직 구현하지 않았습니다. 벡터 유사도는 신청 자격 충족률이나 선정 확률이 아닙니다.
 
 ## 평가 기준
 
@@ -76,7 +126,11 @@ app/
 ├── health/                         # 공통 Health 수직 기능
 │   ├── router.py                   # 내부 Health HTTP 경계
 │   └── models.py                   # Health 응답 계약
-└── support_program_ranking/        # 지원사업 점수화 수직 기능
+├── support_program_index/          # 공고 임베딩·Qdrant 후보 검색
+│   ├── router.py                   # batch/prune/search 내부 HTTP 경계
+│   ├── models.py                   # ID·해시·본문·검색 계약 검증
+│   └── service.py                  # OpenAI 임베딩·Qdrant 색인과 검색
+└── support_program_ranking/         # 지원사업 점수화 수직 기능
     ├── router.py                   # 내부 HTTP 경계
     ├── models.py                   # 요청·출력·응답 Pydantic 계약
     ├── prompt.py                   # 버전된 100점 평가 기준
@@ -113,9 +167,24 @@ OPENAI_API_KEY=필수
 OPENAI_MODEL=gpt-5.6-luna
 LLM_MODEL_TIMEOUT_SECONDS=8.0
 LLM_RUN_TIMEOUT_SECONDS=10.0
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=
+QDRANT_TIMEOUT_SECONDS=5
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_EMBEDDING_DIMENSIONS=1536
+EMBEDDING_TIMEOUT_SECONDS=15
 ```
 
 전체 Agent 제한은 모델 호출 제한보다 길고 Core의 기본 읽기 제한 `12s`보다 짧게 유지합니다.
+색인·의미 검색은 별도 Core 읽기 제한을 사용합니다. AI batch/search 전체 제한은 `25s`, prune은
+`15s`입니다. 임베딩은 재시도 없이 호출하며 한 문서 최대 8,191 tokens, 요청당 최대 32개로
+제한하여 전체 입력이 300,000 tokens보다 작게 유지합니다. 긴 문서의 뒷부분은 이 단계의 후보
+검색에서 제외될 수 있습니다. 토큰 계산은 두 지원 모델 공통 `cl100k_base`를 사용합니다.
+Docker 이미지는 빌드 시 토크나이저 파일을 받아 런타임에 별도 다운로드가 필요하지 않습니다.
+
+`OPENAI_EMBEDDING_MODEL`은 `text-embedding-3-small`과 `text-embedding-3-large`를 지원합니다.
+차원은 small 최대 1,536, large 최대 3,072로 검증합니다. 기존 순위화 OpenAI client를 공유하며
+애플리케이션 종료 시 OpenAI와 Qdrant client를 모두 닫습니다.
 
 ## 설치와 실행
 
@@ -132,10 +201,19 @@ uv lock --check
 uv sync --locked --extra dev
 uv pip check --python .venv/bin/python
 uv run --locked --extra dev python -m pytest
+QDRANT_TEST_URL=http://localhost:6333 uv run --locked --extra dev python -m pytest tests/support_program_index
 uv build
 ```
 
 테스트는 `agents.testing.ScriptedModel`과 HTTP mock transport를 사용하므로 실제 OpenAI 네트워크를
-호출하지 않습니다.
+호출하지 않습니다. 색인 테스트는 기본적으로 실제 Qdrant client의 로컬 메모리 모드를 사용합니다.
+`QDRANT_TEST_URL`을 지정하면 같은 테스트를 실제 Qdrant 서버에서 실행하며, 테스트마다 독립적인
+collection을 만들고 정리합니다. 현재 운영 collection은 테스트가 사용하지 않습니다.
+
+최신 20개 밖의 관련 공고 조회, 재색인 중복 방지, 현재 해시와 검색 가능 목록 필터, 부분 실패 시
+prune 차단, 다른 제공처 보존, 비정상 임베딩 거부를 검증합니다. 테스트 임베딩은 HTTP mock으로
+고정한 벡터이므로 실제 한국어 검색 정확도 향상을 측정한 결과로 해석하면 안 됩니다.
+
+입력 제한 근거: [OpenAI 임베딩 API](https://developers.openai.com/api/reference/python/resources/embeddings/methods/create).
 
 Agent 확장 원칙은 [AI Agent 모듈 구조](docs/agent-structure.md)를 참고하세요.

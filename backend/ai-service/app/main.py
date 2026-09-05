@@ -8,6 +8,7 @@ from app.support_program_ranking.router import router as support_program_ranking
 from app.support_program_ranking.agent import SupportProgramRecommendationAgent
 from app.bootstrap import build_application_container
 from app.config import Settings
+from app.support_program_index.router import router as support_program_index_router
 
 
 def create_app(
@@ -37,4 +38,5 @@ def create_app(
     application.state.container = container
     application.include_router(health_router)
     application.include_router(support_program_rankings_router)
+    application.include_router(support_program_index_router)
     return application

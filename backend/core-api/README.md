@@ -28,18 +28,19 @@ supportprogram/
 ├── controller/             # 지원사업 공개 HTTP API
 │   └── dto/                # 지원사업 공개 요청·응답 계약
 ├── service/
-│   ├── search/             # MySQL 카탈로그 검색 흐름
-│   ├── sync/               # 기업마당 전체 공고 동기화와 정기 실행
+│   ├── search/             # 전체 MySQL 공고의 의미 검색·점수화 흐름
+│   ├── sync/               # 기업마당→MySQL 및 MySQL→벡터 색인 동기화·정기 실행
 │   └── dto/                # 검증된 검색 실행 결과
 ├── config/                 # 지원사업 공용 Spring 설정
-├── facade/                 # 기업마당 수집·AI 점수화 Facade 계약과 구현
+├── facade/                 # 기업마당 수집·의미 검색·AI 점수화 경계
 │   └── exception/          # 상위 Service에 전달하는 Facade 실패 계약
 ├── domain/                 # 지원사업·정규화된 검색 후보 모델과 상태
 ├── repository/             # MySQL 지원사업 카탈로그 저장·조회
 │   └── mapper/             # MyBatis SQL Mapper와 DB 행 타입
 └── client/
-    ├── ai/                 # AI 점수화 Client
-    │   └── dto/            # AI 내부 요청·응답 계약
+    ├── ai/                 # AI 점수화·벡터 색인·의미 검색 Client
+    │   ├── dto/            # AI 내부 요청·응답 계약
+    │   └── mapper/         # 동일 공고 버전의 검색 문서·SHA-256 구성
     └── bizinfo/            # 기업마당 HTTP와 외부 응답 해석
         ├── config/         # 기업마당 Client 설정·속성
         ├── dto/            # 기업마당 응답 계약
@@ -62,7 +63,7 @@ _health_ai_service/
 └── service/                # AI Service Health 응답 검증
     └── dto/                # 검증된 Health 실행 결과
 _common/
-├── ai_config/              # 두 AI Client가 공유하는 주소·timeout·RestClient 설정
+├── ai_config/              # AI Client 주소·일반/의미검색 timeout·RestClient 설정
 ├── config/                 # 전체 API의 CORS·JSON 정책
 ├── exception/              # 공통 AI 호출 예외와 ProblemDetail 예외 처리
 └── helper/                 # 공통 RestClient 생성·검증과 HTTP 예외 분류 헬퍼
@@ -183,8 +184,8 @@ return AiServiceHealthResponse(result.status, result.service)
 서로 다른 계약을 독립적으로 변경하기 위한 경계입니다.
 
 지원사업 검색 관련 코드는 `supportprogram` 기능 디렉터리에서 함께 관리합니다. `service/search`는
-Repository에서 현재 노출된 기업마당 공고를 읽고 접수 상태 필터·최신 후보 선택·AI 점수화를 연결합니다.
-`service/sync`는 기업마당 전체 공고 수집과 DB 반영 순서를 소유합니다. `facade`는
+Repository에서 현재 노출된 기업마당 공고를 읽고 접수 상태 필터·전체 공고 의미 검색·AI 점수화를 연결합니다.
+`service/sync`는 기업마당 전체 공고 수집과 DB 반영, 독립적인 벡터 색인 갱신 순서를 소유합니다. `facade`는
 `SupportProgramCatalogFacade`·`SupportProgramRankingFacade` 계약과 그 구현을 함께 관리하고, 하위
 `exception`에는 상위 Service에 전달하는 안정적인 Facade 실패 계약을 둡니다.
 `BizInfoSupportProgramCatalogFacade`는 동기화에 필요한 기업마당 조회·오류 변환·공고 정규화를 `load`
@@ -195,8 +196,9 @@ Repository의 짧은 DB transaction을 호출합니다. `repository/SupportProgr
 기업마당 전체 동기화에서는 기존 BIZINFO 행을 미노출 처리하고 이번 목록 UPSERT를 하나의 transaction으로
 묶어, 중간 실패 시 이전 카탈로그를 보존합니다. SQL은 `repository/mapper/SupportProgramMapper`와
 `src/main/resources/mybatis/supportprogram/repository/SupportProgramMapper.xml`에 두어 Kotlin 업무 코드에서
-분리합니다. 현재 AI 후보와 공개 응답은 원본 ID만으로 공고를 구분하므로, 두 번째 제공처를 실제로
-추가할 때는 제공처를 포함한 공고 식별자 규칙과 표시 이름 매핑을 함께 결정합니다. 모든 전송 객체를
+분리합니다. 벡터 색인과 의미 검색은 `BIZINFO:{원본 ID}`와 검색 문서의 SHA-256으로 현재 버전을
+구분합니다. 현재 점수화 후보와 공개 응답은 원본 ID를 유지하므로 두 번째 제공처를 실제로
+추가할 때는 이 공개·점수화 식별자 계약과 표시 이름 매핑도 함께 확장합니다. 모든 전송 객체를
 프로젝트 전체의 한 DTO 폴더에 모으지 않습니다. 브라우저 공개 응답은 `supportprogram/controller/dto`,
 AI Service 요청·응답은 `supportprogram/client/ai/dto`, 기업마당 응답은 `supportprogram/client/bizinfo/dto`,
 검증된 검색 결과는 `supportprogram/service/dto`가 각각 소유합니다. `BizInfoClient`는 인증키·pagination·
@@ -335,6 +337,10 @@ Core API가 외부 요청 전에 정확히 한 번 인코딩합니다. 키가 �
 | `AI_SERVICE_BASE_URL` | `http://127.0.0.1:8000` | 내부 AI Service 주소 |
 | `AI_SERVICE_CONNECT_TIMEOUT` | `1s` | AI Service 연결 제한시간 |
 | `AI_SERVICE_READ_TIMEOUT` | `12s` | AI Service 응답 제한시간(LLM 전체 제한 10초 + 내부 응답 여유) |
+| `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | 의미 검색·문서 색인 HTTP 응답 제한시간 |
+| `SUPPORT_PROGRAM_INDEX_ENABLED` | `true` | MySQL 공고의 벡터 색인 자동 갱신 여부 |
+| `SUPPORT_PROGRAM_INDEX_INITIAL_DELAY` | `PT0S` | 첫 색인 갱신 실행까지의 기간 |
+| `SUPPORT_PROGRAM_INDEX_FIXED_DELAY` | `PT1M` | 이전 색인 갱신 종료 뒤 다음 실행까지의 기간 |
 | `APP_CORS_ALLOWED_ORIGIN` | `http://localhost:5173` | 허용할 Web origin |
 | `SPRING_DATASOURCE_URL` | `jdbc:mysql://127.0.0.1:3306/govbiz` | MySQL JDBC 연결 주소 |
 | `SPRING_DATASOURCE_USERNAME` | `govbiz` | MySQL 연결 사용자 |
@@ -372,11 +378,35 @@ DB 반영이 실패해도 Scheduler는 오류를 기록하고 다음 실행을 �
 ## 지원사업 검색 동작
 
 Core API는 검색 요청마다 공공데이터포털을 호출하지 않고 MySQL 카탈로그를 읽습니다. Repository는 저장된
-신청 기간과 서울 날짜로 접수상태를 다시 계산하고, 검색 Service는 접수 필터 적용 후 최신 후보 최대 20개를
-AI Service에 보냅니다. LLM이 버전된 100점 기준으로 모든 후보를 점수화하며 Core는 결과를 방어적으로
-검증합니다. 카탈로그가 비어 있으면 빈 목록을 반환합니다. 기업마당 동기화가 실패해도 이전 카탈로그는
-검색 가능하며, 실패 정보는 Scheduler 로그에만 기록합니다. 현재 최신 20개 제한은 벡터 검색 전의 임시
-후보 선택입니다.
+신청 기간과 서울 날짜로 접수 상태를 계산합니다. 검색어가 있으면 접수 필터를 통과한 **전체 공고**의
+ID·문서 해시를 `AiSupportProgramRetrievalFacade`가 AI Service에 전달합니다. AI Service는 Qdrant에서
+검색어와 가까운 최대 20개를 찾고, Core는 ID·문서 버전·중복·유한 점수·내림차순·개수·검색어 일치를
+검증한 뒤 기존 LLM 점수화에 전달합니다. 응답은 적격 공고 수와 20 중 작은 수만큼 있어야 하며, 부족한
+성공 응답도 잘못된 내부 응답으로 처리합니다. 오래된 공고도 의미 검색 후보에 포함되며 최신 20개 절단은 없습니다.
+
+검색어가 비어 있으면 의미 검색과 LLM을 호출하지 않고 최신 5개를 반환합니다. DB나 접수 필터 결과가
+비어 있으면 빈 목록을 반환합니다. 기업마당 동기화가 실패해도 이전 MySQL 공고와 그 버전의 색인이
+있으면 검색할 수 있습니다. 필요한 공고 버전의 색인이 아직 없거나 Qdrant가 불가하면 공개 API는
+`503 AI_SERVICE_UNAVAILABLE`을 반환합니다. 이 실패를 최신 공고나 빈 검색 결과로 숨기지 않습니다.
+
+### 벡터 색인 갱신
+
+`SupportProgramIndexSyncScheduler`는 기업마당 수집과 별도 스레드에서 앱 시작 직후 및 이전 작업 종료
+1분 뒤마다 `SupportProgramIndexSyncService.sync()`를 호출합니다. 서비스는 현재 MySQL 공고를 읽어
+제목·기관·대상·분야·지역·신청기간·내용을 일정한 형식으로 구성하고, UTF-8 문서의 SHA-256을 계산합니다.
+본문의 제어·형식 문자는 개행·탭을 제외하고 공백으로 정리한 후 Unicode 코드 포인트 기준 최대
+12,000자로 제한하며 오늘의 접수 상태는 해시에 넣지 않습니다.
+
+- `PUT /internal/v1/support-program-index/batch`: 16개씩 색인 요청. 동일 ID·해시의 벡터는 AI Service가 재사용합니다.
+- 모든 배치 성공 후에만 `POST /internal/v1/support-program-index/prune`으로 해당 제공처의 이전 버전을 정리합니다.
+- 배치 일부 실패나 건수 검증 실패 시 정리를 실행하지 않고 다음 예약 실행에서 전체 스냅샷을 재시도합니다.
+- 현재 DB 스냅샷이 비어 있으면 BIZINFO 색인만 비웁니다. 다른 제공처를 정리하지 않습니다.
+- 외부 색인 호출은 MySQL transaction 밖에서 실행합니다. DB 스키마 변경은 없습니다.
+
+현재 단일 Core 인스턴스용 구현입니다. 검색·색인은 MySQL 공고 전체를 읽고 검색 시 ID·해시 목록을
+전송하므로 최대 20,000개까지 지원합니다. 상한 초과를 임의 절단하지 않습니다. 여러 인스턴스로
+확장할 때는 색인 작업의 단일 실행 보장과 갱신 세대 관리가 필요합니다. 이 단계는 공고 요약 수준의
+의미 검색이며 상세 첨부문서 근거 답변 RAG는 아직 포함하지 않습니다.
 
 ## AI Service 오류 계약
 

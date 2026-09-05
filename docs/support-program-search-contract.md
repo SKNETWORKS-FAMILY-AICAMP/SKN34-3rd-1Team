@@ -8,7 +8,8 @@ Browser
   → GET /api/v1/support-programs/search
       → Core API
           → MySQL의 현재 노출 기업마당 공고 조회·접수 상태 필터
-          → 최신 후보 최대 20개 선택
+          → 현재 공고 ID·내용 해시로 Qdrant 검색 범위 제한
+          → 질의 임베딩에 가까운 후보 최대 20개 선택
           → POST /internal/v1/support-program-rankings/rank
               → LLM이 버전된 평가 기준으로 모든 후보 점수화
           → Core가 ID·점수·순서를 검증하고 상위 5개 반환
@@ -129,12 +130,34 @@ Core는 다음 불변식을 다시 검사합니다.
 `null`입니다. 날짜를 확실히 해석할 수 없으면 시작·종료일은 `null`, 상태는 `UNKNOWN`으로 유지합니다.
 원본에 없는 지원금액은 생성하지 않으며 `sourceUrl`로 공식 원문을 확인할 수 있습니다.
 
-## 현재 후보 선택 한계
+## 전체 카탈로그 후보 검색
 
-아직 DB 전문검색·벡터 검색이 없기 때문에 Core는 접수 상태를 적용한 뒤 갱신시각 기준 최신 20개를
-LLM 후보로 보냅니다. 이 20개 안의 의미 순위는 LLM이 결정하지만, 오래된 관련 공고가 후보에서 빠질
-수 있습니다. 이후 SQL 전문검색 또는 벡터 검색으로 의미 후보를 먼저 찾고 같은 LLM 점수화를
-재사용합니다. Kotlin 단어 사전이나 고정 점수표를 다시 추가하지 않습니다.
+검색어가 있으면 Core는 MySQL에서 현재 노출된 전체 기업마당 공고를 읽어 접수 상태를 적용합니다.
+그 전체 허용 목록의 ID·검색 텍스트 해시를 AI Service에 보내고, Qdrant의 의미 검색으로 최대 20개를
+선택합니다. 최신순 21번째 이후의 공고도 후보가 될 수 있습니다. 빈 검색어만 최신순 최대 5개를 반환합니다.
+
+내부 색인 API는 다음 세 가지입니다. 공개 브라우저 API가 아니며 FastAPI 내부 포트에서만 제공합니다.
+
+| 메서드·경로 | 요청 | 응답 |
+|---|---|---|
+| `PUT /internal/v1/support-program-index/batch` | `documents`: `{id, contentHash, text}` 최대 50개 | `indexedCount`: 이미 존재하는 버전 포함 확인된 개수 |
+| `POST /internal/v1/support-program-index/prune` | `sourceCode`, 현재 `documents`: `{id, contentHash}` | `retainedCount` |
+| `POST /internal/v1/support-program-index/search` | `query`, `eligibleDocuments`: `{id, contentHash}`, `limit`(1~20) | `query`, `matches`: `{id, contentHash, score}` |
+
+`id`는 내부에서 `BIZINFO:원본ID`로 구성합니다. `contentHash`는 전달한 검색 텍스트의 UTF-8 SHA-256
+소문자 64자리이며 공개 응답 ID나 DB `content_hash`와는 별개의 색인 계약입니다. 검색 텍스트는 최대
+12,000자로 제한하고 임베딩 입력은 모델 토큰 제한 내에서 잘라 사용합니다. 검색·정리 허용 목록은 최대 20,000개입니다.
+오늘 날짜에 따라 달라지는 상태는 텍스트에 고정하지 않고 Core가 조회 시 계산합니다.
+
+Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지, 중복·비정상 점수·질의 echo
+불일치가 없는지 검증합니다. 현재는 관련성 탈락 기준이 없으므로 결과 개수도 `min(20, 허용 공고 수)`와
+정확히 같아야 합니다. Qdrant 유사도 점수는 내부 후보 선정에만 사용하며, 공개 `recommendationScore`는
+기존 Agent 평가 점수입니다. 둘 다 선정 확률이 아닙니다.
+
+색인 누락·임베딩·Qdrant 장애는 정상 빈 결과나 최신 목록으로 대체하지 않고 오류로 반환합니다. 기존의
+최대 5개 순위화 계약은 유지하며, 관련성이 낮은 후보의 탈락 기준과 상세 문서 RAG는 이번 범위에 포함하지 않습니다.
+후보 검색 비교를 위한 [가상 평가 자료와 실행 도구](../evaluation/support-program-search/README.md)를 추가했습니다.
+실제 공고·임베딩 모델을 사용한 추천 품질 측정은 아직 수행하지 않았습니다.
 
 ## 비밀정보와 오류 처리
 
@@ -149,5 +172,7 @@ LLM 후보로 보냅니다. 이 20개 안의 의미 순위는 LLM이 결정하�
 | `query`가 500자를 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | AI Service 실패·잘못된 응답 | 502 | `AI_SERVICE_UPSTREAM_ERROR` / `AI_SERVICE_INVALID_RESPONSE` |
 | AI Service 연결 불가·시간 초과 | 503 / 504 | `AI_SERVICE_UNAVAILABLE` / `AI_SERVICE_TIMEOUT` |
+| 현재 허용 공고의 색인 미완료 또는 Qdrant·임베딩 실패 | 503(내부 시간 초과 분류에 따라 504) | `AI_SERVICE_UNAVAILABLE` / `AI_SERVICE_TIMEOUT` |
 
-테스트는 가짜 Agent와 HTTP mock을 사용하며 실제 OpenAI 호출을 수행하지 않습니다.
+테스트는 가짜 Agent·임베딩과 HTTP mock을 사용하며 실제 OpenAI 호출을 수행하지 않습니다. CI에서는
+실제 Qdrant 서버와 MySQL로 저장·검색·미노출·복구 경로를 검증합니다. 이는 실제 임베딩 모델의 검색 품질 측정과 다릅니다.

@@ -18,6 +18,16 @@ export BIZINFO_SYNC_ENABLED="true"
 export BIZINFO_SYNC_INITIAL_DELAY="PT0S"
 export BIZINFO_SYNC_FIXED_DELAY="PT2S"
 export OPENAI_API_KEY="compose-verification-key-never-sent"
+export OPENAI_BASE_URL="http://openai-stub:8002/v1"
+export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+export OPENAI_EMBEDDING_DIMENSIONS="1536"
+export EMBEDDING_TIMEOUT_SECONDS="5"
+export QDRANT_TIMEOUT_SECONDS="2"
+export QDRANT_HOST_PORT="${VERIFY_COMPOSE_QDRANT_HOST_PORT:-16333}"
+export SUPPORT_PROGRAM_INDEX_ENABLED="true"
+export SUPPORT_PROGRAM_INDEX_INITIAL_DELAY="PT0S"
+export SUPPORT_PROGRAM_INDEX_FIXED_DELAY="PT2S"
+export AI_SEMANTIC_SEARCH_READ_TIMEOUT="30s"
 export LLM_MODEL_TIMEOUT_SECONDS="8.0"
 export LLM_RUN_TIMEOUT_SECONDS="10.0"
 export AI_SERVICE_READ_TIMEOUT="12s"
@@ -72,7 +82,7 @@ wait_for_http() {
         --silent \
         --output "${LAST_RESPONSE_FILE}" \
         --write-out '%{http_code}' \
-        --max-time 5 \
+        --max-time 35 \
         "${url}" || true
     )"
 
@@ -142,8 +152,9 @@ wait_for_json_post() {
   return 1
 }
 
-wait_for_ai_health_failure() {
-  local url=$1
+wait_for_ai_failure() {
+  local label=$1
+  local url=$2
   local deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
   local actual_status="000"
 
@@ -154,26 +165,26 @@ wait_for_ai_health_failure() {
         --silent \
         --output "${LAST_RESPONSE_FILE}" \
         --write-out '%{http_code}' \
-        --max-time 5 \
+        --max-time 35 \
         "${url}" || true
     )"
 
     if [[ "${actual_status}" == "503" ]] \
         && grep -Eq '"code"[[:space:]]*:[[:space:]]*"AI_SERVICE_UNAVAILABLE"' "${LAST_RESPONSE_FILE}"; then
-      echo "Verified Core to AI Service failure contract: HTTP 503 unavailable"
+      echo "Verified ${label}: HTTP 503 unavailable"
       return 0
     fi
     if [[ "${actual_status}" == "504" ]] \
         && grep -Eq '"code"[[:space:]]*:[[:space:]]*"AI_SERVICE_TIMEOUT"' "${LAST_RESPONSE_FILE}"; then
-      echo "Verified Core to AI Service failure contract: HTTP 504 timeout"
+      echo "Verified ${label}: HTTP 504 timeout"
       return 0
     fi
 
-    echo "Waiting for Core to AI Service failure contract: received ${actual_status}"
+    echo "Waiting for ${label}: received ${actual_status}"
     sleep "${WAIT_INTERVAL_SECONDS}"
   done
 
-  echo "Timed out waiting for Core to AI Service unavailable/timeout contract" >&2
+  echo "Timed out waiting for ${label}: expected unavailable/timeout contract" >&2
   echo "Last response body:" >&2
   sed -n '1,80p' "${LAST_RESPONSE_FILE}" >&2
   return 1
@@ -225,6 +236,34 @@ wait_for_http \
   '"applicationPeriod"[[:space:]]*:[[:space:]]*"2026-08-20 ~ 2099-09-11"' \
   '"status"[[:space:]]*:[[:space:]]*"OPEN"' \
   '"sourceUrl"[[:space:]]*:[[:space:]]*"https://www.bizinfo.go.kr/compose-verification"'
+
+# This target is older than 25 irrelevant fixture programs. A latest-20 candidate
+# selector cannot pass this check. OpenAI is an HTTP fixture; Qdrant is real.
+wait_for_http \
+  "Whole-catalog semantic search finds the old relevant AI program" \
+  "http://127.0.0.1:5173/api/v1/support-programs/search?query=%EC%84%9C%EC%9A%B8%20AI&acceptingOnly=true" \
+  "200" \
+  '"id"[[:space:]]*:[[:space:]]*"PBLN_COMPOSE_OLD_AI"' \
+  '"recommendationScore"[[:space:]]*:[[:space:]]*100'
+
+echo "Stopping Qdrant to verify that a vector outage is not hidden as a successful search"
+"${COMPOSE[@]}" stop qdrant
+wait_for_http \
+  "Explicit vector search failure while Qdrant is stopped" \
+  "http://127.0.0.1:5173/api/v1/support-programs/search?query=AI&acceptingOnly=true" \
+  "503" \
+  '"code"[[:space:]]*:[[:space:]]*"AI_SERVICE_UNAVAILABLE"'
+wait_for_http \
+  "Blank latest listing still reads MySQL during vector outage" \
+  "http://127.0.0.1:5173/api/v1/support-programs/search?query=&acceptingOnly=true" \
+  "200" \
+  '"id"[[:space:]]*:[[:space:]]*"PBLN_COMPOSE_EXPORT"'
+"${COMPOSE[@]}" start qdrant
+wait_for_http \
+  "Vector search recovers from persistent Qdrant data" \
+  "http://127.0.0.1:5173/api/v1/support-programs/search?query=%EC%84%9C%EC%9A%B8%20AI&acceptingOnly=true" \
+  "200" \
+  '"id"[[:space:]]*:[[:space:]]*"PBLN_COMPOSE_OLD_AI"'
 wait_for_json_post \
   "Vite-proxied sample item preparation" \
   "http://127.0.0.1:5173/api/v1/sample-items/prepare" \
@@ -236,16 +275,19 @@ echo "Stopping only AI Service to verify failure isolation"
 "${COMPOSE[@]}" stop ai-service
 
 wait_for_http "Core API health while AI Service is stopped" "http://127.0.0.1:5173/api/v1/health" "200" '"status"[[:space:]]*:[[:space:]]*"up".*"service"[[:space:]]*:[[:space:]]*"govbiz-core-api"'
-wait_for_ai_health_failure "http://127.0.0.1:5173/api/v1/health/ai-service"
-wait_for_http \
+wait_for_ai_failure "Core to AI Service health failure contract" "http://127.0.0.1:5173/api/v1/health/ai-service"
+wait_for_ai_failure \
   "Required AI search failure while AI Service is stopped" \
-  "http://127.0.0.1:5173/api/v1/support-programs/search?query=%EC%88%98%EC%B6%9C&acceptingOnly=true" \
-  "503" \
-  '"code"[[:space:]]*:[[:space:]]*"AI_SERVICE_UNAVAILABLE"'
+  "http://127.0.0.1:5173/api/v1/support-programs/search?query=%EC%88%98%EC%B6%9C&acceptingOnly=true"
 
 echo "Restarting AI Service to verify recovery without restarting Core API"
 "${COMPOSE[@]}" start ai-service
 
 wait_for_http "Core to AI Service recovery" "http://127.0.0.1:5173/api/v1/health/ai-service" "200" '"status"[[:space:]]*:[[:space:]]*"up".*"service"[[:space:]]*:[[:space:]]*"govbiz-ai-service"'
+wait_for_http \
+  "Semantic search recovers after AI Service restart" \
+  "http://127.0.0.1:5173/api/v1/support-programs/search?query=%EC%84%9C%EC%9A%B8%20AI&acceptingOnly=true" \
+  "200" \
+  '"id"[[:space:]]*:[[:space:]]*"PBLN_COMPOSE_OLD_AI"'
 
-echo "Compose verification passed: MySQL catalog search, required AI failure, startup, isolation, and recovery are valid."
+echo "Compose verification passed: old relevant semantic result, MySQL listing, Qdrant/AI failure isolation and recovery."
