@@ -4,6 +4,9 @@ from agents import OpenAIResponsesModel
 from openai import AsyncOpenAI
 from qdrant_client import AsyncQdrantClient
 
+from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
+from app.support_program_evidence.answer_service import SupportProgramEvidenceAnswerService
+from app.support_program_evidence.service import SupportProgramEvidenceService
 from app.support_program_ranking.agent import SupportProgramRecommendationAgent
 from app.support_program_ranking.service import SupportProgramRankingService
 from app.config import Settings
@@ -17,6 +20,8 @@ class ApplicationContainer:
     support_program_ranking_service: SupportProgramRankingService
     openai_client: AsyncOpenAI | None = None
     support_program_index_service: SupportProgramIndexService | None = None
+    support_program_evidence_service: SupportProgramEvidenceService | None = None
+    support_program_evidence_answer_service: SupportProgramEvidenceAnswerService | None = None
     qdrant_client: AsyncQdrantClient | None = None
 
     async def close(self) -> None:
@@ -32,6 +37,7 @@ def build_application_container(
     settings: Settings,
     *,
     support_program_recommendation_agent: SupportProgramRecommendationAgent | None = None,
+    support_program_evidence_answer_agent: SupportProgramEvidenceAnswerAgent | None = None,
 ) -> ApplicationContainer:
     """환경설정과 선택적 테스트 대역을 실제 애플리케이션 객체로 조립한다."""
 
@@ -40,14 +46,24 @@ def build_application_container(
         timeout=settings.llm_model_timeout_seconds,
         max_retries=0,
     )
-    agent = support_program_recommendation_agent
-
-    if agent is None:
+    ranking_agent = support_program_recommendation_agent
+    evidence_answer_agent = support_program_evidence_answer_agent
+    model = None
+    if ranking_agent is None or evidence_answer_agent is None:
         model = OpenAIResponsesModel(
             model=settings.openai_model,
             openai_client=openai_client,
         )
-        agent = SupportProgramRecommendationAgent(
+    if ranking_agent is None:
+        assert model is not None
+        ranking_agent = SupportProgramRecommendationAgent(
+            model=model,
+            model_timeout_seconds=settings.llm_model_timeout_seconds,
+            run_timeout_seconds=settings.llm_run_timeout_seconds,
+        )
+    if evidence_answer_agent is None:
+        assert model is not None
+        evidence_answer_agent = SupportProgramEvidenceAnswerAgent(
             model=model,
             model_timeout_seconds=settings.llm_model_timeout_seconds,
             run_timeout_seconds=settings.llm_run_timeout_seconds,
@@ -60,7 +76,7 @@ def build_application_container(
         check_compatibility=False,
     )
     return ApplicationContainer(
-        support_program_ranking_service=SupportProgramRankingService(agent),
+        support_program_ranking_service=SupportProgramRankingService(ranking_agent),
         openai_client=openai_client,
         qdrant_client=qdrant_client,
         support_program_index_service=SupportProgramIndexService(
@@ -69,5 +85,15 @@ def build_application_container(
             embedding_model=settings.openai_embedding_model,
             embedding_dimensions=settings.openai_embedding_dimensions,
             embedding_timeout_seconds=settings.embedding_timeout_seconds,
+        ),
+        support_program_evidence_service=SupportProgramEvidenceService(
+            openai_client,
+            qdrant_client,
+            embedding_model=settings.openai_embedding_model,
+            embedding_dimensions=settings.openai_embedding_dimensions,
+            embedding_timeout_seconds=settings.embedding_timeout_seconds,
+        ),
+        support_program_evidence_answer_service=SupportProgramEvidenceAnswerService(
+            evidence_answer_agent,
         ),
     )

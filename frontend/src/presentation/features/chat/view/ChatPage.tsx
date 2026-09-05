@@ -222,7 +222,7 @@ export function ChatPage() {
                   {message.programs?.length ? (
                     <div className={chatPageStyles.programList}>
                       {message.programs.map((program) => (
-                        <ProgramCard key={program.id} program={program} />
+                        <ProgramCard key={`${program.sourceCode}:${program.id}`} program={program} />
                       ))}
                     </div>
                   ) : null}

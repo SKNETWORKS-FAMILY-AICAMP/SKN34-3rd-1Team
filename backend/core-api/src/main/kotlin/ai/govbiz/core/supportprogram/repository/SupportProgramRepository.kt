@@ -2,9 +2,11 @@ package ai.govbiz.core.supportprogram.repository
 
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
 import ai.govbiz.core.supportprogram.repository.mapper.SupportProgramDbRow
 import ai.govbiz.core.supportprogram.repository.mapper.SupportProgramMapper
+import ai.govbiz.core.supportprogram.repository.mapper.SupportProgramSourceDocumentDbRow
 import java.time.Clock
 import java.time.LocalDate
 import org.springframework.beans.factory.annotation.Qualifier
@@ -90,6 +92,21 @@ class SupportProgramRepository(
                 .map { it.toCatalogProgram() },
         )
 
+    /** 현재 공개된 공고에 연결된 공식 원문 근거 문서를 조회합니다. */
+    fun findPresentSourceDocument(
+        sourceCode: String,
+        sourceProgramId: String,
+    ): SupportProgramSourceDocument? =
+        supportProgramMapper
+            .findPresentSourceDocument(sourceCode, sourceProgramId)
+            ?.toSourceDocument()
+
+    /** 외부 호출을 끝낸 뒤 짧은 DB transaction으로 공식 원문 근거 문서를 저장합니다. */
+    @Transactional
+    fun upsertSourceDocument(document: SupportProgramSourceDocument) {
+        supportProgramMapper.upsertSourceDocument(document.toDbRow())
+    }
+
     private fun CatalogSupportProgram.toDbRow(): SupportProgramDbRow {
         val supportProgram = program
 
@@ -142,6 +159,26 @@ class SupportProgramRepository(
             sortTimestamp = sourceSortTimestamp.orEmpty(),
         )
     }
+
+    private fun SupportProgramSourceDocument.toDbRow(): SupportProgramSourceDocumentDbRow =
+        SupportProgramSourceDocumentDbRow(
+            sourceCode = sourceCode,
+            sourceProgramId = sourceProgramId,
+            sourceUrl = sourceUrl,
+            content = content,
+            contentHash = contentHash,
+            fetchedAt = fetchedAt,
+        )
+
+    private fun SupportProgramSourceDocumentDbRow.toSourceDocument(): SupportProgramSourceDocument =
+        SupportProgramSourceDocument(
+            sourceCode = sourceCode,
+            sourceProgramId = sourceProgramId,
+            sourceUrl = sourceUrl,
+            content = content,
+            contentHash = contentHash,
+            fetchedAt = requireNotNull(fetchedAt) { "source document fetchedAt must not be null" },
+        )
 
     private fun readStringList(value: String): List<String> =
         java.util.List.copyOf(objectMapper.readValue(value, STRING_LIST_TYPE))

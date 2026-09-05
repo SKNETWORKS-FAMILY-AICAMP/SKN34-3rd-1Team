@@ -18,6 +18,13 @@ interface SupportProgramMapper {
 
     fun findPresent(): List<SupportProgramDbRow>
 
+    fun upsertSourceDocument(row: SupportProgramSourceDocumentDbRow): Int
+
+    fun findPresentSourceDocument(
+        @Param("sourceCode") sourceCode: String,
+        @Param("sourceProgramId") sourceProgramId: String,
+    ): SupportProgramSourceDocumentDbRow?
+
     fun insertSyncGenerationIfAbsent(@Param("sourceCode") sourceCode: String): Int
 
     fun lockLatestStartedGeneration(@Param("sourceCode") sourceCode: String): Long?

@@ -471,6 +471,10 @@ def test_rejects_an_agent_output_that_omits_a_candidate_without_leaking_details(
         lambda body: body.update({"unknown": "value"}),
         lambda body: body["candidates"].append(body["candidates"][0]),
         lambda body: body["candidates"][0].update({"id": "PBLN_001"}),
+        lambda body: body["candidates"][0].update({"id": "BIZINFO: PBLN_001"}),
+        lambda body: body["candidates"][0].update({"id": "BIZINFO:PBLN_001 "}),
+        lambda body: body["candidates"][0].update({"id": "BIZINFO:PBLN\u200b_001"}),
+        lambda body: body["candidates"][0].update({"id": f"BIZINFO:{'P' * 256}"}),
     ],
 )
 def test_rejects_invalid_requests(mutation) -> None:  # type: ignore[no-untyped-def]
@@ -505,9 +509,20 @@ def test_score_schema_requires_the_total_to_equal_all_dimensions() -> None:
         )
 
 
-def test_score_schema_requires_a_canonical_program_id() -> None:
+@pytest.mark.parametrize(
+    "program_id",
+    [
+        "BIZINFO:",
+        "BIZINFO: PBLN_001",
+        "BIZINFO:PBLN_001 ",
+        "BIZINFO:PBLN\u0000_001",
+        "BIZINFO:PBLN\u200b_001",
+        f"BIZINFO:{'P' * 256}",
+    ],
+)
+def test_score_schema_requires_a_canonical_program_id(program_id: str) -> None:
     with pytest.raises(ValidationError, match="canonical sourceCode:sourceProgramId"):
-        score("BIZINFO: PBLN_001", 40)
+        score(program_id, 40)
 
 
 @pytest.mark.parametrize(

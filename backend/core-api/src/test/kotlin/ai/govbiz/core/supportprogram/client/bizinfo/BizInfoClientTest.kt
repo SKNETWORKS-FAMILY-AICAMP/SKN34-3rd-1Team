@@ -392,7 +392,7 @@ class BizInfoClientTest {
         """
         {
           "pblancNm": "서울 AI 사업",
-          "pblancUrl": "https://www.bizinfo.go.kr/detail",
+          "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=$id",
           "pblancId": "$id",
           "excInsttNm": "수행기관",
           "bsnsSumryCn": "<p>설명</p>",

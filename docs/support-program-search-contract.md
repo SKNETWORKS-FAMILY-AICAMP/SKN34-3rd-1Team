@@ -130,7 +130,7 @@ Core는 다음 불변식을 다시 검사합니다.
       "applicationEndDate": null,
       "status": "OPEN",
       "sourceName": "기업마당",
-      "sourceUrl": "https://www.bizinfo.go.kr/example",
+      "sourceUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_001",
       "matchedReasons": ["서울 소재 AI 창업기업의 사업화를 지원"],
       "recommendationScore": 95
     }
@@ -176,6 +176,82 @@ Accept: application/json
 }
 ```
 
+## 공개 공식 원문 근거 질문
+
+목록 검색이나 상세 GET은 기업마당 상세 페이지를 수집하지 않습니다. 사용자가 특정 공고에 질문을 제출할 때만
+다음 endpoint가 기업마당 공식 HTML 원문을 사용합니다. 현재 지원 제공처는 `BIZINFO`뿐이며, 현재 공개된
+공고가 아닌 경우에는 원문 수집 전에 상세 조회와 같은 404를 반환합니다.
+
+```http
+POST /api/v1/support-programs/detail/answers
+Content-Type: application/json
+Accept: application/json
+
+{
+  "sourceCode": "BIZINFO",
+  "sourceProgramId": "PBLN_001",
+  "question": "신청 대상은 누구인가요?"
+}
+```
+
+| Body field | 필수 | 설명 |
+|---|---|---|
+| `sourceCode` | 예 | 상세 조회와 같은 제공처 코드. 현재 공식 원문 질문은 `BIZINFO`만 지원 |
+| `sourceProgramId` | 예 | 상세 조회와 같은 최대 255자 원본 공고 ID |
+| `question` | 예 | 앞뒤 공백을 제거한 질문. 비어 있을 수 없고 최대 500자 |
+
+성공 응답은 다음 형태입니다. 예시의 문장은 형식 설명용이며, 실제 `answer`는 해당 요청에서 검색된 공식 원문
+청크에만 근거합니다.
+
+```json
+{
+  "answer": "공식 원문에 적힌 신청 대상을 안내합니다.",
+  "answerStatus": "ANSWERED",
+  "citations": [
+    {
+      "excerpt": "공고 원문에서 답변 근거가 된 발췌문",
+      "sourceUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_001",
+      "chunkOrder": 0
+    }
+  ]
+}
+```
+
+| 응답 필드 | 설명 |
+|---|---|
+| `answer` | 한국어 근거 답변 또는 근거 부족 안내. 최대 1,200자 |
+| `answerStatus` | `ANSWERED` 또는 `INSUFFICIENT_EVIDENCE` |
+| `citations` | 최대 5개. `excerpt`는 선택한 원문 청크 전체(최대 1,500 UTF-16 코드 단위), `sourceUrl`은 기업마당 공식 원문 URL, `chunkOrder`는 0부터 시작하는 원문 청크 순서 |
+
+`ANSWERED`에는 하나 이상의 `citations`가 반드시 있고, `INSUFFICIENT_EVIDENCE`에는 인용이 없습니다.
+Core는 인용 청크가 이 질문에서 실제로 검색된 최대 5개 청크 중 하나인지 확인합니다. 따라서 답변은
+전달되지 않은 원문 구간이나 다른 공고의 원문을 인용할 수 없습니다.
+
+원문 캐시가 없거나 같은 URL의 수집 시각이 6시간보다 오래된 경우에만 Core가 공식 HTTPS 기업마당 상세 HTML을
+다시 읽습니다. 리디렉션은 각 이동 URL의 공식 HTTPS 호스트와 동일한 `pblancId`를 검증해 최대 3회 따르며,
+순환 이동·HTML 이외 응답·공식 호스트가 아닌 URL·비 HTTPS URL·크기 제한 초과 원문은 거부합니다.
+HTML은 최대 500KB로 읽고 jsoup `1.23.2`로 파싱합니다. `.support_project_detail`의 `.title_area .title`이
+요청 공고 제목과 일치할 때 `.view_cont` 본문만 추출하며, 정규화 본문은 최대 30,000자입니다.
+성공적으로 정규화한 텍스트만 MySQL에 저장하고, 최대 50개 결정적 청크를 일반 공고 검색과 분리된 Qdrant evidence
+컬렉션에 색인합니다. 이 작업은 공고 동기화와 목록 검색에 포함되지 않습니다. 첨부파일·PDF·OCR·다른 제공처
+원문은 현재 지원하지 않습니다.
+
+### 내부 원문 근거 API
+
+Core만 아래 AI Service endpoint를 호출합니다. 브라우저에 공개하지 않으며, 일반 공고 검색의
+`/internal/v1/support-program-index/*` 컬렉션·계약과 분리됩니다.
+
+| 메서드·경로 | 요청 | 응답 |
+|---|---|---|
+| `PUT /internal/v1/support-program-evidence/chunks` | `chunks`: `{id, contentHash, documentId, order, text}` 1~50개 | `indexedCount` |
+| `POST /internal/v1/support-program-evidence/search` | `question`, `eligibleChunks`: `{id, contentHash, documentId, order}` 1~50개, `limit` 1~5 | `question`, `matches`: 청크 ID·해시·문서 ID·순서·유사도 |
+| `POST /internal/v1/support-program-evidence/answers` | `question`, 검색 완료 청크 `{id, documentId, order, text}` 1~5개 | `answer`, `answerStatus`, `citationChunkIds` |
+
+청크 `id`와 `contentHash`는 각각 소문자 SHA-256 64자리이고 `documentId`는
+`{sourceCode}:{sourceProgramId}`입니다. AI Service와 Core는 같은 청크 ID·해시·문서 ID·순서가 유지되는지,
+검색 결과 수·점수 순서·인용 범위를 다시 검증합니다. 답변 Agent는 전달받은 청크의 텍스트 밖 정보를 사용하지
+않도록 지시되며, Core도 `ANSWERED`의 인용 누락과 `INSUFFICIENT_EVIDENCE`의 인용 포함을 계약 위반으로 거부합니다.
+
 ## 전체 카탈로그 후보 검색
 
 검색어가 있으면 Core는 MySQL에서 현재 노출된 전체 제공처 공고를 읽어 접수 상태를 적용합니다.
@@ -192,6 +268,8 @@ Accept: application/json
 
 색인·점수화 경계의 `id`와 `programId`는 `{sourceCode}:{sourceProgramId}`로 구성합니다. 첫 번째 `:` 앞의
 `sourceCode`는 `[A-Z][A-Z0-9_]{0,63}` 형태의 안정적인 제공처 코드이고, 뒤의 원본 ID는 전체 문자열로 유지합니다.
+원본 ID는 비어 있거나 앞뒤 공백이 있을 수 없고, 최대 255개 Unicode code point이며 Unicode `C` 범주 문자를 포함할 수
+없습니다. 첫 번째 구분자 뒤의 추가 `:`는 원본 ID의 일부로 유지합니다.
 `contentHash`는 전달한 검색 텍스트의 UTF-8 SHA-256 소문자 64자리이며 공개 응답 ID나 DB `content_hash`와는
 별개의 색인 계약입니다. 검색 텍스트는 최대
 12,000자로 제한하고 임베딩 입력은 모델 토큰 제한 내에서 잘라 사용합니다. 검색·정리 허용 목록은 최대 20,000개입니다.
@@ -212,7 +290,7 @@ Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지
 색인 누락·임베딩·Qdrant 장애는 정상 빈 결과나 최신 목록으로 대체하지 않고 오류로 반환합니다. AI 점수화는
 지원대상·지역의 명백한 불일치를 제외하고 의미 관련성 20점·총점 60점 최소 기준을 통과한 공고를
 최대 5개 반환하며, 적격 공고가 없을 때의 빈 목록은
-정상 성공 응답입니다. 상세 문서 RAG는 이번 범위에 포함하지 않습니다.
+정상 성공 응답입니다. 원문 근거 질문은 위의 별도 endpoint이며 이 목록 검색 경로의 동작을 바꾸지 않습니다.
 후보·최종 추천 비교를 위한 [검색 평가 자료와 실행 도구](../evaluation/support-program-search/README.md)를
 추가했습니다. `evaluation-fixture-export`는 공개 API가 아닌 비웹 실행 프로필이며, 현재 MySQL의 `OPEN`
 모든 제공처의 현재 `OPEN` 공고를 운영 색인과 같은 ID·내용 해시·검색 문서로 미라벨 fixture 초안에 기록합니다.
@@ -232,7 +310,10 @@ Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지
 |---|---:|---|
 | `query`가 500자를 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 상세 조회의 `sourceCode`·`sourceProgramId`가 누락·형식·공백·길이 제한을 위반함 | 400 | `REQUEST_VALIDATION_FAILED` |
+| 원문 근거 질문의 `sourceCode`·`sourceProgramId`·`question`이 누락·형식·공백·길이 제한을 위반함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 상세 조회 대상이 없거나 현재 제공처 목록에서 사라짐 | 404 | `SUPPORT_PROGRAM_NOT_FOUND` |
+| 현재 공고의 제공처가 원문 근거 질문을 지원하지 않음 | 422 | `SUPPORT_PROGRAM_EVIDENCE_NOT_SUPPORTED` |
+| 기업마당 공식 원문 수집·검증 실패 | 503 | `SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE` |
 | AI Service의 예상하지 못한 HTTP 응답·응답 계약 위반 | 502 | `AI_SERVICE_UPSTREAM_ERROR` / `AI_SERVICE_INVALID_RESPONSE` |
 | AI Service 연결 불가·내부 503 응답 | 503 | `AI_SERVICE_UNAVAILABLE` |
 | AI Service 호출 시간 초과·내부 408/504 응답 | 504 | `AI_SERVICE_TIMEOUT` |

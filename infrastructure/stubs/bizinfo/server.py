@@ -18,9 +18,11 @@ body = fixture["response"]["body"]
 items = body["items"]["item"]
 # The old relevant AI program must be outside the old latest-20 window.
 for number in range(1, 26):
+    program_id = f"PBLN_COMPOSE_RECENT_{number:02d}"
     items.append({
         **items[0],
-        "pblancId": f"PBLN_COMPOSE_RECENT_{number:02d}",
+        "pblancId": program_id,
+        "pblancUrl": f"https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId={program_id}",
         "pblancNm": f"최근 식품 박람회 참가 지원 {number}",
         "bsnsSumryCn": "식품 제조기업의 박람회 전시를 지원합니다.",
         "pldirSportRealmLclasCodeNm": "박람회",
@@ -31,6 +33,7 @@ for number in range(1, 26):
 items.append({
     **items[0],
     "pblancId": "PBLN_COMPOSE_OLD_AI",
+    "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_COMPOSE_OLD_AI",
     "pblancNm": "서울 AI 기술 사업화 지원",
     "bsnsSumryCn": "서울 인공지능 창업기업의 기술 사업화를 지원합니다.",
     "pldirSportRealmLclasCodeNm": "AI",

@@ -16,6 +16,8 @@ AI Service가 하는 일:
 - 버전된 100점 평가 기준으로 모든 후보를 점수화
 - 지원대상·지역의 명백한 자격 불일치를 제외하고 의미 관련성·총점 최소 기준을 통과한 공고만 0~5개로 반환
 - 반환 공고의 자격 판정·세부 점수·총점·추천 이유를 strict structured output으로 제공
+- Core가 준비한 공고 상세 원문 청크를 별도 Qdrant collection에 색인하고, 지정된 현재 청크 안에서 근거를 최대 5개 검색
+- 검색된 공고 상세 근거만 사용해 한국어 답변과 인용 청크 ID를 strict structured output으로 반환
 
 AI Service가 하지 않는 일:
 
@@ -24,6 +26,7 @@ AI Service가 하지 않는 일:
 - 존재하지 않는 공고 추가
 - 최종 HTTP 공개 DTO 조립
 - 점수 결과 영속화
+- 공고 상세 페이지 수집, HTML 정제, 청크 분할 또는 상세 원문 영속화
 
 ## 내부 API
 
@@ -33,6 +36,9 @@ POST /internal/v1/support-program-rankings/rank
 PUT /internal/v1/support-program-index/batch
 POST /internal/v1/support-program-index/prune
 POST /internal/v1/support-program-index/search
+PUT /internal/v1/support-program-evidence/chunks
+POST /internal/v1/support-program-evidence/search
+POST /internal/v1/support-program-evidence/answers
 ```
 
 점수화 요청은 최대 20개 후보와 상위 결과 개수 1~5개를 받습니다. 응답 `rankings`는 적격 공고가
@@ -94,8 +100,56 @@ ID·해시 필터가 오래된 벡터를 검색에서 제외하므로 새 스냅
 검색을 보호하는 보존·삭제 수명주기가 필요하며, 현재 `prune` API 자체가 다중 인스턴스나 동시 실행에
 안전한 것은 아닙니다.
 
-이번 단계는 공고 단위 후보 검색입니다. 첨부문서의 문단 검색이나 원문 인용 답변을 제공하는
-RAG는 아직 구현하지 않았습니다. 벡터 유사도는 신청 자격 충족률이나 선정 확률이 아닙니다.
+공고 단위 후보 검색의 벡터 유사도는 신청 자격 충족률이나 선정 확률이 아닙니다.
+
+## 공고 상세 근거 RAG
+
+상세 화면의 질문 답변은 Core가 공식 공고 상세 원문을 정제·분할한 청크만 사용합니다. 이 기능은 현재
+Core가 제공하는 기업마당 상세 공고를 대상으로 하지만, AI Service 내부 식별자는
+`sourceCode:sourceProgramId` 형식이므로 다른 제공처에도 같은 계약을 사용할 수 있습니다.
+
+| 요청 | 입력 | 응답 |
+|---|---|---|
+| `PUT .../chunks` | `chunks: [{id, contentHash, documentId, order, text}]`, 1~50개. `id`·`contentHash`는 소문자 SHA-256, text는 UTF-8 SHA-256과 일치하며 최대 12,000자 | `{indexedCount}` |
+| `POST .../search` | `question`: 앞뒤 공백 제거 후 1~500자, `eligibleChunks: [{id, contentHash, documentId, order}]` 1~50개, `limit`: 1~5 | `{question, matches: [{id, contentHash, documentId, order, score}]}` |
+| `POST .../answers` | `question`, `chunks: [{id, documentId, order, text}]` 1~5개 | `{answer, answerStatus, citationChunkIds}` |
+
+`documentId`는 최대 320자의 정규 `sourceCode:sourceProgramId`입니다. 첫 번째 콜론만 제공처 코드와 원본
+공고 ID를 나누므로 원본 ID에 추가 콜론이 있어도 됩니다. `order`는 0 이상의 정수이고, 같은 요청 안의
+청크 ID는 중복될 수 없습니다.
+
+```text
+Core의 상세 공고 준비
+→ 공식 상세 원문 정제·고정 크기 청크화 → 각 청크 ID·text SHA-256 검증
+→ PUT /support-program-evidence/chunks
+→ SupportProgramEvidenceService
+→ 별도 Qdrant collection에서 현재 ID·해시·documentId·order 검증 후 OpenAI Embeddings API 호출·UPSERT
+
+사용자 상세 질문
+→ Core가 해당 공고의 현재 eligibleChunks 전달
+→ POST /support-program-evidence/search
+→ 모든 청크가 현재 collection에 존재하는지 확인 → HasId filter로 지정 청크만 유사도 검색
+→ 최대 5개의 match 반환
+→ Core가 match의 공식 text만 포함해 POST /support-program-evidence/answers 호출
+→ SupportProgramEvidenceAnswerAgent (max_turns=1)
+→ 출력 상태·중복 인용·입력 밖 citationChunkIds 재검증 → 한국어 답변 반환
+```
+
+상세 근거 collection은 공고 단위 검색 collection과 이름·point ID가 다릅니다. point ID는 청크 ID와
+내용 해시에서 결정되고, payload의 `documentId`와 `order`까지 다시 비교합니다. 따라서 다른 공고의
+청크를 같은 청크 ID·해시로 재사용하거나, 검색 결과에 요청하지 않은 공고 청크가 섞이는 경우 정상 답변으로
+대체하지 않고 오류로 처리합니다. 이전 청크 버전은 현재 `eligibleChunks`의 ID·해시 필터에 없으므로
+검색 결과에서 제외됩니다.
+
+검색 요청에 지정한 청크가 하나라도 색인되지 않았거나 Qdrant가 기대한 개수의 결과를 반환하지 않으면
+`503`과 `{"detail":{"code":"EVIDENCE_NOT_READY"}}`를 반환합니다. 임베딩·Qdrant·Agent 장애,
+payload 불일치, 검증 실패는 `EVIDENCE_UNAVAILABLE`입니다. 부분 검색, 다른 공고 청크, 일반 지식으로
+대체하지 않습니다.
+
+답변 Agent는 청크 원문의 지시를 따르지 않고 데이터로만 취급합니다. 제공된 text에서 직접 확인 가능한
+내용만 한국어로 답하며, 충분한 근거가 있으면 `ANSWERED`와 하나 이상의 `citationChunkIds`를 반환합니다.
+근거가 부족하면 `INSUFFICIENT_EVIDENCE`와 빈 인용 배열을 반환합니다. AI Service는 인용 ID가 요청에
+전달된 청크 집합의 부분집합인지도 다시 확인합니다.
 
 ## 평가 기준
 
@@ -173,6 +227,14 @@ app/
 │   ├── router.py                   # batch/prune/search 내부 HTTP 경계
 │   ├── models.py                   # ID·해시·본문·검색 계약 검증
 │   └── service.py                  # OpenAI 임베딩·Qdrant 색인과 검색
+├── support_program_evidence/        # 상세 원문 근거 검색·답변
+│   ├── router.py                   # chunks/search/answers 내부 HTTP 경계
+│   ├── models.py                   # 청크·근거 검색·답변 strict 계약
+│   ├── service.py                  # 별도 Qdrant collection 색인·현재 청크 검색
+│   ├── prompt.py                   # 근거 외 지식 금지 한국어 답변 지시
+│   ├── agent.py                    # 단일 typed Agent Runner 실행
+│   ├── answer_service.py           # 인용 청크 집합 재검증
+│   └── errors.py                   # 안전한 기능 실패
 └── support_program_ranking/         # 지원사업 점수화 수직 기능
     ├── router.py                   # 내부 HTTP 경계
     ├── models.py                   # 요청·출력·응답 Pydantic 계약
@@ -182,8 +244,9 @@ app/
     └── errors.py                   # 안전한 기능 실패
 ```
 
-의존성 방향은 `router → service → agent → Agents SDK`입니다. `bootstrap.py`만 구체 OpenAI client와
-model을 생성하고, 요청마다 Agent를 새로 만들지 않습니다.
+의존성 방향은 `router → service → agent → Agents SDK`입니다. 근거 색인은 Agent 없이
+`router → service → OpenAI Embeddings/Qdrant`로 처리하고, 답변만 단일 typed Agent를 사용합니다.
+`bootstrap.py`만 구체 OpenAI client와 model을 생성하고, 요청마다 Agent를 새로 만들지 않습니다.
 
 ## 실패 흐름
 
@@ -197,6 +260,14 @@ OpenAI timeout·거부·SDK 오류·structured output 오류
 
 후보 ID 누락·추가·중복
 → AgentExecutionError
+→ 상세정보 없는 내부 HTTP 503
+
+상세 근거 청크 누락·Qdrant/임베딩 오류·payload 불일치
+→ SupportProgramEvidenceError(EVIDENCE_NOT_READY 또는 EVIDENCE_UNAVAILABLE)
+→ 상세정보 없는 내부 HTTP 503
+
+상세 답변의 입력 밖 인용 ID·중복 인용·상태와 인용 배열 불일치
+→ SupportProgramEvidenceError(EVIDENCE_UNAVAILABLE)
 → 상세정보 없는 내부 HTTP 503
 ```
 
@@ -249,6 +320,7 @@ uv sync --locked --extra dev
 uv pip check --python .venv/bin/python
 uv run --locked --extra dev python -m pytest
 QDRANT_TEST_URL=http://localhost:6333 uv run --locked --extra dev python -m pytest tests/support_program_index
+QDRANT_TEST_URL=http://localhost:6333 uv run --locked --extra dev python -m pytest tests/support_program_evidence
 uv build
 ```
 
@@ -258,7 +330,9 @@ uv build
 collection을 만들고 정리합니다. 현재 운영 collection은 테스트가 사용하지 않습니다.
 
 최신 20개 밖의 관련 공고 조회, 재색인 중복 방지, 현재 해시와 검색 가능 목록 필터, 부분 실패 시
-prune 차단, 다른 제공처 보존, 비정상 임베딩 거부를 검증합니다. 테스트 임베딩은 HTTP mock으로
-고정한 벡터이므로 실제 한국어 검색 정확도 향상을 측정한 결과로 해석하면 안 됩니다.
+prune 차단, 다른 제공처 보존, 비정상 임베딩 거부를 검증합니다. 상세 근거 기능은 현재 청크 전체 색인,
+공고 간 청크 ID 재사용 거부, 현재 내용 해시 필터, 입력 밖 Agent 인용 거부, 근거 부족 상태를 검증합니다.
+테스트 임베딩은 HTTP mock으로 고정한 벡터이므로 실제 한국어 검색 정확도나 답변 품질을 측정한 결과로
+해석하면 안 됩니다.
 
 Agent 확장 원칙은 [AI Agent 모듈 구조](docs/agent-structure.md)를 참고하세요.

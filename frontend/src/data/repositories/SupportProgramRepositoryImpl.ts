@@ -1,11 +1,16 @@
 import {
+  answerSupportProgramEvidenceQuestionApi,
   getSupportProgramDetailApi,
   searchSupportProgramsApi,
+  SupportProgramEvidenceApiError,
 } from '../api/supportProgramApi'
 import { toSupportProgram } from '../models/SupportProgramDto'
+import { toSupportProgramEvidenceAnswer } from '../models/SupportProgramEvidenceAnswerDto'
 import type { SupportProgram } from '../../domain/entities/SupportProgram'
 import type {
   SupportProgramRepository,
+  SupportProgramEvidenceQuestion,
+  SupportProgramEvidenceQuestionResult,
   SupportProgramIdentity,
   SupportProgramSearch,
 } from '../../domain/repositories/SupportProgramRepository'
@@ -26,5 +31,21 @@ export class SupportProgramRepositoryImpl implements SupportProgramRepository {
   ): Promise<SupportProgram | null> {
     const dto = await getSupportProgramDetailApi(identity, signal)
     return dto ? toSupportProgram(dto) : null
+  }
+
+  async answerEvidenceQuestion(
+    command: SupportProgramEvidenceQuestion,
+    signal?: AbortSignal,
+  ): Promise<SupportProgramEvidenceQuestionResult> {
+    try {
+      const dto = await answerSupportProgramEvidenceQuestionApi(command, signal)
+      return { outcome: 'answer', answer: toSupportProgramEvidenceAnswer(dto) }
+    } catch (error) {
+      if (error instanceof SupportProgramEvidenceApiError) {
+        if (error.status === 422) return { outcome: 'not-supported' }
+        if (error.status === 503) return { outcome: 'unavailable' }
+      }
+      throw error
+    }
   }
 }

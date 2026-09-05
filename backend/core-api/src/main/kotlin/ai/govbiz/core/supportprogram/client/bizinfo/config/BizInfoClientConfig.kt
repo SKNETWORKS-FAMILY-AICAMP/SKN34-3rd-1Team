@@ -7,13 +7,27 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.web.client.RestClient
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(BizInfoClientProperties::class)
+@EnableConfigurationProperties(
+    BizInfoClientProperties::class,
+    BizInfoSourceDocumentProperties::class,
+)
 class BizInfoClientConfig {
 
     @Bean
     fun bizInfoRestClient(
         restClientBuilder: RestClient.Builder,
         properties: BizInfoClientProperties,
+    ): RestClient = buildRestClient(
+        restClientBuilder,
+        properties.baseUrl,
+        properties.connectTimeout,
+        properties.readTimeout,
+    )
+
+    @Bean
+    fun bizInfoSourceDocumentRestClient(
+        restClientBuilder: RestClient.Builder,
+        properties: BizInfoSourceDocumentProperties,
     ): RestClient = buildRestClient(
         restClientBuilder,
         properties.baseUrl,

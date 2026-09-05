@@ -9,7 +9,13 @@ import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramRetrievalFacade
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
+import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceService
+import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
+import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceUnavailableException
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
+import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerResult
+import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerStatus
+import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceCitationResult
 import java.util.stream.Stream
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
@@ -26,6 +32,7 @@ import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActions
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -39,6 +46,9 @@ class SupportProgramControllerTest {
 
     @Mock
     private lateinit var retrieval: AiSupportProgramRetrievalFacade
+
+    @Mock
+    private lateinit var evidenceService: SupportProgramEvidenceService
 
     private lateinit var ranking: StubSupportProgramRankingFacade
 
@@ -57,6 +67,7 @@ class SupportProgramControllerTest {
                 SupportProgramController(
                     searchService = service,
                     detailService = SupportProgramDetailService(supportProgramRepository),
+                    evidenceService = evidenceService,
                 ),
             )
             .setControllerAdvice(ApiExceptionHandler())
@@ -168,6 +179,15 @@ class SupportProgramControllerTest {
             .andExpect(status().isBadRequest())
             .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
             .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", "BIZINFO")
+                .queryParam("sourceProgramId", " PBLN_TEST "),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
     }
 
     @Test
@@ -197,7 +217,134 @@ class SupportProgramControllerTest {
         mockMvc.perform(
             get(DETAIL_PATH)
                 .queryParam("sourceCode", "BIZINFO")
-                .queryParam("sourceProgramId", "P".repeat(256)),
+                .queryParam("sourceProgramId", "😀".repeat(256)),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+    }
+
+    @Test
+    fun acceptsDetailIdentitySourceProgramIdAtThe255UnicodeCodePointLimit() {
+        val sourceProgramId = "😀".repeat(255)
+        Mockito.doReturn(catalogProgram()).`when`(supportProgramRepository)
+            .findPresentBySourceAndProgramId("BIZINFO", sourceProgramId)
+
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", "BIZINFO")
+                .queryParam("sourceProgramId", sourceProgramId),
+        )
+            .andExpect(status().isOk())
+    }
+
+    @Test
+    fun returnsAnOfficialSourceGroundedAnswerWithOnlyValidatedCitations() {
+        Mockito.doReturn(
+            SupportProgramEvidenceAnswerResult(
+                answer = "공식 원문에 따르면 온라인으로 신청합니다.",
+                answerStatus = SupportProgramEvidenceAnswerStatus.ANSWERED,
+                citations = listOf(
+                    SupportProgramEvidenceCitationResult(
+                        excerpt = "신청 방법: 온라인 접수",
+                        sourceUrl = "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_TEST",
+                        chunkOrder = 2,
+                    ),
+                ),
+            ),
+        ).`when`(evidenceService).answer("BIZINFO", "PBLN_TEST", "신청 방법은?")
+
+        mockMvc.perform(
+            post(EVIDENCE_ANSWER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"sourceCode":"BIZINFO","sourceProgramId":"PBLN_TEST","question":"신청 방법은?"}
+                    """.trimIndent(),
+                ),
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.answer").value("공식 원문에 따르면 온라인으로 신청합니다."))
+            .andExpect(jsonPath("$.answerStatus").value("ANSWERED"))
+            .andExpect(jsonPath("$.citations[0].excerpt").value("신청 방법: 온라인 접수"))
+            .andExpect(jsonPath("$.citations[0].chunkOrder").value(2))
+    }
+
+    @Test
+    fun validatesEvidenceAnswerRequestAndMapsSupportedFailureCases() {
+        mockMvc.perform(
+            post(EVIDENCE_ANSWER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"sourceCode":"BIZINFO","sourceProgramId":"PBLN_TEST","question":" "}"""),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+
+        mockMvc.perform(
+            post(EVIDENCE_ANSWER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"sourceCode":"BIZINFO","sourceProgramId":" PBLN_TEST ","question":"질문"}"""),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+
+        mockMvc.perform(
+            post(EVIDENCE_ANSWER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"sourceCode\":\"BIZINFO\",\"sourceProgramId\":\"PBLN_TEST\",\"question\":\"신청\\u0000방법\"}"),
+        )
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+
+        Mockito.doThrow(SupportProgramEvidenceNotSupportedException()).`when`(evidenceService)
+            .answer("OTHER", "PBLN_TEST", "질문")
+        mockMvc.perform(
+            post(EVIDENCE_ANSWER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"sourceCode":"OTHER","sourceProgramId":"PBLN_TEST","question":"질문"}"""),
+        )
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("SUPPORT_PROGRAM_EVIDENCE_NOT_SUPPORTED"))
+
+        Mockito.doThrow(SupportProgramEvidenceUnavailableException(IllegalStateException("private detail")))
+            .`when`(evidenceService)
+            .answer("BIZINFO", "PBLN_TEST", "잠시 후")
+        mockMvc.perform(
+            post(EVIDENCE_ANSWER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"sourceCode":"BIZINFO","sourceProgramId":"PBLN_TEST","question":"잠시 후"}"""),
+        )
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.code").value("SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE"))
+            .andExpect(content().string(not(containsString("private detail"))))
+    }
+
+    @Test
+    fun appliesTheUnicodeCodePointLimitToEvidenceSourceProgramId() {
+        val maximumSourceProgramId = "😀".repeat(255)
+        Mockito.doReturn(
+            SupportProgramEvidenceAnswerResult(
+                answer = "공식 원문에 근거한 답변입니다.",
+                answerStatus = SupportProgramEvidenceAnswerStatus.INSUFFICIENT_EVIDENCE,
+                citations = emptyList(),
+            ),
+        ).`when`(evidenceService).answer("BIZINFO", maximumSourceProgramId, "질문")
+
+        mockMvc.perform(
+            post(EVIDENCE_ANSWER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """{"sourceCode":"BIZINFO","sourceProgramId":"$maximumSourceProgramId","question":"질문"}""",
+                ),
+        )
+            .andExpect(status().isOk())
+
+        val overLimitSourceProgramId = "😀".repeat(256)
+        mockMvc.perform(
+            post(EVIDENCE_ANSWER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """{"sourceCode":"BIZINFO","sourceProgramId":"$overLimitSourceProgramId","question":"질문"}""",
+                ),
         )
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
@@ -303,6 +450,7 @@ class SupportProgramControllerTest {
     private companion object {
         const val PATH = "/api/v1/support-programs/search"
         const val DETAIL_PATH = "/api/v1/support-programs/detail"
+        const val EVIDENCE_ANSWER_PATH = "/api/v1/support-programs/detail/answers"
         const val PRIVATE_DETAIL = "private upstream detail"
 
         @JvmStatic

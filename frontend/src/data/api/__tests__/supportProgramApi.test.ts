@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { supportPrograms } from '../../fixtures/supportPrograms'
 import { SupportProgramRepositoryImpl } from '../../repositories/SupportProgramRepositoryImpl'
 import {
+  answerSupportProgramEvidenceQuestionApi,
   getSupportProgramDetailApi,
+  SupportProgramEvidenceApiError,
   SupportProgramApiError,
   searchSupportProgramsApi,
 } from '../supportProgramApi'
@@ -71,13 +73,33 @@ describe('searchSupportProgramsApi', () => {
   })
 
   it.each([
-    'javascript:alert(document.cookie)',
-    'https://bizinfo.go.kr.attacker.example/program',
-    'https://example.com/program',
-  ])('rejects a non-official source URL: %s', async (sourceUrl) => {
+    ['BIZINFO', 'https://www.bizinfo.go.kr/programs/official'],
+  ])('accepts an allowlisted official URL for %s', async (sourceCode, sourceUrl) => {
+    const program = { ...supportPrograms[3], sourceCode, sourceUrl }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
       query: '수출',
-      programs: [{ ...supportPrograms[3], sourceUrl }],
+      programs: [program],
+    })))
+
+    await expect(searchSupportProgramsApi({ query: '수출' })).resolves.toEqual({
+      query: '수출',
+      programs: [program],
+    })
+  })
+
+  it.each([
+    ['BIZINFO', 'javascript:alert(document.cookie)'],
+    ['OTHER', 'data:text/html,unsafe'],
+    ['BIZINFO', 'https://bizinfo.go.kr.attacker.example/program'],
+    ['OTHER', 'https://bizinfo.go.kr/program'],
+    ['OTHER', 'https://support-programs.other.test/programs/official'],
+    ['UNKNOWN', 'https://www.bizinfo.go.kr/program'],
+    ['BIZINFO', 'https://attacker@www.bizinfo.go.kr/program'],
+    ['BIZINFO', 'https://www.bizinfo.go.kr:444/program'],
+  ])('rejects a non-official or unsafe source URL for %s: %s', async (sourceCode, sourceUrl) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      query: '수출',
+      programs: [{ ...supportPrograms[3], sourceCode, sourceUrl }],
     })))
 
     await expect(searchSupportProgramsApi({ query: '수출' })).rejects.toThrow()
@@ -153,6 +175,107 @@ describe('getSupportProgramDetailApi', () => {
     })).rejects.toBeInstanceOf(SupportProgramApiError)
   })
 })
+
+describe('answerSupportProgramEvidenceQuestionApi', () => {
+  const command = {
+    sourceCode: 'BIZINFO',
+    sourceProgramId: supportPrograms[0].id,
+    question: '신청 대상은 누구인가요?',
+  }
+
+  it('sends an explicit JSON question with the source identity and returns validated citations', async () => {
+    const controller = new AbortController()
+    const answer = answeredEvidenceResponse()
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(answer))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(answerSupportProgramEvidenceQuestionApi(command, controller.signal))
+      .resolves.toEqual(answer)
+
+    const [requestUrl, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(new URL(requestUrl).pathname).toBe('/api/v1/support-programs/detail/answers')
+    expect(init.method).toBe('POST')
+    expect(init.headers).toEqual({
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    })
+    expect(JSON.parse(String(init.body))).toEqual(command)
+    expect(init.signal).toBe(controller.signal)
+  })
+
+  it('rejects an answered response without a citation or a citation outside the official provider URL', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        ...answeredEvidenceResponse(),
+        citations: [],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...answeredEvidenceResponse(),
+        citations: [{
+          ...answeredEvidenceResponse().citations[0],
+          sourceUrl: 'https://attacker.example/evidence',
+        }],
+      })))
+
+    await expect(answerSupportProgramEvidenceQuestionApi(command)).rejects.toThrow()
+    await expect(answerSupportProgramEvidenceQuestionApi(command)).rejects.toThrow()
+  })
+
+  it('keeps the full cited chunk when the answer evidence appears after the first 500 characters', async () => {
+    const excerpt = `${'가'.repeat(1_450)}\n신청 마감일은 2026년 9월 30일입니다.`
+    const answer = {
+      ...answeredEvidenceResponse(),
+      citations: [{ ...answeredEvidenceResponse().citations[0], excerpt }],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(answer)))
+
+    await expect(answerSupportProgramEvidenceQuestionApi(command)).resolves.toEqual(answer)
+  })
+
+  it('keeps endpoint status private while allowing the Repository to distinguish unsupported and unavailable results', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('', { status: 422 })))
+
+    await expect(answerSupportProgramEvidenceQuestionApi(command)).rejects.toMatchObject({
+      name: 'SupportProgramEvidenceApiError',
+      status: 422,
+    } satisfies Partial<SupportProgramEvidenceApiError>)
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('', { status: 422 })))
+    await expect(new SupportProgramRepositoryImpl().answerEvidenceQuestion(command))
+      .resolves.toEqual({ outcome: 'not-supported' })
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('', { status: 503 })))
+    await expect(new SupportProgramRepositoryImpl().answerEvidenceQuestion(command))
+      .resolves.toEqual({ outcome: 'unavailable' })
+  })
+
+  it('propagates evidence question cancellation to the caller', async () => {
+    const controller = new AbortController()
+    const aborted = new DOMException('aborted', 'AbortError')
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise<Response>(
+      (_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(aborted), { once: true })
+      },
+    )))
+
+    const request = answerSupportProgramEvidenceQuestionApi(command, controller.signal)
+    controller.abort()
+
+    await expect(request).rejects.toBe(aborted)
+  })
+})
+
+function answeredEvidenceResponse() {
+  return {
+    answer: '서울 소재 창업 7년 이내 중소기업이 신청 대상입니다.',
+    answerStatus: 'ANSWERED' as const,
+    citations: [{
+      excerpt: '지원 대상은 서울 소재 창업 7년 이내 중소기업입니다.',
+      sourceUrl: supportPrograms[0].sourceUrl,
+      chunkOrder: 0,
+    }],
+  }
+}
 
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {

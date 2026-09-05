@@ -1,7 +1,7 @@
 # GovBiz Core API
 
 브라우저에 공개하는 Spring Boot API입니다. 기업마당 공고를 수집해 벡터 색인을 준비한 뒤 MySQL에
-공개하고, 저장된 공고의 검색·상세 조회와 내부 AI Service 호출을 담당합니다.
+공개하고, 저장된 공고의 검색·상세 조회와 기업마당 공식 원문 근거 질문을 담당합니다.
 
 프로젝트 전체 설명은 [메인 README](../../README.md), 기술 선택과 구현 범위는
 [기술 구성](../../docs/technology.md)과 [구현 현황](../../docs/implementation-status.md),
@@ -87,6 +87,7 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 | `GET /api/v1/health/ai-service` | AI Service의 내부 Health 응답 확인 |
 | `GET /api/v1/support-programs/search` | 현재 MySQL 공고 카탈로그의 검색 또는 최신 목록 |
 | `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회 |
+| `POST /api/v1/support-programs/detail/answers` | 특정 공고의 공식 원문 근거 질문·답변 |
 | `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
 
 - 검색: 필수 `query`는 최대 500자이며 빈 문자열을 허용합니다. `acceptingOnly`의 기본값은 `true`이고
@@ -95,6 +96,15 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 - 상세: 필수 `sourceCode`는 `[A-Z][A-Z0-9_]{0,63}` 형식, `sourceProgramId`는 최대 255자이며 공백만 있는 값은 허용하지
   않습니다. 현재 노출된 행만 반환하며, 없는·미노출 공고는 404입니다. 검색 문맥이 없으므로 추천 이유는
   빈 배열, 추천 점수는 `null`입니다.
+- 원문 근거 질문: `sourceCode`, `sourceProgramId`, 최대 500자의 `question`을 JSON body로 보냅니다. 현재 공개된
+  `BIZINFO` 공고에만 제공하며, 사용자가 이 endpoint를 호출했을 때만 공식 HTTPS 상세 HTML을 수집합니다.
+  MySQL 원문 캐시가 같은 URL로 6시간 이내면 재사용하고, 아니면 읽기 가능한 텍스트를 검증·저장한 뒤 최대 50개
+  결정적 청크를 별도 Qdrant evidence 컬렉션에서 검색합니다. 답변은 `ANSWERED`(공식 원문 인용 1개 이상) 또는
+  `INSUFFICIENT_EVIDENCE`(인용 없음)와 최대 5개 인용 발췌·공식 URL·청크 순서를 반환합니다. 첨부파일·PDF·OCR·다른
+  제공처 원문은 지원하지 않습니다. 공식 원문 수집 실패는 503, 지원하지 않는 현재 제공처는 422입니다.
+  상세 URL의 리디렉션은 매번 공식 HTTPS 호스트와 같은 `pblancId`인지 검증하며 최대 3회 따릅니다.
+  HTML은 jsoup `1.23.2`로 파싱하고 `.support_project_detail`의 제목이 요청한 공고와 일치할 때
+  `.view_cont` 본문만 추출합니다. 인용에는 검색된 청크 전체를 반환하며 청크당 최대 1,500 UTF-16 코드 단위입니다.
 - 현재 수집기는 `BIZINFO` 한 제공처만 구현되어 있습니다. 전체 검색·색인·평가 fixture는 현재 MySQL의
   모든 제공처 공고를 다루며, 내부 식별자 `sourceCode:sourceProgramId`로 같은 원본 ID를 구분합니다.
   다른 제공처를 실제로 수집하려면 별도 Client·Facade·동기화 설정을 구현해야 합니다.
@@ -116,6 +126,9 @@ Compose는 일부 주소·CORS 값을 내부 네트워크에 맞게 덮어씁니
 | `BIZINFO_API_BASE_URL` | `https://apis.data.go.kr` | 기업마당 API 주소 |
 | `BIZINFO_API_CONNECT_TIMEOUT` | `2s` | 기업마당 연결 제한시간 |
 | `BIZINFO_API_READ_TIMEOUT` | `10s` | 기업마당 응답 제한시간 |
+| `BIZINFO_SOURCE_DOCUMENT_BASE_URL` | `https://www.bizinfo.go.kr` | RestClient 기본 origin. 실제 요청은 검증된 공고 `sourceUrl`의 절대 URI를 사용하므로 이 값으로 요청 주소를 변경하지 않음 |
+| `BIZINFO_SOURCE_DOCUMENT_CONNECT_TIMEOUT` | `2s` | 공식 원문 연결 제한시간 |
+| `BIZINFO_SOURCE_DOCUMENT_READ_TIMEOUT` | `10s` | 공식 원문 응답 제한시간 |
 | `BIZINFO_SYNC_ENABLED` | `true` | 기업마당 수집·색인 준비·DB 공개 작업 실행 여부 |
 | `BIZINFO_SYNC_INITIAL_DELAY` | `PT0S` | 첫 수집 작업까지의 지연 |
 | `BIZINFO_SYNC_FIXED_DELAY` | `PT6H` | 이전 수집 작업 종료 후 다음 실행까지의 지연 |
@@ -147,13 +160,14 @@ supportprogram/
 ├── service/
 │   ├── search             # DB 조회 → 의미 검색 → AI 점수화
 │   ├── detail             # 현재 공고 상세 조회
+│   ├── evidence           # 공식 원문 캐시·청킹 → 근거 검색·답변
 │   ├── sync               # 수집·색인 준비·DB 공개와 별도 벡터 복구
 │   ├── evaluation         # 비웹 fixture 내보내기·검색 품질 평가 캡처 프로필
 │   └── dto                # 검증된 내부 실행 결과
-├── facade                 # 기업마당 수집·AI 응답 검증·도메인 변환
+├── facade                 # 기업마당 수집·공식 원문·AI 응답 검증·도메인 변환
 ├── client/
-│   ├── bizinfo            # 기업마당 HTTP·페이지 검증·외부 DTO 정규화
-│   └── ai                 # AI 내부 HTTP 계약·검색 문서와 해시 생성
+│   ├── bizinfo            # 기업마당 HTTP·목록/공식 HTML 검증·외부 DTO 정규화
+│   └── ai                 # AI 내부 HTTP 계약·공고/원문 청크 색인과 답변
 ├── repository            # 도메인↔DB 행 변환·트랜잭션·저장·조회
 │   └── mapper            # MyBatis Mapper, DbRow
 ├── domain                 # 업무 모델·서울 날짜 기준 접수 상태 규칙
@@ -185,7 +199,8 @@ SQL은 [`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/re
 ## 데이터 관리와 오류 처리
 
 - Flyway [V1](src/main/resources/db/migration/V1__create_support_program.sql)은 공고 테이블,
-  [V2](src/main/resources/db/migration/V2__add_support_program_sync_generation.sql)는 최신 수집 시작 세대
+  [V2](src/main/resources/db/migration/V2__add_support_program_sync_generation.sql)는 최신 수집 시작 세대,
+  [V3](src/main/resources/db/migration/V3__create_support_program_source_document.sql)는 공고별 공식 원문
   테이블을 만듭니다. 적용된 migration은 수정하지 않고 새 버전을 추가합니다.
 - 전체 수집·검증·색인이 끝난 뒤 최신 시작 세대만 공개합니다. BIZINFO 행 미노출 처리와 UPSERT를
   하나의 짧은 DB transaction으로 묶으며 외부 HTTP 호출은 transaction 밖에서 수행합니다.
@@ -204,6 +219,8 @@ AI 경계의 실패는 `application/problem+json`으로 변환합니다. 내부 
 | 점수화·색인 API의 내부 408·504 또는 연결·읽기 시간 초과 | 504 | `AI_SERVICE_TIMEOUT` |
 | 예상하지 않은 HTTP 상태 | 502 | `AI_SERVICE_UPSTREAM_ERROR` |
 | 잘못된 JSON·빈 body·응답 계약 위반 | 502 | `AI_SERVICE_INVALID_RESPONSE` |
+| 공식 원문 제공처 수집·HTML 검증 실패 | 503 | `SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE` |
+| 현재 공고 제공처가 원문 근거 질문을 지원하지 않음 | 422 | `SUPPORT_PROGRAM_EVIDENCE_NOT_SUPPORTED` |
 
 AI Service는 LLM 실행 실패와 색인 미준비·Qdrant 실패를 내부 503으로 반환하므로 일반적으로 공개 503이
 됩니다. Health API의 내부 408·504는 점수화 API와 달리 `UPSTREAM_ERROR`로 분류합니다.
@@ -218,6 +235,6 @@ AI Service는 LLM 실행 실패와 색인 미준비·Qdrant 실패를 내부 503
 ./gradlew clean test --no-daemon
 ```
 
-테스트는 Controller 계약·Client/Facade 응답 검증·상태 계산·동기화 순서와 MySQL의 JSON, 복합 식별자,
-UPSERT, rollback, 시작 세대에 따른 공개 제어 등을 검증합니다. 전체 서비스 연결 검증은
+테스트는 Controller 계약·Client/Facade 응답 검증·상태 계산·동기화 순서·공식 원문 HTML 검증·근거 청크/인용 계약과
+MySQL의 JSON, 복합 식별자, UPSERT, rollback, 시작 세대에 따른 공개 제어 등을 검증합니다. 전체 서비스 연결 검증은
 [인프라 README](../../infrastructure/README.md)의 Compose 검증 절차를 참고하세요.

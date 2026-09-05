@@ -1,5 +1,7 @@
 package ai.govbiz.core.supportprogram.client.ai.dto
 
+import ai.govbiz.core.supportprogram.domain.SupportProgram
+
 data class AiSupportProgramCandidateRequest(
     val id: String,
     val title: String,
@@ -10,7 +12,11 @@ data class AiSupportProgramCandidateRequest(
     val targetDescription: String,
     val applicationPeriod: String,
     val status: String,
-)
+) {
+    init {
+        SupportProgram.requireCanonicalSourceQualifiedId(id)
+    }
+}
 
 data class AiSupportProgramRankingRequest(
     val originalQuery: String,

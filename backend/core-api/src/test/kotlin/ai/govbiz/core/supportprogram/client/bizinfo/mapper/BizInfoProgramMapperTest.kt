@@ -28,6 +28,19 @@ class BizInfoProgramMapperTest {
     }
 
     @Test
+    fun preservesAnOfficialHttpsDetailUrlWhosePblancIdMatchesTheRawProgramId() {
+        val sourceUrl = "${OFFICIAL_DETAIL_URL_PREFIX}PBLN:1"
+
+        val program = BizInfoProgramMapper.mapValidated(
+            payloads = listOf(payload(id = "PBLN:1", sourceUrl = sourceUrl)),
+            today = TODAY,
+        ).single().program
+
+        assertEquals("PBLN:1", program.id)
+        assertEquals(sourceUrl, program.sourceUrl)
+    }
+
+    @Test
     fun cleansHtmlAndDerivesDatesAndHonestStatuses() {
         val programs = BizInfoProgramMapper.mapValidated(
             payloads = listOf(
@@ -72,16 +85,54 @@ class BizInfoProgramMapperTest {
     }
 
     @Test
-    fun rejectsNonOfficialSourceUrls() {
+    fun rejectsSourceUrlsThatAreNotCanonicalOfficialHttpsDetails() {
         val invalidUrls = listOf(
-            "https://bizinfo.go.kr.example.com/detail",
-            "https://example.com/detail",
-            "ftp://www.bizinfo.go.kr/detail",
+            "https://bizinfo.go.kr.example.com/detail?pblancId=PBLN_1",
+            "https://example.com/detail?pblancId=PBLN_1",
+            "ftp://www.bizinfo.go.kr/detail?pblancId=PBLN_1",
+            "http://www.bizinfo.go.kr/detail?pblancId=PBLN_1",
+            "https://user:password@www.bizinfo.go.kr/detail?pblancId=PBLN_1",
+            "https://www.bizinfo.go.kr:444/detail?pblancId=PBLN_1",
+            "https://www.bizinfo.go.kr/?pblancId=PBLN_1",
+            "https://www.bizinfo.go.kr/detail?id=PBLN_1",
+            "https://www.bizinfo.go.kr/detail?pblancId=OTHER",
+            "https://www.bizinfo.go.kr/detail?pblancId=PBLN_1&pblancId=PBLN_1",
             "not a url",
         )
 
         invalidUrls.forEach { invalidUrl ->
             assertInvalidResponse(listOf(payload(sourceUrl = invalidUrl)))
+        }
+    }
+
+    @Test
+    fun rejectsRawProgramIdsWithLeadingOrTrailingWhitespaceInsteadOfTrimmingThem() {
+        val invalidPayloads = listOf(
+            payload(
+                id = " PBLN_1",
+                sourceUrl = "${OFFICIAL_DETAIL_URL_PREFIX}%20PBLN_1",
+            ),
+            payload(
+                id = "PBLN_1 ",
+                sourceUrl = "${OFFICIAL_DETAIL_URL_PREFIX}PBLN_1%20",
+            ),
+        )
+
+        invalidPayloads.forEach { invalidPayload ->
+            assertInvalidResponse(listOf(invalidPayload))
+        }
+    }
+
+    @Test
+    fun mapsInvalidUnicodeAndOversizedRawProgramIdsToInvalidResponse() {
+        val invalidRawIds = listOf(
+            "P".repeat(256),
+            "PBLN\u0000_1",
+            "PBLN\u200B_1",
+        )
+
+        invalidRawIds.forEach { rawId ->
+            assertInvalidResponse(listOf(payload(id = rawId)))
         }
     }
 
@@ -106,7 +157,7 @@ class BizInfoProgramMapperTest {
     private fun payload(
         id: String? = "PBLN_1",
         title: String? = "서울 AI 사업",
-        sourceUrl: String? = "https://www.bizinfo.go.kr/detail?id=PBLN_1",
+        sourceUrl: String? = id?.let { "$OFFICIAL_DETAIL_URL_PREFIX$it" },
         summaryHtml: String? = "<p>AI 기술 지원</p>",
         applicationPeriod: String? = "2026-08-01 ~ 2026-09-30",
     ) = BizInfoProgramPayload(
@@ -126,6 +177,8 @@ class BizInfoProgramMapperTest {
     )
 
     private companion object {
+        const val OFFICIAL_DETAIL_URL_PREFIX =
+            "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId="
         val TODAY: LocalDate = LocalDate.of(2026, 9, 1)
     }
 }

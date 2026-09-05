@@ -14,6 +14,8 @@ from app.support_program_ranking.models import (
     SupportProgramRankingRequest,
 )
 from app.support_program_ranking.service import SupportProgramRankingService
+from app.support_program_evidence.answer_service import SupportProgramEvidenceAnswerService
+from app.support_program_evidence.service import SupportProgramEvidenceService
 from app.bootstrap import ApplicationContainer, build_application_container
 from app.config import Settings
 
@@ -96,6 +98,16 @@ async def test_builds_and_wires_agent_in_the_composition_root(
     assert container.support_program_index_service is not None
     assert container.support_program_index_service.openai_client is client
     assert container.support_program_index_service.qdrant_client is container.qdrant_client
+    assert isinstance(
+        container.support_program_evidence_service,
+        SupportProgramEvidenceService,
+    )
+    assert container.support_program_evidence_service.openai_client is client
+    assert container.support_program_evidence_service.qdrant_client is container.qdrant_client
+    assert isinstance(
+        container.support_program_evidence_answer_service,
+        SupportProgramEvidenceAnswerService,
+    )
     assert container.openai_client is client
     assert captured_client_arguments == {
         "api_key": "private-key",

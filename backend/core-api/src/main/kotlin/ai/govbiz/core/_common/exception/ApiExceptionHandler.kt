@@ -1,6 +1,8 @@
 package ai.govbiz.core._common.exception
 
 import ai.govbiz.core.supportprogram.service.detail.exception.SupportProgramNotFoundException
+import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
+import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceUnavailableException
 import jakarta.servlet.http.HttpServletRequest
 import java.net.URI
 import org.springframework.http.HttpStatus
@@ -31,6 +33,36 @@ class ApiExceptionHandler {
                 "Support Program Not Found",
                 "The requested support program does not exist or is no longer available.",
                 "SUPPORT_PROGRAM_NOT_FOUND",
+            ),
+            request,
+        )
+
+    @ExceptionHandler(SupportProgramEvidenceNotSupportedException::class)
+    fun handleSupportProgramEvidenceNotSupportedException(
+        request: HttpServletRequest,
+    ): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            ProblemDefinition(
+                HttpStatus.UNPROCESSABLE_CONTENT,
+                URI.create("urn:govbiz:problem:support-program-evidence-not-supported"),
+                "Support Program Evidence Not Supported",
+                "Evidence-based answers are not supported for this support program source.",
+                "SUPPORT_PROGRAM_EVIDENCE_NOT_SUPPORTED",
+            ),
+            request,
+        )
+
+    @ExceptionHandler(SupportProgramEvidenceUnavailableException::class)
+    fun handleSupportProgramEvidenceUnavailableException(
+        request: HttpServletRequest,
+    ): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            ProblemDefinition(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                URI.create("urn:govbiz:problem:support-program-evidence-unavailable"),
+                "Support Program Evidence Unavailable",
+                "Evidence-based answers are temporarily unavailable for this support program.",
+                "SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE",
             ),
             request,
         )

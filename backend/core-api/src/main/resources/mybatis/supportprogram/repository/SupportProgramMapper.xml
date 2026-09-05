@@ -21,6 +21,16 @@
         <result column="source_sort_timestamp" property="sourceSortTimestamp" />
     </resultMap>
 
+    <resultMap id="supportProgramSourceDocumentDbRow"
+               type="ai.govbiz.core.supportprogram.repository.mapper.SupportProgramSourceDocumentDbRow">
+        <id column="source_code" property="sourceCode" />
+        <id column="source_program_id" property="sourceProgramId" />
+        <result column="source_url" property="sourceUrl" />
+        <result column="content" property="content" />
+        <result column="content_hash" property="contentHash" />
+        <result column="fetched_at" property="fetchedAt" />
+    </resultMap>
+
     <insert id="upsert"
             parameterType="ai.govbiz.core.supportprogram.repository.mapper.SupportProgramDbRow">
         INSERT INTO support_program (
@@ -117,6 +127,47 @@
         FROM support_program
         WHERE is_source_present = TRUE
         ORDER BY source_code ASC, source_program_id ASC
+    </select>
+
+    <insert id="upsertSourceDocument"
+            parameterType="ai.govbiz.core.supportprogram.repository.mapper.SupportProgramSourceDocumentDbRow">
+        INSERT INTO support_program_source_document (
+            source_code,
+            source_program_id,
+            source_url,
+            content,
+            content_hash,
+            fetched_at
+        ) VALUES (
+            #{sourceCode},
+            #{sourceProgramId},
+            #{sourceUrl},
+            #{content},
+            #{contentHash},
+            #{fetchedAt}
+        )
+        ON DUPLICATE KEY UPDATE
+            source_url = #{sourceUrl},
+            content = #{content},
+            content_hash = #{contentHash},
+            fetched_at = #{fetchedAt}
+    </insert>
+
+    <select id="findPresentSourceDocument" resultMap="supportProgramSourceDocumentDbRow">
+        SELECT
+            document.source_code,
+            document.source_program_id,
+            document.source_url,
+            document.content,
+            document.content_hash,
+            document.fetched_at
+        FROM support_program_source_document document
+        INNER JOIN support_program program
+            ON program.source_code = document.source_code
+            AND program.source_program_id = document.source_program_id
+        WHERE document.source_code = #{sourceCode}
+          AND document.source_program_id = #{sourceProgramId}
+          AND program.is_source_present = TRUE
     </select>
 
     <insert id="insertSyncGenerationIfAbsent">

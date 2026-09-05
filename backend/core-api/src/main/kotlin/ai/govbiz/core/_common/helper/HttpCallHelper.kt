@@ -1,6 +1,7 @@
 package ai.govbiz.core._common.helper
 
 import ai.govbiz.core._common.exception.AiServiceCallException
+import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.http.HttpTimeoutException
 import java.util.concurrent.TimeoutException
@@ -18,6 +19,11 @@ internal fun <T> executeHttpCall(
 ): T =
     try {
         block()
+    } catch (exception: IOException) {
+        if (exception.hasTimeoutCause()) {
+            throw onTimeout(exception)
+        }
+        throw onUnavailable(exception)
     } catch (exception: ResourceAccessException) {
         if (exception.hasTimeoutCause()) {
             throw onTimeout(exception)

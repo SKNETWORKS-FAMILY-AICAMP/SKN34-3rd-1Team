@@ -12,7 +12,7 @@ class SupportProgramDetailService(
 ) {
     fun get(sourceCode: String, sourceProgramId: String): SupportProgram =
         supportProgramRepository
-            .findPresentBySourceAndProgramId(sourceCode.trim(), sourceProgramId.trim())
+            .findPresentBySourceAndProgramId(sourceCode, sourceProgramId)
             ?.program
             ?: throw SupportProgramNotFoundException()
 }

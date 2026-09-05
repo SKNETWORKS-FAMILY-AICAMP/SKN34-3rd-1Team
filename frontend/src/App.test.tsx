@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
+import { appContainer } from './app/appContainer'
 import { createAppStore } from './app/store'
 import { supportPrograms } from './data/fixtures/supportPrograms'
 
@@ -15,6 +16,7 @@ vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => (
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -149,6 +151,150 @@ describe('App navigation', () => {
 
     fireEvent.click(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }))
     expect(screen.getByRole('heading', { name: 'GovBiz에게 물어보세요' })).toBeTruthy()
+  })
+
+  it('상세 공고에서는 사용자가 질문을 제출한 뒤에만 원문 근거 답변과 링크를 표시한다', async () => {
+    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const evidenceAnswer = {
+      answer: '서울 소재 창업 7년 이내 중소기업이 신청 대상입니다.',
+      answerStatus: 'ANSWERED',
+      citations: [{
+        excerpt: `${'공고 안내입니다. '.repeat(70)}\n지원 대상은 서울 소재 창업 7년 이내 중소기업입니다.`,
+        sourceUrl: detail.sourceUrl,
+        chunkOrder: 0,
+      }],
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(detail))
+      .mockResolvedValueOnce(jsonResponse(evidenceAnswer))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(
+      createAppStore(),
+      `/support-programs/detail?sourceCode=${detail.sourceCode}&sourceProgramId=${detail.id}`,
+    )
+
+    await screen.findByRole('heading', { name: detail.title })
+    expect(fetchMock).toHaveBeenCalledOnce()
+
+    const question = screen.getByRole('textbox', { name: '공고 원문에 질문하기' })
+    expect(screen.getByRole('button', { name: '질문하고 근거 받기' })).toBeTruthy()
+    fireEvent.change(question, { target: { value: '신청 대상은 누구인가요?' } })
+    fireEvent.submit(question.closest('form')!)
+
+    await screen.findByText(evidenceAnswer.answer)
+    const requestUrl = new URL(String(fetchMock.mock.calls[1]?.[0]))
+    expect(requestUrl.pathname).toBe('/api/v1/support-programs/detail/answers')
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      sourceCode: detail.sourceCode,
+      sourceProgramId: detail.id,
+      question: '신청 대상은 누구인가요?',
+    })
+
+    const citationLink = screen.getByRole('link', { name: '근거 1 원문 보기 ↗' })
+    expect(citationLink.getAttribute('href')).toBe(detail.sourceUrl)
+    expect(citationLink.getAttribute('target')).toBe('_blank')
+    expect(citationLink.getAttribute('rel')).toBe('noreferrer')
+    expect(citationLink.closest('li')?.querySelector('blockquote')?.textContent)
+      .toBe(evidenceAnswer.citations[0].excerpt)
+  })
+
+  it.each([
+    [{
+      answer: '원문 근거가 부족합니다.',
+      answerStatus: 'INSUFFICIENT_EVIDENCE',
+      citations: [],
+    }, '공고 원문에서 이 질문에 답할 만큼 충분한 근거를 찾지 못했습니다. 원문 공고를 확인해 주세요.'],
+    [new Response('', { status: 422 }), '이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 원문 공고에서 확인해 주세요.'],
+    [new Response('', { status: 503 }), '원문 근거 답변을 지금 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.'],
+  ])('원문 답변의 응답 상태에 안전한 안내를 표시한다', async (answerResponse, expectedMessage) => {
+    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(detail))
+      .mockResolvedValueOnce(answerResponse instanceof Response ? answerResponse : jsonResponse(answerResponse))
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderApp(
+      createAppStore(),
+      `/support-programs/detail?sourceCode=${detail.sourceCode}&sourceProgramId=${detail.id}`,
+    )
+
+    const question = await screen.findByRole('textbox', { name: '공고 원문에 질문하기' })
+    fireEvent.change(question, { target: { value: '신청 대상은 누구인가요?' } })
+    fireEvent.submit(question.closest('form')!)
+
+    expect(await screen.findByText(expectedMessage)).toBeTruthy()
+  })
+
+  it('제공처가 다른 동일 원본 ID 공고를 각각 표시하고 올바른 상세 식별자로 조회한다', async () => {
+    const sharedProgramId = 'SHARED-PROGRAM-ID'
+    const bizInfoProgram = {
+      ...supportPrograms[0],
+      id: sharedProgramId,
+      title: '기업마당 동일 원본 ID 공고',
+    }
+    const otherProgram = {
+      ...supportPrograms[1],
+      sourceCode: 'OTHER',
+      id: sharedProgramId,
+      title: '기타 제공처 동일 원본 ID 공고',
+      sourceName: '테스트 제공처',
+      sourceUrl: 'https://support-programs.other.test/programs/shared',
+    }
+    // 아직 연동하지 않은 제공처는 HTTP allowlist에 추가하지 않고 Domain 경계에서 대역을 제공합니다.
+    const repository = appContainer.resolve('supportProgramRepository')
+    vi.spyOn(repository, 'search').mockResolvedValue([bizInfoProgram, otherProgram])
+    const getDetail = vi.spyOn(repository, 'getDetail')
+      .mockResolvedValueOnce({
+        ...bizInfoProgram,
+        matchedReasons: [],
+        recommendationScore: null,
+      })
+      .mockResolvedValueOnce({
+        ...otherProgram,
+        matchedReasons: [],
+        recommendationScore: null,
+      })
+
+    renderApp(createAppStore())
+
+    const chatInput = screen.getByPlaceholderText('예: 서울에서 AI 창업지원 사업을 찾아줘')
+    fireEvent.change(chatInput, { target: { value: '동일 ID' } })
+    fireEvent.submit(chatInput.closest('form')!)
+
+    await screen.findByRole('heading', { name: bizInfoProgram.title, level: 2 })
+    await screen.findByRole('heading', { name: otherProgram.title, level: 2 })
+
+    const bizInfoCard = getProgramCard(bizInfoProgram.title)
+    const otherCard = getProgramCard(otherProgram.title)
+    expect(within(bizInfoCard).getByRole('link', { name: '원문 보기 ↗' }).getAttribute('href'))
+      .toBe(bizInfoProgram.sourceUrl)
+    expect(within(otherCard).getByRole('link', { name: '원문 보기 ↗' }).getAttribute('href'))
+      .toBe(otherProgram.sourceUrl)
+
+    fireEvent.click(within(bizInfoCard).getByRole('link', { name: '상세 조건 보기' }))
+    await screen.findByRole('heading', { name: bizInfoProgram.title, level: 1 })
+    expect(getDetail).toHaveBeenNthCalledWith(1, {
+      sourceCode: bizInfoProgram.sourceCode,
+      sourceProgramId: sharedProgramId,
+    }, expect.any(AbortSignal))
+
+    fireEvent.click(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }))
+    await screen.findByRole('heading', { name: otherProgram.title, level: 2 })
+
+    fireEvent.click(within(getProgramCard(otherProgram.title)).getByRole('link', { name: '상세 조건 보기' }))
+    await screen.findByRole('heading', { name: otherProgram.title, level: 1 })
+    expect(getDetail).toHaveBeenNthCalledWith(2, {
+      sourceCode: otherProgram.sourceCode,
+      sourceProgramId: sharedProgramId,
+    }, expect.any(AbortSignal))
   })
 
   it('한글 조합 중 Enter는 검색을 전송하지 않고 조합이 끝난 뒤 전송한다', async () => {
@@ -371,4 +517,10 @@ function jsonResponse(body: unknown) {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+function getProgramCard(title: string): HTMLElement {
+  const card = screen.getByRole('heading', { name: title, level: 2 }).closest('article')
+  if (!card) throw new Error(`지원사업 카드가 없습니다: ${title}`)
+  return card
 }
