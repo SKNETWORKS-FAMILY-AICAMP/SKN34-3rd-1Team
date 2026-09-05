@@ -25,6 +25,7 @@ import org.springframework.jdbc.core.JdbcTemplate
         "app.ai-service.connect-timeout=10ms",
         "app.ai-service.read-timeout=10ms",
         "app.bizinfo.sync.enabled=false",
+        "app.support-program-index.enabled=false",
     ],
 )
 @Import(MySqlTestContainerConfig::class)

@@ -11,11 +11,13 @@ data class AiServiceClientProperties(
     val baseUrl: URI,
     val connectTimeout: Duration,
     val readTimeout: Duration,
+    val semanticSearchReadTimeout: Duration = Duration.ofSeconds(30),
 ) {
 
     init {
         validateHttpBaseUrl(baseUrl, "app.ai-service.base-url")
         validatePositiveDuration(connectTimeout, "app.ai-service.connect-timeout")
         validatePositiveDuration(readTimeout, "app.ai-service.read-timeout")
+        validatePositiveDuration(semanticSearchReadTimeout, "app.ai-service.semantic-search-read-timeout")
     }
 }

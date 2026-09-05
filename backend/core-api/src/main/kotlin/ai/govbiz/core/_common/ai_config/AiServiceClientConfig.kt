@@ -11,6 +11,17 @@ import org.springframework.web.client.RestClient
 class AiServiceClientConfig {
 
     @Bean
+    fun aiSemanticSearchRestClient(
+        restClientBuilder: RestClient.Builder,
+        properties: AiServiceClientProperties,
+    ): RestClient = buildRestClient(
+        restClientBuilder,
+        properties.baseUrl,
+        properties.connectTimeout,
+        properties.semanticSearchReadTimeout,
+    )
+
+    @Bean
     fun aiServiceRestClient(
         restClientBuilder: RestClient.Builder,
         properties: AiServiceClientProperties,

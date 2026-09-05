@@ -13,7 +13,33 @@ EXPECTED_QUERY = {
     "numOfRows": ["1000"],
     "dataType": ["json"],
 }
-RESPONSE_BODY = Path("response.json").read_bytes()
+fixture = json.loads(Path("response.json").read_text())
+body = fixture["response"]["body"]
+items = body["items"]["item"]
+# The old relevant AI program must be outside the old latest-20 window.
+for number in range(1, 26):
+    items.append({
+        **items[0],
+        "pblancId": f"PBLN_COMPOSE_RECENT_{number:02d}",
+        "pblancNm": f"최근 식품 박람회 참가 지원 {number}",
+        "bsnsSumryCn": "식품 제조기업의 박람회 전시를 지원합니다.",
+        "pldirSportRealmLclasCodeNm": "박람회",
+        "trgetNm": "식품 제조기업",
+        "hashtags": "식품,전국",
+        "updtPnttm": f"2026-07-{number:02d} 10:00:00",
+    })
+items.append({
+    **items[0],
+    "pblancId": "PBLN_COMPOSE_OLD_AI",
+    "pblancNm": "서울 AI 기술 사업화 지원",
+    "bsnsSumryCn": "서울 인공지능 창업기업의 기술 사업화를 지원합니다.",
+    "pldirSportRealmLclasCodeNm": "AI",
+    "trgetNm": "서울 AI 창업기업",
+    "hashtags": "AI,서울",
+    "updtPnttm": "2020-01-01 10:00:00",
+})
+body["totalCount"] = len(items)
+RESPONSE_BODY = json.dumps(fixture, ensure_ascii=False).encode("utf-8")
 
 
 class BizInfoStubHandler(BaseHTTPRequestHandler):

@@ -89,3 +89,33 @@ def test_uses_default_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
 
     assert Settings.from_environment().openai_model == DEFAULT_OPENAI_MODEL
+
+
+def test_reads_vector_search_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("QDRANT_URL", " http://qdrant:6333 ")
+    monkeypatch.setenv("QDRANT_API_KEY", " private-vector-key ")
+    monkeypatch.setenv("QDRANT_TIMEOUT_SECONDS", "2.5")
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
+    monkeypatch.setenv("OPENAI_EMBEDDING_DIMENSIONS", "512")
+    monkeypatch.setenv("EMBEDDING_TIMEOUT_SECONDS", "12.5")
+    settings = Settings.from_environment()
+    assert settings.qdrant_url == "http://qdrant:6333"
+    assert settings.qdrant_api_key == "private-vector-key"
+    assert settings.qdrant_timeout_seconds == 2.5
+    assert settings.openai_embedding_model == "text-embedding-3-large"
+    assert settings.openai_embedding_dimensions == 512
+    assert settings.embedding_timeout_seconds == 12.5
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "1537", "NaN", "invalid"])
+def test_rejects_invalid_embedding_dimensions(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    monkeypatch.setenv("OPENAI_EMBEDDING_DIMENSIONS", value)
+    with pytest.raises(SettingsConfigurationError, match="OPENAI_EMBEDDING_DIMENSIONS"):
+        Settings.from_environment()
+
+
+def test_rejects_unknown_embedding_tokenization_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "unknown-model")
+    with pytest.raises(SettingsConfigurationError, match="OPENAI_EMBEDDING_MODEL"):
+        Settings.from_environment()

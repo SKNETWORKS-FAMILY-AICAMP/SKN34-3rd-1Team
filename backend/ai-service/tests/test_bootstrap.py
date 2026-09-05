@@ -90,6 +90,9 @@ async def test_builds_and_wires_agent_in_the_composition_root(
         container.support_program_ranking_service,
         SupportProgramRankingService,
     )
+    assert container.support_program_index_service is not None
+    assert container.support_program_index_service.openai_client is client
+    assert container.support_program_index_service.qdrant_client is container.qdrant_client
     assert container.openai_client is client
     assert captured_client_arguments == {
         "api_key": "private-key",
@@ -124,6 +127,8 @@ async def test_builds_and_wires_agent_in_the_composition_root(
 
     assert response.rankings[0].total_score == 100
     model.assert_complete()
+    await container.close()
+    assert client.closed is True
 
 
 def test_application_lifespan_closes_container_owned_client(
@@ -146,3 +151,19 @@ def test_application_lifespan_closes_container_owned_client(
         assert test_client.get("/internal/v1/health").status_code == 200
 
     assert client.closed is True
+
+
+@pytest.mark.anyio
+async def test_closes_both_qdrant_and_openai_clients() -> None:
+    from unittest.mock import AsyncMock
+
+    openai = FakeOpenAIClient()
+    qdrant = AsyncMock()
+    container = ApplicationContainer(
+        support_program_ranking_service=SupportProgramRankingService(NeverCalledAgent()),
+        openai_client=openai,  # type: ignore[arg-type]
+        qdrant_client=qdrant,
+    )
+    await container.close()
+    qdrant.close.assert_awaited_once()
+    assert openai.closed is True
