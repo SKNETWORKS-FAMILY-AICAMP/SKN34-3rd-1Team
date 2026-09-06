@@ -23,6 +23,7 @@ def load_module(name, filename):
 
 RUNNER = load_module("verify_ai_runner", "run-ai-review.py")
 SELECTOR = load_module("verify_selector", "select-review-mode.py")
+RECHECK = load_module("verify_recheck", "recheck-ai-review.py")
 
 
 def read(path):
@@ -43,7 +44,63 @@ def same_json(left, right):
     return read(left) == read(right)
 
 
-def verify_run(run_dir):
+def _verify_cause_audit(path, prepared, blind_path):
+    audit = read(path)
+    RUNNER.PAGE.require_keys(audit, {"schemaVersion", "baseAiReviewSha256", "inputSha256", "auditor", "records", "sourceCrosscheck"}, "Cause audit")
+    if audit["sourceCrosscheck"] != {"agentId": "/root", "kind": "ai-source-crosscheck"}:
+        raise ValueError("Invalid cause-audit source crosscheck")
+    if audit.get("schemaVersion") != "support-program-ai-recheck-cause-audit-v1":
+        raise ValueError("Invalid cause-audit schema")
+    if audit.get("baseAiReviewSha256") != prepared["baseAiReviewSha256"] or audit.get("inputSha256") != prepared["inputSha256"]:
+        raise ValueError("Cause-audit source hash differs")
+    if audit.get("auditor") != {"agentId": "/root/luna_recheck_2", "model": "gpt-5.6-luna", "kind": "ai-audit-after-blind-vote"}:
+        raise ValueError("Invalid cause-audit auditor")
+    blind = {(item["queryId"], item["programId"]): item["announcement"]
+             for item in RUNNER.read_jsonl(blind_path)}
+    records = audit.get("records")
+    if not isinstance(records, list) or len(records) != len(blind):
+        raise ValueError("Cause-audit coverage differs")
+    causes = {"decision_reason_mismatch", "explicit_fact_misread", "partial_match", "eligibility_confusion", "insufficient_source", "other_interpretation"}
+    seen = set()
+    for record in records:
+        RUNNER.PAGE.require_keys(record, {"queryId", "programId", "primaryCause", "explanation", "missingInformation", "affectedJudgeIds", "evidence"}, "Cause-audit record")
+        for field in ("queryId", "programId", "primaryCause", "explanation"):
+            RUNNER.PAGE.require_text(record[field], field, maximum=2000, nonempty=True)
+        pair = (record["queryId"], record["programId"])
+        if pair in seen or pair not in blind or record["primaryCause"] not in causes:
+            raise ValueError("Cause-audit target or cause is invalid")
+        for field in ("missingInformation", "affectedJudgeIds"):
+            if not isinstance(record[field], list):
+                raise ValueError("Cause-audit fields are invalid")
+            for item in record[field]:
+                RUNNER.PAGE.require_text(item, field, maximum=1000, nonempty=True)
+            if len(record[field]) != len(set(record[field])):
+                raise ValueError("Duplicate cause-audit list item")
+        if not record["affectedJudgeIds"] or not set(record["affectedJudgeIds"]) <= {f"judge-{i}" for i in range(1, 6)}:
+            raise ValueError("Unknown or missing affected judge")
+        evidence = record["evidence"]
+        if not isinstance(evidence, list) or len(evidence) > 3 or any(not isinstance(item, str) or not item.strip() or len(item) > 300 or item not in blind[pair] for item in evidence):
+            raise ValueError("Cause-audit evidence is invalid")
+        if len(evidence) != len(set(evidence)):
+            raise ValueError("Duplicate cause-audit evidence")
+        seen.add(pair)
+    if seen != set(blind):
+        raise ValueError("Cause-audit target coverage differs")
+
+
+def _compare_selection(out, saved, mode):
+    for filename in ("selection.json", "reviewed.csv", "review-progress.json"):
+        generated = out / filename
+        expected = saved / filename
+        if filename.endswith(".json"):
+            equal = same_json(generated, expected)
+        else:
+            equal = generated.read_bytes() == expected.read_bytes()
+        if not equal:
+            raise ValueError(f"{mode} {filename} differs")
+
+
+def verify_run(run_dir, with_recheck=False):
     run = Path(run_dir).resolve()
     review = run / "review-v2"
     ai = review / "codex-ai-v1"
@@ -67,9 +124,20 @@ def verify_run(run_dir):
         "hybrid": review / "selected-hybrid-v1",
         "human": review / "selected-human-v1",
     }
+    recheck_dir = review / "codex-ai-recheck-v1"
+    recheck_selected_dirs = {
+        "ai-only": review / "selected-ai-recheck-v1",
+        "hybrid": review / "selected-hybrid-recheck-v1",
+    }
     selected_files = [directory / filename for directory in selected_dirs.values()
                       for filename in ("selection.json", "reviewed.csv", "review-progress.json")]
     required = list(source.values()) + judges + selected_files
+    if with_recheck:
+        required += [recheck_dir / name for name in (
+            "prepared.json", "policy.json", "blind-input.jsonl", "assignments.json", "ai-recheck.json", "cause-audit.json",
+            *[f"judge-{number}.jsonl" for number in range(1, 6)])]
+        required += [directory / filename for directory in recheck_selected_dirs.values()
+                     for filename in ("selection.json", "reviewed.csv", "review-progress.json")]
     missing = [str(path.relative_to(run)) for path in required if not path.is_file()]
     if missing:
         raise ValueError("missing source: " + ", ".join(missing))
@@ -134,28 +202,72 @@ def verify_run(run_dir):
             )
             invoke(SELECTOR, args)
             saved = selected_dirs[mode]
-            for filename in ("selection.json", "reviewed.csv", "review-progress.json"):
-                generated = out / filename
-                expected = saved / filename
-                if filename.endswith(".json"):
-                    equal = same_json(generated, expected)
-                else:
-                    equal = generated.read_bytes() == expected.read_bytes()
-                if not equal:
-                    raise ValueError(f"{mode} {filename} differs")
+            _compare_selection(out, saved, mode)
             mode_results[mode] = read(out / "selection.json")["status"]
 
-    return {"status": "ok", "checks": 1 + len(mode_results), "modes": mode_results,
-            "judgments": len(read(source["ai_review"])["judgments"]),
-            "actualSearchEvaluated": False}
+        recheck_summary = None
+        if with_recheck:
+            recheck_prepared = temp / "recheck-prepared"
+            recheck_prepared.mkdir()
+            for name in ("prepared.json", "policy.json", "blind-input.jsonl"):
+                shutil.copyfile(recheck_dir / name, recheck_prepared / name)
+            recheck_copied_judges = []
+            for number in range(1, 6):
+                target = temp / f"recheck-judge-{number}.jsonl"
+                shutil.copyfile(recheck_dir / f"judge-{number}.jsonl", target)
+                recheck_copied_judges.append(str(target))
+            recheck_assignments = temp / "recheck-assignments.json"
+            shutil.copyfile(recheck_dir / "assignments.json", recheck_assignments)
+            recheck_output = temp / "ai-recheck.json"
+            recheck_args = argparse.Namespace(
+                fixture=str(copied["fixture"]), query_set=str(copied["query_set"]),
+                review_pool=str(copied["review_pool"]), pool_manifest=str(copied["pool_manifest"]),
+                base_ai_review=str(saved_ai), prepared_dir=str(recheck_prepared),
+                assignments=str(recheck_assignments), judge_file=recheck_copied_judges,
+                output=str(recheck_output),
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                RECHECK.collect(recheck_args)
+            saved_recheck = temp / "saved-ai-recheck.json"
+            shutil.copyfile(recheck_dir / "ai-recheck.json", saved_recheck)
+            if not same_json(recheck_output, saved_recheck):
+                raise ValueError("recollected ai-recheck.json differs")
+            _verify_cause_audit(recheck_dir / "cause-audit.json", read(recheck_dir / "prepared.json"), recheck_dir / "blind-input.jsonl")
+            recheck_results = {}
+            for mode in ("ai-only", "hybrid"):
+                out = temp / ("selected-recheck-" + mode)
+                args = argparse.Namespace(
+                    fixture=str(copied["fixture"]), query_set=str(copied["query_set"]),
+                    review_pool=str(copied["review_pool"]), pool_manifest=str(copied["pool_manifest"]),
+                    mode=mode, ai_review=str(saved_ai), ai_recheck=str(saved_recheck), human_review=None,
+                    conversation_judgments=str(copied["conversation"]), output_dir=str(out),
+                )
+                invoke(SELECTOR, args)
+                _compare_selection(out, recheck_selected_dirs[mode], mode + "-recheck")
+                recheck_results[mode] = read(out / "selection.json")["status"]
+            saved_recheck_data = read(recheck_dir / "ai-recheck.json")
+            selected_ai = read(recheck_selected_dirs["ai-only"] / "selection.json")
+            recheck_summary = {"judgments": len(saved_recheck_data["judgments"]),
+                               "modes": recheck_results,
+                               "sourceCounts": selected_ai["sourceCounts"],
+                               "evaluableQueryCount": selected_ai["evaluableQueryCount"]}
+
+    result = {"status": "ok", "checks": 1 + len(mode_results), "modes": mode_results,
+              "judgments": len(read(source["ai_review"])["judgments"]),
+              "actualSearchEvaluated": False}
+    if with_recheck:
+        result["recheck"] = recheck_summary
+        result["checks"] += 4  # Recollection, cause audit, and two selected modes.
+    return result
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--with-recheck", action="store_true")
     args = parser.parse_args(argv)
     try:
-        result = verify_run(args.run_dir)
+        result = verify_run(args.run_dir, with_recheck=args.with_recheck)
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, ensure_ascii=False))
         return 1

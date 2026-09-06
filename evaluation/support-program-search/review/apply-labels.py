@@ -369,8 +369,8 @@ def main():
     mode = "legacy_unspecified" if selection is None else selection["mode"]
     if selection:
         source_hashes["selectionSha256"] = sha256_path(args.selection)
-        for field in ("aiReviewSha256", "humanReviewSha256", "conversationJudgmentsSha256"):
-            if selection[field] is not None:
+        for field in ("aiReviewSha256", "aiRecheckSha256", "humanReviewSha256", "conversationJudgmentsSha256"):
+            if selection.get(field) is not None:
                 source_hashes[field] = selection[field]
     excluded_queries = [
         {"id": query["id"], "reason": exclusions[query["id"]]}

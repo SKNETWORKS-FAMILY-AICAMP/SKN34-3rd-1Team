@@ -10,17 +10,18 @@ Codex 대화에 접속하지 않고도 원본 판정과 현재 진행 상태를 
 | --- | --- |
 | 고정 기준일 / 공고 | 2026-09-06 / 접수 중 공고 1,422건 |
 | 질문 / 검토 풀 | 16개 / 질문·공고 조합 321건 |
-| AI 판정 | Luna 5회 독립 실행, 총 1,605건 완료 |
-| 합의 / 미확정 | 279건 / 42건 |
+| AI 판정 | 최초 1,605건 + 미확정 42건에 대한 추가 210건 완료 |
+| 합의 / 미확정 | 279건 / 42건 → 추가 검토 후 303건 / 18건 |
 | 기본 방식 | AI-only. 기존 사람 판정 2건은 별도 보존 |
-| 평가 가능 질문 | 현재 제외 규칙상 4개. 관련 공고가 있는 질문은 Q01 하나 |
+| 평가 가능 질문 | 4개 → 8개. 관련 공고가 있는 질문은 Q01·Q02·Q06·Q14 |
 | 실제 검색 캡처·Recall·MRR | 아직 없음. 검색 품질 평가 완료가 아님 |
 
-다음 작업은 `review-v2/selected-ai-v1/selection.json`의 `source: "unresolved"` 42건을 기준으로,
-같은 질문·공고의 `ai-review.json` 개별 이유와 `fixture-unlabeled.json`의 고정 본문을 확인하는 것이다.
-정보 부족과 판정 기준의 모호함을 구분하고, 없는 사실을 만들어 확정하지 않는다. 이 인수인계 작업에서 기존
-판정이나 합의 정책을 바꾸지는 않았다. [결과 보고서](review-v2/codex-ai-v1/labeling-report.md)와
-[실행 기록](run-manifest.md)에 한계와 출처가 있다.
+현재 선택은 `review-v2/selected-ai-recheck-v1/`이다. 기존 합의 279건을 보존하고, 기존 미확정 42건 전부를
+새 Luna 작업 5개가 한 차례 독립 검토했다. 같은 4/5 합의 기준으로 24건을 추가 확정하고 18건은 미확정으로 남겼다.
+추가 검토는 여기서 종료한다. 다음 작업은 같은 DB·색인 상태 및 비용을 확인한 뒤 실제 검색을 캡처하는 것이다.
+새 후보가 기존 검토 풀 밖에 있으면 별도 판정이 필요하다. 절차와 한계는
+[추가 검토 보고서](review-v2/codex-ai-recheck-v1/recheck-report.md),
+[최초 보고서](review-v2/codex-ai-v1/labeling-report.md), [실행 기록](run-manifest.md)에 남긴다.
 
 ## 1. 저장소를 받은 뒤 검증
 
@@ -28,11 +29,12 @@ Codex 대화에 접속하지 않고도 원본 판정과 현재 진행 상태를 
 
 ```bash
 python3 -B evaluation/support-program-search/review/verify-shared-run.py \
-  --run-dir evaluation/support-program-search/runs/support-program-catalog-20260906-v1
+  --run-dir evaluation/support-program-search/runs/support-program-catalog-20260906-v1 --with-recheck
 ```
 
 고정 공고·질문·풀을 검증하고, 다섯 원본 판정을 임시 디렉터리에 다시 수집한 결과와 공유된 `ai-review.json`을
-비교한다. AI-only·혼합·사람 모드도 다시 계산해 공유된 JSON·CSV와 비교한다. 원본 파일은 덮어쓰지 않는다.
+비교한다. 추가 210개 판정도 재수집하고 원인 감사의 출처·근거를 확인한다. 기존 세 모드와 새 AI-only·혼합
+모드를 다시 계산해 공유된 JSON·CSV와 비교한다. 원본 파일은 덮어쓰지 않는다. 옵션을 빼면 최초 버전만 검증한다.
 검증 성공은 **자료와 계산의 재현성**을 뜻하며 AI 판정의 정확성이나 실제 검색 성능을 보증하지 않는다.
 
 전체 오프라인 테스트도 실행할 수 있다. CI는 같은 검증을 실행하며 외부 모델을 호출하지 않는다.
@@ -54,16 +56,17 @@ python3 -B evaluation/support-program-search/review/select-review-mode.py \
   --fixture "$RUN/fixture-unlabeled.json" --query-set "$RUN/query-set.json" \
   --review-pool "$POOL/review-pool.csv" --pool-manifest "$POOL/review-pool-manifest.json" \
   --mode ai-only --ai-review "$POOL/codex-ai-v1/ai-review.json" \
+  --ai-recheck "$POOL/codex-ai-recheck-v1/ai-recheck.json" \
   --conversation-judgments "$POOL/conversation-judgments.json" \
   --output-dir "$POOL/local-ai-only"
 ```
 
 생성된 `review-v2/local-ai-only/review.html`을 브라우저로 연다. 출력 디렉터리가 이미 있으면 새 이름을 쓴다.
 혼합 모드는 `--mode hybrid`와 새 출력 경로를 사용한다. 사람 모드는 `--mode human`으로 바꾸고
-`--ai-review`를 생략한다. 기존 공유된 `selected-*-v1`은 비교 기준이므로 덮어쓰지 않는다.
+`--ai-review`와 `--ai-recheck`를 모두 생략한다. 기존 공유된 `selected-*-v1`은 비교 기준이므로 덮어쓰지 않는다.
 
 화면의 입력란은 **사람 입력 전용**이다. AI 판정이 완료돼 있어도 사람 입력이 빈칸인 것은 정상이다.
-AI-only 결과는 `selected-ai-v1/selection.json`·`reviewed.csv`와 결과 보고서에서 확인한다.
+최신 AI-only 결과는 `selected-ai-recheck-v1/selection.json`·`reviewed.csv`와 추가 검토 보고서에서 확인한다.
 
 ## 3. 여러 사람이 작업할 때
 
@@ -77,13 +80,14 @@ AI-only 결과는 `selected-ai-v1/selection.json`·`reviewed.csv`와 결과 보�
 5. 같은 질문·공고의 판단이 충돌하면 Git의 마지막 수정 내용을 자동 정답으로 삼지 않는다. 담당자가 근거를
    확인해 새 버전으로 정리한다. AI가 만든 판정을 사람이 검토한 것처럼 표시하지 않는다.
 
-현재 사람 검토는 필수가 아니다. 기본 AI-only에서 42건의 근거 검토를 이어가되, 정보가 부족하면 그대로 남긴다.
+현재 사람 검토는 필수가 아니다. AI-only에서 남은 18건은 미확정으로 보존한다. 혼합 모드를 선택하면
+미확정 18건과 합의 표본 38건, 총 56건의 사람 확인이 필요하다. 기존 사람 모드는 319건 대기 상태를 유지한다.
 `assignments.json`의 agentId는 과거 실행의 출처 기록이지 다른 PC에서 재접속해야 하는 계정이나 실행 요구사항이 아니다.
 
 ## 공유 파일과 제외 파일
 
 - 포함: 전체 고정 공고·질문·풀 설정, 현재 321행 풀과 출처, 사람 판정 원본 2건, AI 입력·정책·실행 배정,
-  다섯 판정 원본·수집 결과, 세 모드의 JSON·CSV, 보고서·실행 기록.
+  다섯 판정 원본·수집 결과, 세 모드의 JSON·CSV, 추가 검토 210건·원인 감사·새 선택 결과, 보고서·실행 기록.
 - 거부된 judge-1 초안은 감사 기록용으로만 포함한다. 검증기는 명시한 최종 `judge-1.jsonl`~`judge-5.jsonl`만
   수집한다. 거부된 초안으로 판정을 대체하지 않는다.
 - 제외: 중간 체크포인트, 이전 323행 풀, 실행 폴더에 복사했던 도구, 생성 HTML·XLSX·PNG, OS 파일, 임시 출력.

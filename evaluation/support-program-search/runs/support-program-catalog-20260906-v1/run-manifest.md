@@ -85,3 +85,26 @@
 - 초안 거부 및 교정 기록: `review-v2/codex-ai-v1/execution-log.md`
 - 검증: Python 평가 32건 + 검토 도구 68건 통과, 합성 브라우저 시나리오 13개(부모 포함 14건) 통과
 - 재사용: 같은 스냅샷·질문·정책의 판정은 보관 후 재사용. 검색/프롬프트/모델의 중요한 변경 때만 전후 비교
+
+## 미확정 추가 검토 — 2026-09-06
+
+위 최초 판정 기록은 과거 상태로 보존하며 현재 선택은 아래 추가 버전이다.
+
+- 작업 시작 코드: `b5afa7e` (`검색 평가 자료 공유 및 재현 검증 추가`)
+- 고정 범위: 최초 미확정 42건 전부, 추가 독립 실행 5개 × 42건 = 210개 판정, 한 차례만 수행
+- 실행 모델: `gpt-5.6-luna`, 실제 ID `/root/luna_recheck_1`~`/root/luna_recheck_5`
+- 기준·질문·공고·dev/heldout 변경 없음. 최초 합의 279건과 원본 1,605개 표결은 보존
+- 부모 AI 파일 SHA-256: `5940264cafa520edafbb058811d24bf6c21f25f92e09d4318391b120d57da2c6`
+- 추가 입력 논리 SHA-256: `f39839644def6a78edbf3e95ab97f05f8c09afcfda4e46ef7f6a68064f1df8bd`
+- 추가 AI 파일 SHA-256: `0817986dedcfb3b1dde45eca29ef2c9ffa094f3c2d1a34c540716e5b0ae93d89`
+- AI-only 선택 파일 SHA-256: `d8a11bcef24566df81baabe287713c42b1c8da867370ae6a76669d6f5d26639c`
+- 추가 합의: relevant 6건·irrelevant 18건, 추가 검토 후에도 미확정 18건 유지
+- 현재 전체: 합의 303건(relevant 25 / irrelevant 278)·미확정 18건
+- 현재 AI-only: `review-v2/selected-ai-recheck-v1/`, 평가 가능한 질문 8/16개, 그중 관련 공고 있는 질문 4개
+- 현재 혼합: `review-v2/selected-hybrid-recheck-v1/`, 실제 사람 확인 56건 대기. 사람 모드는 기존 2건/319건 대기 유지
+- 출처·근거·원인 감사: `review-v2/codex-ai-recheck-v1/`. 감사는 독립 표결 완료 뒤 AI가 분석했으며 사람 검증 아님
+- 프로젝트 API 호출·실제 검색 캡처·실제 품질 점수 없음
+- 보고서: [추가 검토 결과](review-v2/codex-ai-recheck-v1/recheck-report.md)
+- 오프라인 검증: [공유 안내](README.md)의 `verify-shared-run.py --with-recheck` 명령 사용
+- 검증 결과: 평가 32건 + 검토 93건 = 125개 오프라인 테스트 통과. Git 포함 대상만의 별도 체크아웃에서도
+  통과(`core.autocrlf=true`, 고정 자료 미변경). 실제 검색·서비스 통합 테스트는 이번 범위 아님

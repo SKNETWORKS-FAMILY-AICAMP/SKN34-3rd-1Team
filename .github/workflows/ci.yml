@@ -125,7 +125,7 @@ jobs:
 
       - name: Verify shared evaluation run without model calls
         working-directory: evaluation/support-program-search
-        run: python -B review/verify-shared-run.py --run-dir runs/support-program-catalog-20260906-v1
+        run: python -B review/verify-shared-run.py --run-dir runs/support-program-catalog-20260906-v1 --with-recheck
 
   container-integration:
     name: Container integration
