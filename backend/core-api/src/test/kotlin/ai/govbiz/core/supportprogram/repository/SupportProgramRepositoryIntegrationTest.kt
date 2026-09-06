@@ -128,12 +128,13 @@ class SupportProgramRepositoryIntegrationTest {
 
     @Test
     fun preservesTheLatestSourceProgramIdCasingWhenUpsertingTheSameIdentity() {
-        repository.synchronizeBizInfo(
+        repository.synchronizeSource(
+            "BIZINFO",
             listOf(catalogProgram(id = "PBLN_CASE", title = "변경 전 공고")),
         )
         val updated = catalogProgram(id = "pbln_case", title = "변경 후 공고")
 
-        repository.synchronizeBizInfo(listOf(updated))
+        repository.synchronizeSource("BIZINFO", listOf(updated))
 
         assertEquals(1, countRows("BIZINFO"))
         assertEquals(
@@ -176,7 +177,7 @@ class SupportProgramRepositoryIntegrationTest {
             repository.findPresentSourceDocument("BIZINFO", "PBLN_EVIDENCE"),
         )
 
-        repository.synchronizeBizInfo(emptyList())
+        repository.synchronizeSource("BIZINFO", emptyList())
 
         assertNull(repository.findPresentSourceDocument("BIZINFO", "PBLN_EVIDENCE"))
     }
@@ -262,7 +263,7 @@ class SupportProgramRepositoryIntegrationTest {
         assertEquals("OTHER", otherProgram.program.sourceName)
         assertEquals("다른 제공처 공고", otherProgram.program.title)
 
-        repository.synchronizeBizInfo(emptyList())
+        repository.synchronizeSource("BIZINFO", emptyList())
 
         assertNull(repository.findPresentBySourceAndProgramId("BIZINFO", "SHARED_ID"))
         assertEquals(
@@ -272,11 +273,11 @@ class SupportProgramRepositoryIntegrationTest {
     }
 
     @Test
-    fun findsPresentProgramsAcrossSourcesForSearch() {
+    fun findsPresentProgramsAcrossSourcesForRepairAndEvaluation() {
         val current = catalogProgram(id = "PBLN_CURRENT", title = "현재 노출 공고")
         val missing = catalogProgram(id = "PBLN_MISSING", title = "사라진 공고")
-        repository.synchronizeBizInfo(listOf(current, missing))
-        repository.synchronizeBizInfo(listOf(current))
+        repository.synchronizeSource("BIZINFO", listOf(current, missing))
+        repository.synchronizeSource("BIZINFO", listOf(current))
         insertProgram(sourceCode = "OTHER", sourceProgramId = "PBLN_OTHER", title = "다른 제공처 공고")
 
         assertEquals(
@@ -302,7 +303,8 @@ class SupportProgramRepositoryIntegrationTest {
             applicationStartDate = LocalDate.of(9999, 1, 1),
             applicationEndDate = LocalDate.of(9999, 12, 31),
         )
-        repository.synchronizeBizInfo(listOf(open, closed, upcoming))
+        val generation = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", listOf(open, closed, upcoming), generation))
 
         val result = supportProgramSearchService.search("", acceptingOnly = true)
 
@@ -316,8 +318,8 @@ class SupportProgramRepositoryIntegrationTest {
             catalogProgram(id = "PBLN_SYNC_B", title = "동일 공고 B"),
         )
 
-        repository.synchronizeBizInfo(snapshot)
-        repository.synchronizeBizInfo(snapshot)
+        repository.synchronizeSource("BIZINFO", snapshot)
+        repository.synchronizeSource("BIZINFO", snapshot)
 
         assertEquals(2, countRows("BIZINFO"))
         assertEquals(2, countPresentRows("BIZINFO"))
@@ -336,18 +338,18 @@ class SupportProgramRepositoryIntegrationTest {
         val original = catalogProgram(id = "PBLN_ORIGINAL", title = "기존 공개 공고")
         val staleSnapshot = listOf(catalogProgram(id = "PBLN_STALE", title = "늦게 끝난 이전 수집"))
         val currentSnapshot = listOf(catalogProgram(id = "PBLN_CURRENT", title = "최신 수집 공고"))
-        repository.synchronizeBizInfo(listOf(original))
+        repository.synchronizeSource("BIZINFO", listOf(original))
 
-        val staleGeneration = repository.startBizInfoSyncGeneration()
-        val currentGeneration = repository.startBizInfoSyncGeneration()
+        val staleGeneration = repository.startSyncGeneration("BIZINFO")
+        val currentGeneration = repository.startSyncGeneration("BIZINFO")
 
-        assertFalse(repository.publishBizInfoSnapshotIfCurrent(staleSnapshot, staleGeneration))
+        assertFalse(repository.publishSnapshotIfCurrent("BIZINFO", staleSnapshot, staleGeneration))
         assertEquals(
             original,
             repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_ORIGINAL"),
         )
 
-        assertTrue(repository.publishBizInfoSnapshotIfCurrent(currentSnapshot, currentGeneration))
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", currentSnapshot, currentGeneration))
         assertNull(repository.findPresentBySourceAndProgramId("BIZINFO", "PBLN_ORIGINAL"))
         assertEquals(
             currentSnapshot.single(),
@@ -361,11 +363,11 @@ class SupportProgramRepositoryIntegrationTest {
             catalogProgram(id = "PBLN_READY_A", title = "준비 완료 공고 A"),
             catalogProgram(id = "PBLN_READY_B", title = "준비 완료 공고 B"),
         )
-        val generation = repository.startBizInfoSyncGeneration()
+        val generation = repository.startSyncGeneration("BIZINFO")
 
-        assertTrue(repository.publishBizInfoSnapshotIfCurrent(snapshot, generation))
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", snapshot, generation))
 
-        val status = requireNotNull(repository.findBizInfoSyncStatus())
+        val status = requireNotNull(repository.findSyncStatus("BIZINFO"))
         assertEquals(generation, status.publishedGeneration)
         assertEquals(SupportProgramCatalogFingerprintHelper.calculate(snapshot), status.publishedCatalogFingerprint)
         assertEquals(2, status.publishedProgramCount)
@@ -379,14 +381,14 @@ class SupportProgramRepositoryIntegrationTest {
     @Test
     fun keepsThePreviousReadySnapshotWhenTheNextCurrentGenerationFails() {
         val published = listOf(catalogProgram(id = "PBLN_PUBLISHED", title = "기존 검색 가능 공고"))
-        val publishedGeneration = repository.startBizInfoSyncGeneration()
-        assertTrue(repository.publishBizInfoSnapshotIfCurrent(published, publishedGeneration))
-        val beforeFailure = requireNotNull(repository.findBizInfoSyncStatus())
+        val publishedGeneration = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", published, publishedGeneration))
+        val beforeFailure = requireNotNull(repository.findSyncStatus("BIZINFO"))
 
-        val failedGeneration = repository.startBizInfoSyncGeneration()
-        assertTrue(repository.recordBizInfoSyncFailureIfCurrent(failedGeneration))
+        val failedGeneration = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.recordSyncFailureIfCurrent("BIZINFO", failedGeneration))
 
-        val afterFailure = requireNotNull(repository.findBizInfoSyncStatus())
+        val afterFailure = requireNotNull(repository.findSyncStatus("BIZINFO"))
         assertEquals(publishedGeneration, afterFailure.publishedGeneration)
         assertEquals(beforeFailure.publishedCatalogFingerprint, afterFailure.publishedCatalogFingerprint)
         assertEquals(1, afterFailure.publishedProgramCount)
@@ -399,11 +401,11 @@ class SupportProgramRepositoryIntegrationTest {
 
     @Test
     fun recordsAnInitialSyncFailureWithoutInventingAPublishedSnapshot() {
-        val generation = repository.startBizInfoSyncGeneration()
+        val generation = repository.startSyncGeneration("BIZINFO")
 
-        assertTrue(repository.recordBizInfoSyncFailureIfCurrent(generation))
+        assertTrue(repository.recordSyncFailureIfCurrent("BIZINFO", generation))
 
-        val status = requireNotNull(repository.findBizInfoSyncStatus())
+        val status = requireNotNull(repository.findSyncStatus("BIZINFO"))
         assertNull(status.publishedGeneration)
         assertNull(status.publishedCatalogFingerprint)
         assertEquals(0, status.publishedProgramCount)
@@ -416,18 +418,19 @@ class SupportProgramRepositoryIntegrationTest {
     @Test
     fun adoptsACompletedLegacyRepairWithoutErasingTheRecordedCatalogSyncFailure() {
         val legacySnapshot = listOf(catalogProgram(id = "PBLN_LEGACY", title = "기존 공개 공고"))
-        repository.synchronizeBizInfo(legacySnapshot)
-        val failedGeneration = repository.startBizInfoSyncGeneration()
-        assertTrue(repository.recordBizInfoSyncFailureIfCurrent(failedGeneration))
-        val beforeBootstrap = requireNotNull(repository.findBizInfoSyncStatus())
+        repository.synchronizeSource("BIZINFO", legacySnapshot)
+        val failedGeneration = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.recordSyncFailureIfCurrent("BIZINFO", failedGeneration))
+        val beforeBootstrap = requireNotNull(repository.findSyncStatus("BIZINFO"))
 
         assertTrue(
-            repository.bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(
+            repository.bootstrapLegacySnapshotAfterSuccessfulRepair(
+                "BIZINFO",
                 repository.findPresent(),
             ),
         )
 
-        val adopted = requireNotNull(repository.findBizInfoSyncStatus())
+        val adopted = requireNotNull(repository.findSyncStatus("BIZINFO"))
         assertEquals(0L, adopted.publishedGeneration)
         assertEquals(SupportProgramCatalogFingerprintHelper.calculate(legacySnapshot), adopted.publishedCatalogFingerprint)
         assertEquals(1, adopted.publishedProgramCount)
@@ -439,81 +442,84 @@ class SupportProgramRepositoryIntegrationTest {
 
     @Test
     fun doesNotBootstrapAnEmptyCatalogOrOverwriteTrustedPublishedMetadata() {
-        assertFalse(repository.bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(emptyList()))
-        assertNull(repository.findBizInfoSyncStatus())
+        assertFalse(repository.bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", emptyList()))
+        assertNull(repository.findSyncStatus("BIZINFO"))
 
         val publishedSnapshot = listOf(catalogProgram(id = "PBLN_TRUSTED", title = "신뢰된 공고"))
-        val generation = repository.startBizInfoSyncGeneration()
-        assertTrue(repository.publishBizInfoSnapshotIfCurrent(publishedSnapshot, generation))
-        val trusted = requireNotNull(repository.findBizInfoSyncStatus())
+        val generation = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", publishedSnapshot, generation))
+        val trusted = requireNotNull(repository.findSyncStatus("BIZINFO"))
         val unrelatedSnapshot = listOf(catalogProgram(id = "PBLN_OTHER", title = "다른 legacy 공고"))
 
-        assertFalse(repository.bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(unrelatedSnapshot))
-        assertEquals(trusted, repository.findBizInfoSyncStatus())
+        assertFalse(repository.bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", unrelatedSnapshot))
+        assertEquals(trusted, repository.findSyncStatus("BIZINFO"))
     }
 
     @Test
     fun doesNotRecordASupersededGenerationFailureOverTheCurrentPublishedStatus() {
         val snapshot = listOf(catalogProgram(id = "PBLN_CURRENT_STATUS", title = "현재 상태 공고"))
-        val publishedGeneration = repository.startBizInfoSyncGeneration()
-        assertTrue(repository.publishBizInfoSnapshotIfCurrent(snapshot, publishedGeneration))
-        val beforeSupersededFailure = requireNotNull(repository.findBizInfoSyncStatus())
+        val publishedGeneration = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", snapshot, publishedGeneration))
+        val beforeSupersededFailure = requireNotNull(repository.findSyncStatus("BIZINFO"))
 
-        val staleGeneration = repository.startBizInfoSyncGeneration()
-        repository.startBizInfoSyncGeneration()
+        val staleGeneration = repository.startSyncGeneration("BIZINFO")
+        repository.startSyncGeneration("BIZINFO")
 
-        assertFalse(repository.recordBizInfoSyncFailureIfCurrent(staleGeneration))
+        assertFalse(repository.recordSyncFailureIfCurrent("BIZINFO", staleGeneration))
 
-        assertEquals(beforeSupersededFailure, repository.findBizInfoSyncStatus())
+        assertEquals(beforeSupersededFailure, repository.findSyncStatus("BIZINFO"))
     }
 
     @Test
     fun conditionallyChangesOnlyTheIndexedSnapshotReadinessWithoutChangingCatalogSyncOutcome() {
         val snapshot = listOf(catalogProgram(id = "PBLN_REPAIR", title = "색인 복구 대상"))
-        val generation = repository.startBizInfoSyncGeneration()
-        assertTrue(repository.publishBizInfoSnapshotIfCurrent(snapshot, generation))
-        val published = requireNotNull(repository.findBizInfoSyncStatus())
+        val generation = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", snapshot, generation))
+        val published = requireNotNull(repository.findSyncStatus("BIZINFO"))
         val fingerprint = requireNotNull(published.publishedCatalogFingerprint)
 
         assertFalse(
-            repository.markBizInfoIndexNotReadyIfPublishedSnapshotMatches(
+            repository.markIndexNotReadyIfPublishedSnapshotMatches(
+                "BIZINFO",
                 publishedGeneration = generation + 1,
                 expectedCatalogFingerprint = fingerprint,
                 expectedProgramCount = 1,
             ),
         )
-        assertTrue(requireNotNull(repository.findBizInfoSyncStatus()).indexReady)
+        assertTrue(requireNotNull(repository.findSyncStatus("BIZINFO")).indexReady)
 
         assertTrue(
-            repository.markBizInfoIndexNotReadyIfPublishedSnapshotMatches(
+            repository.markIndexNotReadyIfPublishedSnapshotMatches(
+                "BIZINFO",
                 publishedGeneration = generation,
                 expectedCatalogFingerprint = fingerprint,
                 expectedProgramCount = 1,
             ),
         )
-        val notReady = requireNotNull(repository.findBizInfoSyncStatus())
+        val notReady = requireNotNull(repository.findSyncStatus("BIZINFO"))
         assertFalse(notReady.indexReady)
         assertEquals(SupportProgramSyncOutcome.SUCCESS, notReady.lastSyncOutcome)
         assertEquals(published.lastSuccessfulSyncAt, notReady.lastSuccessfulSyncAt)
         assertNull(notReady.lastFailedSyncAt)
 
         assertTrue(
-            repository.markBizInfoIndexReadyIfPublishedSnapshotMatches(
+            repository.markIndexReadyIfPublishedSnapshotMatches(
+                "BIZINFO",
                 publishedGeneration = generation,
                 expectedCatalogFingerprint = fingerprint,
                 expectedProgramCount = 1,
             ),
         )
-        assertTrue(requireNotNull(repository.findBizInfoSyncStatus()).indexReady)
+        assertTrue(requireNotNull(repository.findSyncStatus("BIZINFO")).indexReady)
     }
 
     @Test
     fun publishesAnEmptySuccessfulSnapshotAsTrustedAndIndexReady() {
-        val generation = repository.startBizInfoSyncGeneration()
+        val generation = repository.startSyncGeneration("BIZINFO")
 
-        assertTrue(repository.publishBizInfoSnapshotIfCurrent(emptyList(), generation))
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", emptyList(), generation))
 
-        val status = requireNotNull(repository.findBizInfoSyncStatus())
+        val status = requireNotNull(repository.findSyncStatus("BIZINFO"))
         assertEquals(generation, status.publishedGeneration)
         assertEquals(SupportProgramCatalogFingerprintHelper.calculate(emptyList()), status.publishedCatalogFingerprint)
         assertEquals(0, status.publishedProgramCount)
@@ -525,9 +531,9 @@ class SupportProgramRepositoryIntegrationTest {
     fun marksOnlyMissingBizInfoProgramsAsNotPresent() {
         val remaining = catalogProgram(id = "PBLN_REMAINING", title = "계속 제공되는 공고")
         val missing = catalogProgram(id = "PBLN_MISSING", title = "사라진 공고")
-        repository.synchronizeBizInfo(listOf(remaining, missing))
+        repository.synchronizeSource("BIZINFO", listOf(remaining, missing))
 
-        repository.synchronizeBizInfo(listOf(remaining))
+        repository.synchronizeSource("BIZINFO", listOf(remaining))
 
         assertEquals(2, countRows("BIZINFO"))
         assertTrue(isSourcePresent("BIZINFO", "PBLN_REMAINING"))
@@ -539,10 +545,10 @@ class SupportProgramRepositoryIntegrationTest {
     fun marksAReappearingBizInfoProgramAsPresentAgain() {
         val remaining = catalogProgram(id = "PBLN_ALWAYS", title = "계속 제공되는 공고")
         val reappearing = catalogProgram(id = "PBLN_REAPPEARING", title = "재등장 공고")
-        repository.synchronizeBizInfo(listOf(remaining, reappearing))
-        repository.synchronizeBizInfo(listOf(remaining))
+        repository.synchronizeSource("BIZINFO", listOf(remaining, reappearing))
+        repository.synchronizeSource("BIZINFO", listOf(remaining))
 
-        repository.synchronizeBizInfo(listOf(remaining, reappearing))
+        repository.synchronizeSource("BIZINFO", listOf(remaining, reappearing))
 
         assertTrue(isSourcePresent("BIZINFO", "PBLN_REAPPEARING"))
         assertEquals(
@@ -554,11 +560,12 @@ class SupportProgramRepositoryIntegrationTest {
     @Test
     fun doesNotChangeProgramsFromAnotherSource() {
         insertProgram(sourceCode = "OTHER", sourceProgramId = "SHARED_ID", title = "다른 제공처 공고")
-        repository.synchronizeBizInfo(
+        repository.synchronizeSource(
+            "BIZINFO",
             listOf(catalogProgram(id = "SHARED_ID", title = "기업마당 공고")),
         )
 
-        repository.synchronizeBizInfo(emptyList())
+        repository.synchronizeSource("BIZINFO", emptyList())
 
         assertTrue(isSourcePresent("OTHER", "SHARED_ID"))
         assertFalse(isSourcePresent("BIZINFO", "SHARED_ID"))
@@ -575,10 +582,10 @@ class SupportProgramRepositoryIntegrationTest {
                 title = "잘못 섞인 다른 제공처 공고",
             ),
         )
-        repository.synchronizeBizInfo(listOf(existing))
+        repository.synchronizeSource("BIZINFO", listOf(existing))
 
         assertThrows(IllegalArgumentException::class.java) {
-            repository.synchronizeBizInfo(listOf(otherSourceProgram))
+            repository.synchronizeSource("BIZINFO", listOf(otherSourceProgram))
         }
 
         assertEquals(
@@ -592,7 +599,7 @@ class SupportProgramRepositoryIntegrationTest {
     fun rollsBackTheWholeSnapshotWhenAnUpsertFails() {
         val original = catalogProgram(id = "PBLN_ROLLBACK_A", title = "변경 전 공고")
         val shouldRemainPresent = catalogProgram(id = "PBLN_ROLLBACK_B", title = "유지되어야 하는 공고")
-        repository.synchronizeBizInfo(listOf(original, shouldRemainPresent))
+        repository.synchronizeSource("BIZINFO", listOf(original, shouldRemainPresent))
         val changed = original.copy(program = original.program.copy(title = "롤백되어야 하는 변경"))
         val invalid = catalogProgram(
             id = "PBLN_TOO_LONG",
@@ -600,7 +607,7 @@ class SupportProgramRepositoryIntegrationTest {
         )
 
         assertThrows(DataAccessException::class.java) {
-            repository.synchronizeBizInfo(listOf(changed, invalid))
+            repository.synchronizeSource("BIZINFO", listOf(changed, invalid))
         }
 
         assertEquals(
@@ -613,6 +620,224 @@ class SupportProgramRepositoryIntegrationTest {
         )
         assertEquals(2, countPresentRows("BIZINFO"))
         assertEquals(0, countRowsByProgramId("BIZINFO", "PBLN_TOO_LONG"))
+    }
+
+    @Test
+    fun synchronizesAndDeactivatesTheSameRawIdIndependentlyForEachSource() {
+        val bizInfo = catalogProgram(id = "SHARED_ID", title = "기업마당 공고")
+        val kStartup = catalogProgram(id = "SHARED_ID", title = "창업 공고", sourceCode = "KSTARTUP")
+
+        repository.synchronizeSource("BIZINFO", listOf(bizInfo))
+        repository.synchronizeSource("KSTARTUP", listOf(kStartup))
+        repository.synchronizeSource("KSTARTUP", listOf(kStartup))
+
+        assertEquals(bizInfo, repository.findPresentBySourceAndProgramId("BIZINFO", "SHARED_ID"))
+        assertEquals(kStartup, repository.findPresentBySourceAndProgramId("KSTARTUP", "SHARED_ID"))
+        assertEquals(1, countRows("KSTARTUP"))
+
+        repository.synchronizeSource("KSTARTUP", emptyList())
+
+        assertEquals(bizInfo, repository.findPresentBySourceAndProgramId("BIZINFO", "SHARED_ID"))
+        assertNull(repository.findPresentBySourceAndProgramId("KSTARTUP", "SHARED_ID"))
+    }
+
+    @Test
+    fun startsEachSourceAsPendingAndKeepsItsPublicationGenerationAndFailureIndependent() {
+        assertTrue(repository.findSyncStatuses().isEmpty())
+        val staleBizInfoGeneration = repository.startSyncGeneration("BIZINFO")
+        val kStartupGeneration = repository.startSyncGeneration("KSTARTUP")
+        val bizInfoGeneration = repository.startSyncGeneration("BIZINFO")
+        val pendingStatuses = repository.findSyncStatuses()
+        assertEquals(listOf("BIZINFO", "KSTARTUP"), pendingStatuses.map { it.sourceCode })
+        pendingStatuses.forEach { status ->
+            assertFalse(status.indexReady)
+            assertNull(status.publishedGeneration)
+            assertNull(status.publishedCatalogFingerprint)
+            assertEquals(SupportProgramSyncOutcome.NONE, status.lastSyncOutcome)
+        }
+        assertEquals(1L, kStartupGeneration)
+        assertEquals(2L, bizInfoGeneration)
+        val bizInfo = listOf(catalogProgram(id = "SHARED_ID", title = "최신 기업마당 공고"))
+        val kStartup = listOf(catalogProgram(id = "SHARED_ID", title = "최신 창업 공고", sourceCode = "KSTARTUP"))
+
+        assertTrue(repository.publishSnapshotIfCurrent("KSTARTUP", kStartup, kStartupGeneration))
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", bizInfo, bizInfoGeneration))
+        val publishedBizInfo = requireNotNull(repository.findSyncStatus("BIZINFO"))
+        val publishedKStartup = requireNotNull(repository.findSyncStatus("KSTARTUP"))
+        assertFalse(repository.publishSnapshotIfCurrent("BIZINFO", emptyList(), staleBizInfoGeneration))
+        assertFalse(repository.recordSyncFailureIfCurrent("BIZINFO", staleBizInfoGeneration))
+        assertEquals(publishedBizInfo, repository.findSyncStatus("BIZINFO"))
+        assertEquals(publishedKStartup, repository.findSyncStatus("KSTARTUP"))
+
+        val failedKStartupGeneration = repository.startSyncGeneration("KSTARTUP")
+        assertTrue(repository.recordSyncFailureIfCurrent("KSTARTUP", failedKStartupGeneration))
+
+        val failedKStartup = requireNotNull(repository.findSyncStatus("KSTARTUP"))
+        assertEquals(publishedBizInfo, repository.findSyncStatus("BIZINFO"))
+        assertEquals(SupportProgramSyncOutcome.FAILURE, failedKStartup.lastSyncOutcome)
+        assertEquals(publishedKStartup.publishedCatalogFingerprint, failedKStartup.publishedCatalogFingerprint)
+        assertEquals(kStartupGeneration, failedKStartup.publishedGeneration)
+        assertTrue(failedKStartup.indexReady)
+        assertEquals(kStartup.single(), repository.findPresentBySourceAndProgramId("KSTARTUP", "SHARED_ID"))
+        assertEquals(bizInfo.single(), repository.findPresentBySourceAndProgramId("BIZINFO", "SHARED_ID"))
+    }
+
+    @Test
+    fun readsOnlyPresentProgramsFromIndexReadySourcesAndPreservesTheCompleteRepairCatalog() {
+        val bizInfo = catalogProgram(id = "SHARED_ID", title = "검색 가능한 기업마당 공고")
+        val removed = catalogProgram(id = "REMOVED", title = "사라진 기업마당 공고")
+        val kStartup = catalogProgram(id = "SHARED_ID", title = "창업 공고", sourceCode = "KSTARTUP")
+        val pending = catalogProgram(id = "PENDING", title = "최초 동기화 중 공고", sourceCode = "OTHER")
+        val legacy = catalogProgram(id = "LEGACY", title = "복구 전 기존 공고", sourceCode = "LEGACY")
+        repository.synchronizeSource("BIZINFO", listOf(bizInfo, removed))
+        val bizInfoGeneration = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", listOf(bizInfo), bizInfoGeneration))
+        val kStartupGeneration = repository.startSyncGeneration("KSTARTUP")
+        assertTrue(repository.publishSnapshotIfCurrent("KSTARTUP", listOf(kStartup), kStartupGeneration))
+        repository.synchronizeSource("OTHER", listOf(pending))
+        repository.startSyncGeneration("OTHER")
+        repository.synchronizeSource("LEGACY", listOf(legacy))
+        val kStartupFingerprint = SupportProgramCatalogFingerprintHelper.calculate(listOf(kStartup))
+        assertTrue(
+            repository.markIndexNotReadyIfPublishedSnapshotMatches(
+                "KSTARTUP", kStartupGeneration, kStartupFingerprint, 1,
+            ),
+        )
+
+        assertEquals(listOf(bizInfo), repository.findSearchablePresent())
+        assertEquals(
+            listOf("BIZINFO:SHARED_ID", "KSTARTUP:SHARED_ID", "LEGACY:LEGACY", "OTHER:PENDING"),
+            repository.findPresent().map { it.program.sourceQualifiedId },
+        )
+        assertTrue(requireNotNull(repository.findSyncStatus("BIZINFO")).indexReady)
+        assertTrue(
+            repository.markIndexReadyIfPublishedSnapshotMatches(
+                "KSTARTUP", kStartupGeneration, kStartupFingerprint, 1,
+            ),
+        )
+        assertEquals(listOf(bizInfo, kStartup), repository.findSearchablePresent())
+
+        val failureGeneration = repository.startSyncGeneration("KSTARTUP")
+        assertTrue(repository.recordSyncFailureIfCurrent("KSTARTUP", failureGeneration))
+        assertEquals(listOf(bizInfo, kStartup), repository.findSearchablePresent())
+    }
+
+    @Test
+    fun rejectsMixedSourcePublicationAndLegacyBootstrapBeforeChangingEitherSource() {
+        val bizInfo = catalogProgram(id = "SHARED_ID", title = "기존 기업마당 공고")
+        val kStartup = catalogProgram(id = "SHARED_ID", title = "기존 창업 공고", sourceCode = "KSTARTUP")
+        repository.synchronizeSource("BIZINFO", listOf(bizInfo))
+        repository.synchronizeSource("KSTARTUP", listOf(kStartup))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            repository.bootstrapLegacySnapshotAfterSuccessfulRepair("KSTARTUP", listOf(kStartup, bizInfo))
+        }
+        assertNull(repository.findSyncStatus("BIZINFO"))
+        assertNull(repository.findSyncStatus("KSTARTUP"))
+        assertTrue(repository.bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", listOf(bizInfo)))
+        assertTrue(repository.bootstrapLegacySnapshotAfterSuccessfulRepair("KSTARTUP", listOf(kStartup)))
+        val generation = repository.startSyncGeneration("KSTARTUP")
+        val previousStatuses = repository.findSyncStatuses()
+        val changed = kStartup.copy(program = kStartup.program.copy(title = "저장되지 않을 변경"))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            repository.publishSnapshotIfCurrent("KSTARTUP", listOf(changed, bizInfo), generation)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            repository.synchronizeSource("KSTARTUP", listOf(changed, bizInfo))
+        }
+
+        assertEquals(previousStatuses, repository.findSyncStatuses())
+        assertEquals(listOf(bizInfo, kStartup), repository.findPresent())
+    }
+
+    @Test
+    fun reportsLegacySourcesWithoutStatusRowsAndReplacesTheirUnverifiedStateAfterSuccessfulRepair() {
+        val bizInfo = catalogProgram(id = "READY", title = "준비된 기업마당 공고")
+        val otherPrograms = listOf(
+            catalogProgram(id = "LEGACY_A", title = "기존 공고 A", sourceCode = "OTHER"),
+            catalogProgram(id = "LEGACY_B", title = "기존 공고 B", sourceCode = "OTHER"),
+        )
+        val removed = catalogProgram(id = "REMOVED", title = "사라진 기존 공고", sourceCode = "OTHER")
+        val inactive = catalogProgram(id = "INACTIVE", title = "전부 사라진 제공처 공고", sourceCode = "INACTIVE")
+        val bizInfoGeneration = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", listOf(bizInfo), bizInfoGeneration))
+        repository.synchronizeSource("OTHER", otherPrograms + removed)
+        repository.synchronizeSource("OTHER", otherPrograms)
+        repository.synchronizeSource("INACTIVE", listOf(inactive))
+        repository.synchronizeSource("INACTIVE", emptyList())
+
+        val statuses = repository.findSyncStatuses()
+
+        assertEquals(listOf("BIZINFO", "OTHER"), statuses.map { it.sourceCode })
+        assertTrue(statuses.first().indexReady)
+        val unverified = statuses.last()
+        assertEquals(2, unverified.publishedProgramCount)
+        assertFalse(unverified.indexReady)
+        assertNull(unverified.publishedGeneration)
+        assertNull(unverified.publishedCatalogFingerprint)
+        assertNull(unverified.lastSuccessfulSyncAt)
+        assertNull(unverified.lastFailedSyncAt)
+        assertEquals(SupportProgramSyncOutcome.NONE, unverified.lastSyncOutcome)
+        assertNull(repository.findSyncStatus("OTHER"))
+        assertEquals(listOf(bizInfo), repository.findSearchablePresent())
+
+        assertTrue(repository.bootstrapLegacySnapshotAfterSuccessfulRepair("OTHER", otherPrograms))
+
+        val repairedStatuses = repository.findSyncStatuses()
+        assertEquals(listOf("BIZINFO", "OTHER"), repairedStatuses.map { it.sourceCode })
+        assertEquals(statuses.first(), repairedStatuses.first())
+        val repaired = repairedStatuses.last()
+        assertEquals(repository.findSyncStatus("OTHER"), repaired)
+        assertEquals(2, repaired.publishedProgramCount)
+        assertEquals(0L, repaired.publishedGeneration)
+        assertTrue(repaired.indexReady)
+        assertEquals(SupportProgramCatalogFingerprintHelper.calculate(otherPrograms), repaired.publishedCatalogFingerprint)
+        assertEquals(listOf(bizInfo) + otherPrograms, repository.findSearchablePresent())
+    }
+
+    @Test
+    fun rollsBackFailedPublicationWithoutChangingEitherSourcesSnapshotOrStatus() {
+        val bizInfo = catalogProgram(id = "SHARED_ID", title = "기존 기업마당 공고")
+        val kStartup = catalogProgram(id = "SHARED_ID", title = "기존 창업 공고", sourceCode = "KSTARTUP")
+        val bizInfoGeneration = repository.startSyncGeneration("BIZINFO")
+        val kStartupGeneration = repository.startSyncGeneration("KSTARTUP")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", listOf(bizInfo), bizInfoGeneration))
+        assertTrue(repository.publishSnapshotIfCurrent("KSTARTUP", listOf(kStartup), kStartupGeneration))
+        val previousStatuses = repository.findSyncStatuses()
+        val nextGeneration = repository.startSyncGeneration("KSTARTUP")
+        val changed = kStartup.copy(program = kStartup.program.copy(title = "롤백할 창업 공고 변경"))
+        val invalid = catalogProgram(id = "TOO_LONG", title = "가".repeat(501), sourceCode = "KSTARTUP")
+
+        assertThrows(DataAccessException::class.java) {
+            repository.publishSnapshotIfCurrent("KSTARTUP", listOf(changed, invalid), nextGeneration)
+        }
+
+        assertEquals(previousStatuses, repository.findSyncStatuses())
+        assertEquals(listOf(bizInfo, kStartup), repository.findSearchablePresent())
+        assertEquals(0, countRowsByProgramId("KSTARTUP", "TOO_LONG"))
+    }
+
+    @Test
+    fun rejectsInvalidSourceCodesBeforeWritingAndAcceptsTheMaximumCanonicalLength() {
+        val invalidCodes = listOf("", "bizinfo", "BIZINFO ", " BIZINFO", "K-STARTUP", "1SOURCE", "A".repeat(65))
+        invalidCodes.forEach { sourceCode ->
+            assertThrows(IllegalArgumentException::class.java) {
+                repository.startSyncGeneration(sourceCode)
+            }
+            assertThrows(IllegalArgumentException::class.java) {
+                repository.synchronizeSource(sourceCode, emptyList())
+            }
+            assertThrows(IllegalArgumentException::class.java) {
+                repository.upsert(catalogProgram(id = "INVALID_SOURCE", title = "잘못된 제공처", sourceCode = sourceCode))
+            }
+        }
+
+        assertTrue(repository.findSyncStatuses().isEmpty())
+        assertTrue(repository.findPresent().isEmpty())
+        val validCode = "A" + "_0".repeat(31) + "Z"
+        assertEquals(1L, repository.startSyncGeneration(validCode))
+        assertEquals(validCode, repository.findSyncStatuses().single().sourceCode)
     }
 
     private fun countRows(sourceCode: String): Int =
@@ -715,6 +940,7 @@ class SupportProgramRepositoryIntegrationTest {
     private fun catalogProgram(
         id: String,
         title: String,
+        sourceCode: String = "BIZINFO",
         categories: List<String> = listOf("AI"),
         regions: List<String> = listOf("서울"),
         applicationPeriod: String = "2000-01-01 ~ 9999-12-31",
@@ -723,7 +949,7 @@ class SupportProgramRepositoryIntegrationTest {
     ) = CatalogSupportProgram(
         program = SupportProgram(
             id = id,
-            sourceCode = "BIZINFO",
+            sourceCode = sourceCode,
             title = title,
             organization = "수행기관",
             summary = "중소기업의 AI 기술 활용을 지원합니다.",
@@ -734,8 +960,16 @@ class SupportProgramRepositoryIntegrationTest {
             applicationStartDate = applicationStartDate,
             applicationEndDate = applicationEndDate,
             status = SupportProgramStatus.OPEN,
-            sourceName = "기업마당",
-            sourceUrl = "https://www.bizinfo.go.kr/detail?id=$id",
+            sourceName = when (sourceCode) {
+                "BIZINFO" -> "기업마당"
+                "KSTARTUP" -> "K-Startup"
+                else -> sourceCode
+            },
+            sourceUrl = when (sourceCode) {
+                "BIZINFO" -> "https://www.bizinfo.go.kr/detail?id=$id"
+                "KSTARTUP" -> "https://www.k-startup.go.kr/detail?id=$id"
+                else -> "https://example.com/program/$id"
+            },
             matchedReasons = emptyList(),
         ),
         sortTimestamp = "2026-08-21 14:19:54",

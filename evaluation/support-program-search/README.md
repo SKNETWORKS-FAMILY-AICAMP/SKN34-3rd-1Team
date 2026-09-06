@@ -94,9 +94,15 @@ python3 evaluation/support-program-search/evaluate.py --semantic-results /path/t
 ## 실제 데이터 fixture 초안 내보내기
 
 실데이터 평가를 시작할 때는 수작업으로 전체 공고를 복사하지 않고 `evaluation-fixture-export` Spring profile을
-실행한다. 이 비웹 profile은 현재 MySQL의 모든 제공처 공개 공고 중 지정한 `referenceDate` 기준 `OPEN` 공고만 읽고, 운영 검색과 같은
+실행한다. 이 비웹 profile은 현재 MySQL에서 **색인이 준비된 제공처**의 공개 공고 중 지정한 `referenceDate` 기준 `OPEN` 공고만 읽고, 운영 검색과 같은
 `SupportProgramIndexDocumentMapper`로 `id`·`contentHash`·`text`를 만든다. 따라서 생성 파일에는 전체 적격
 카탈로그의 공고 수·지문·검색 문서가 들어가며, 이후 캡처 파일과 같은 스냅샷인지 검증할 수 있다.
+
+제공처별 부분 검색 도입 이후 내보내기와 실제 검색 캡처는 모두 `findSearchablePresent()`를 사용한다.
+`catalog.presentProgramCount`도 색인이 준비된 제공처의 공개 공고 수(접수 상태 필터 전)이다.
+미준비 제공처는 양쪽에서 제외되며, 다른 시점에 공개 카탈로그나 준비 상태가 달라지면 기존 지문 검증이 불일치를 거부한다.
+기존에 공유한 고정 평가 파일과 점수는 변경하지 않는다. 이 profile은 색인을 준비하지 않으므로 필요한 제공처의
+동기화·복구가 끝났는지 먼저 확인한 후 새 fixture와 캡처를 같은 범위에서 생성한다.
 
 이 profile은 웹 서버, 기업마당 동기화, 누락 색인 복구를 시작하지 않으며 Qdrant·AI Service·OpenAI도 호출하지
 않는다. `name`, `referenceDate`, 출력 경로는 실행 환경에서 반드시 지정한다. `referenceDate`는 실행한 날의

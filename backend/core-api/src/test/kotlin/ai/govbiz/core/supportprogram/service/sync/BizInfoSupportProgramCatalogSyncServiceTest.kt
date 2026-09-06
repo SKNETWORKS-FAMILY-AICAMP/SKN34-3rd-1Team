@@ -36,19 +36,19 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
     @Test
     fun indexesTheWholeSnapshotBeforePublishingItToTheRepository() {
         val programs = listOf(catalogProgram("first"), catalogProgram("second"))
-        doReturn(7L).`when`(supportProgramRepository).startBizInfoSyncGeneration()
+        doReturn(7L).`when`(supportProgramRepository).startSyncGeneration("BIZINFO")
         doReturn(programs).`when`(catalogFacade).load()
         doReturn(2).`when`(indexSyncService).indexSnapshot(programs)
-        doReturn(true).`when`(supportProgramRepository).publishBizInfoSnapshotIfCurrent(programs, 7L)
+        doReturn(true).`when`(supportProgramRepository).publishSnapshotIfCurrent("BIZINFO", programs, 7L)
 
         val synchronizedCount = service().sync()
 
         assertEquals(2, synchronizedCount)
         inOrder(supportProgramRepository, catalogFacade, indexSyncService).apply {
-            verify(supportProgramRepository).startBizInfoSyncGeneration()
+            verify(supportProgramRepository).startSyncGeneration("BIZINFO")
             verify(catalogFacade).load()
             verify(indexSyncService).indexSnapshot(programs)
-            verify(supportProgramRepository).publishBizInfoSnapshotIfCurrent(programs, 7L)
+            verify(supportProgramRepository).publishSnapshotIfCurrent("BIZINFO", programs, 7L)
             verifyNoMoreInteractions()
         }
     }
@@ -60,7 +60,7 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
             message = "기업마당 지원사업 목록 수집 실패",
             cause = IllegalStateException("upstream failure"),
         )
-        doReturn(8L).`when`(supportProgramRepository).startBizInfoSyncGeneration()
+        doReturn(8L).`when`(supportProgramRepository).startSyncGeneration("BIZINFO")
         doThrow(failure).`when`(catalogFacade).load()
 
         val thrown = assertThrows(SupportProgramCatalogFacadeException::class.java) {
@@ -68,8 +68,8 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
         }
 
         assertSame(failure, thrown)
-        verify(supportProgramRepository).startBizInfoSyncGeneration()
-        verify(supportProgramRepository).recordBizInfoSyncFailureIfCurrent(8L)
+        verify(supportProgramRepository).startSyncGeneration("BIZINFO")
+        verify(supportProgramRepository).recordSyncFailureIfCurrent("BIZINFO", 8L)
         verifyNoInteractions(indexSyncService)
     }
 
@@ -77,29 +77,29 @@ class BizInfoSupportProgramCatalogSyncServiceTest {
     fun doesNotPublishTheRepositoryWhenVectorPreparationFails() {
         val programs = listOf(catalogProgram("first"))
         val failure = IllegalStateException("index unavailable")
-        doReturn(9L).`when`(supportProgramRepository).startBizInfoSyncGeneration()
+        doReturn(9L).`when`(supportProgramRepository).startSyncGeneration("BIZINFO")
         doReturn(programs).`when`(catalogFacade).load()
         doThrow(failure).`when`(indexSyncService).indexSnapshot(programs)
 
         assertSame(failure, assertThrows(IllegalStateException::class.java) { service().sync() })
 
-        verify(supportProgramRepository).startBizInfoSyncGeneration()
-        verify(supportProgramRepository).recordBizInfoSyncFailureIfCurrent(9L)
+        verify(supportProgramRepository).startSyncGeneration("BIZINFO")
+        verify(supportProgramRepository).recordSyncFailureIfCurrent("BIZINFO", 9L)
         verifyNoMoreInteractions(supportProgramRepository)
     }
 
     @Test
     fun doesNotPublishOrPruneWhenANewerSyncStartedDuringVectorPreparation() {
         val programs = listOf(catalogProgram("first"))
-        doReturn(10L).`when`(supportProgramRepository).startBizInfoSyncGeneration()
+        doReturn(10L).`when`(supportProgramRepository).startSyncGeneration("BIZINFO")
         doReturn(programs).`when`(catalogFacade).load()
         doReturn(1).`when`(indexSyncService).indexSnapshot(programs)
-        doReturn(false).`when`(supportProgramRepository).publishBizInfoSnapshotIfCurrent(programs, 10L)
+        doReturn(false).`when`(supportProgramRepository).publishSnapshotIfCurrent("BIZINFO", programs, 10L)
 
         assertNull(service().sync())
 
-        verify(supportProgramRepository).publishBizInfoSnapshotIfCurrent(programs, 10L)
-        verify(supportProgramRepository, never()).recordBizInfoSyncFailureIfCurrent(10L)
+        verify(supportProgramRepository).publishSnapshotIfCurrent("BIZINFO", programs, 10L)
+        verify(supportProgramRepository, never()).recordSyncFailureIfCurrent("BIZINFO", 10L)
     }
 
     private fun service() = BizInfoSupportProgramCatalogSyncService(

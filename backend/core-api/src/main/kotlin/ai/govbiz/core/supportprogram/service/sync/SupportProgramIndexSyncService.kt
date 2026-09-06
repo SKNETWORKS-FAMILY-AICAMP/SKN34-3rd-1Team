@@ -24,27 +24,42 @@ class SupportProgramIndexSyncService(
      */
     fun repair(): Int {
         val programs = repository.findPresent()
-        val status = repository.findBizInfoSyncStatus()
-        val repairTarget = repairTargetFor(programs, status)
-        val needsLegacyBootstrap =
-            repairTarget == null &&
-                status?.publishedCatalogFingerprint == null &&
-                programs.any { it.program.sourceCode == BIZINFO_SOURCE_CODE }
-        val indexedCount = try {
-            indexSnapshot(programs)
-        } catch (exception: RuntimeException) {
+        val statuses = repository.findSyncStatuses().associateBy { it.sourceCode }
+        check(programs.size <= SupportProgramIndexDocumentMapper.MAX_DOCUMENTS) { "index catalog exceeds supported limit" }
+        val programsBySource = programs.groupBy { it.program.sourceCode }
+        var indexedCount = 0
+        var firstFailure: RuntimeException? = null
+
+        // 공개 공고가 0개인 성공 스냅샷도 상태 행을 기준으로 복구합니다.
+        for (sourceCode in programsBySource.keys + statuses.keys) {
+            val sourcePrograms = programsBySource[sourceCode].orEmpty()
+            val status = statuses[sourceCode]
+            var repairTarget: SourceRepairTarget? = null
             try {
-                repairTarget?.markNotReady()
-            } catch (statusRecordingException: RuntimeException) {
-                exception.addSuppressed(statusRecordingException)
+                repairTarget = repairTargetFor(sourceCode, sourcePrograms, status)
+                val needsLegacyBootstrap =
+                    repairTarget == null && status?.publishedCatalogFingerprint == null && sourcePrograms.isNotEmpty()
+                indexedCount += indexSnapshot(sourcePrograms)
+                if (repairTarget != null) {
+                    repairTarget.markReady()
+                } else if (needsLegacyBootstrap) {
+                    repository.bootstrapLegacySnapshotAfterSuccessfulRepair(sourceCode, sourcePrograms)
+                }
+            } catch (exception: RuntimeException) {
+                try {
+                    repairTarget?.markNotReady()
+                } catch (statusRecordingException: RuntimeException) {
+                    if (statusRecordingException !== exception) exception.addSuppressed(statusRecordingException)
+                }
+                val previousFailure = firstFailure
+                if (previousFailure == null) {
+                    firstFailure = exception
+                } else if (previousFailure !== exception) {
+                    previousFailure.addSuppressed(exception)
+                }
             }
-            throw exception
         }
-        if (repairTarget != null) {
-            repairTarget.markReady()
-        } else if (needsLegacyBootstrap) {
-            repository.bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(programs)
-        }
+        firstFailure?.let { throw it }
         return indexedCount
     }
 
@@ -69,30 +84,33 @@ class SupportProgramIndexSyncService(
     }
 
     private fun repairTargetFor(
+        sourceCode: String,
         programs: List<CatalogSupportProgram>,
         status: SupportProgramSyncStatus?,
-    ): BizInfoRepairTarget? {
+    ): SourceRepairTarget? {
         status ?: return null
         val publishedGeneration = status.publishedGeneration ?: return null
         val publishedFingerprint = status.publishedCatalogFingerprint ?: return null
-        val bizInfoPrograms = programs.filter { it.program.sourceCode == BIZINFO_SOURCE_CODE }
-        if (bizInfoPrograms.size != status.publishedProgramCount) return null
-        if (SupportProgramCatalogFingerprintHelper.calculate(bizInfoPrograms) != publishedFingerprint) return null
+        if (programs.size != status.publishedProgramCount) return null
+        if (SupportProgramCatalogFingerprintHelper.calculate(programs) != publishedFingerprint) return null
 
-        return BizInfoRepairTarget(
+        return SourceRepairTarget(
+            sourceCode = sourceCode,
             publishedGeneration = publishedGeneration,
             catalogFingerprint = publishedFingerprint,
-            programCount = bizInfoPrograms.size,
+            programCount = programs.size,
         )
     }
 
-    private inner class BizInfoRepairTarget(
+    private inner class SourceRepairTarget(
+        private val sourceCode: String,
         private val publishedGeneration: Long,
         private val catalogFingerprint: String,
         private val programCount: Int,
     ) {
         fun markReady() {
-            repository.markBizInfoIndexReadyIfPublishedSnapshotMatches(
+            repository.markIndexReadyIfPublishedSnapshotMatches(
+                sourceCode = sourceCode,
                 publishedGeneration = publishedGeneration,
                 expectedCatalogFingerprint = catalogFingerprint,
                 expectedProgramCount = programCount,
@@ -100,7 +118,8 @@ class SupportProgramIndexSyncService(
         }
 
         fun markNotReady() {
-            repository.markBizInfoIndexNotReadyIfPublishedSnapshotMatches(
+            repository.markIndexNotReadyIfPublishedSnapshotMatches(
+                sourceCode = sourceCode,
                 publishedGeneration = publishedGeneration,
                 expectedCatalogFingerprint = catalogFingerprint,
                 expectedProgramCount = programCount,
@@ -109,7 +128,6 @@ class SupportProgramIndexSyncService(
     }
 
     private companion object {
-        const val BIZINFO_SOURCE_CODE = "BIZINFO"
         const val BATCH_SIZE = 16
     }
 }

@@ -91,6 +91,47 @@ describe('useSupportProgramSearchReadinessViewModel', () => {
     })
   })
 
+  it('allows a partial-source search and keeps polling the source that is still preparing', async () => {
+    vi.useFakeTimers()
+    const partialReadiness: SupportProgramSearchReadiness = {
+      ...readiness('SEARCHABLE'),
+      searchState: 'SEARCHABLE_WITH_PARTIAL_SOURCES',
+      sources: [readiness('SEARCHABLE').sources[0], {
+        ...readiness('PREPARING').sources[0], sourceCode: 'KSTARTUP', sourceName: 'K-Startup',
+      }],
+    }
+    const execute = vi.fn()
+      .mockResolvedValueOnce(partialReadiness)
+      .mockResolvedValueOnce(readiness('SEARCHABLE'))
+    const useCase = createReadinessUseCase(execute)
+    const { result } = renderHook(() => useSupportProgramSearchReadinessViewModel(useCase))
+
+    await act(async () => { await Promise.resolve() })
+    expect(result.current.canSearch).toBe(true)
+    expect(result.current.data?.searchState).toBe('SEARCHABLE_WITH_PARTIAL_SOURCES')
+
+    await act(async () => vi.advanceTimersByTimeAsync(supportProgramReadinessPollingMilliseconds))
+    expect(result.current.data?.searchState).toBe('SEARCHABLE')
+    expect(result.current.canSearch).toBe(true)
+    await act(async () => vi.advanceTimersByTimeAsync(supportProgramReadinessPollingMilliseconds))
+    expect(execute).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps previously prepared data searchable when the latest sync fails', async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce(readiness('SEARCHABLE'))
+      .mockResolvedValueOnce(readiness('SEARCHABLE_WITH_SYNC_FAILURE'))
+    const useCase = createReadinessUseCase(execute)
+    const { result } = renderHook(() => useSupportProgramSearchReadinessViewModel(useCase))
+    await waitFor(() => expect(result.current.canSearch).toBe(true))
+
+    await act(async () => result.current.refetch())
+
+    expect(result.current.canSearch).toBe(true)
+    expect(result.current.data?.sources[0].searchState).toBe('SEARCHABLE_WITH_SYNC_FAILURE')
+    expect(result.current.data?.programCount).toBe(12)
+  })
+
   it('keeps search disabled and exposes a retryable safe error when readiness cannot be checked', async () => {
     const execute = vi.fn()
       .mockRejectedValueOnce(new Error('private upstream status'))
@@ -115,6 +156,17 @@ describe('useSupportProgramSearchReadinessViewModel', () => {
 function readiness(
   searchState: SupportProgramSearchReadiness['searchState'],
 ): SupportProgramSearchReadiness {
+  const source = {
+    sourceCode: 'BIZINFO',
+    sourceName: '기업마당',
+    searchState: searchState === 'SEARCHABLE_WITH_PARTIAL_SOURCES' ? 'SEARCHABLE' as const : searchState,
+    programCount: searchState === 'PREPARING' ? 0 : 12,
+    indexReady: searchState !== 'PREPARING' && searchState !== 'UNAVAILABLE',
+    lastSuccessfulSyncAt: searchState === 'PREPARING' ? null : '2026-09-05T09:00:00+09:00',
+    lastFailedSyncAt: searchState === 'SEARCHABLE_WITH_SYNC_FAILURE'
+      ? '2026-09-05T10:00:00+09:00'
+      : null,
+  }
   return {
     searchState,
     programCount: searchState === 'PREPARING' ? 0 : 12,
@@ -123,6 +175,7 @@ function readiness(
     lastFailedSyncAt: searchState === 'SEARCHABLE_WITH_SYNC_FAILURE'
       ? '2026-09-05T10:00:00+09:00'
       : null,
+    sources: [source],
   }
 }
 

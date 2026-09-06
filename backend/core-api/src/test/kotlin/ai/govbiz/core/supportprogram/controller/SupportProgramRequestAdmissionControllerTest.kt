@@ -133,7 +133,7 @@ class SupportProgramRequestAdmissionControllerTest {
         val mvc = mvc()
         Mockito.`when`(search.search("서울 AI", true)).thenReturn(result)
         Mockito.`when`(readiness.get()).thenReturn(
-            SupportProgramSearchReadinessResult(SupportProgramSearchState.PREPARING, 0, false, null, null),
+            SupportProgramSearchReadinessResult(SupportProgramSearchState.PREPARING, 0, false, null, null, emptyList()),
         )
         Mockito.doThrow(ai.govbiz.core.supportprogram.service.detail.exception.SupportProgramNotFoundException())
             .`when`(detail).get("BIZINFO", "PBLN_TEST")

@@ -8,7 +8,7 @@ Core는 정기 동기화된 MySQL 공고 카탈로그에서 후보를 읽어 AI 
 Browser
   → GET /api/v1/support-programs/search
       → Core API
-          → MySQL의 현재 노출 공고 조회·접수 상태 필터
+          → MySQL의 색인 준비된 제공처의 현재 노출 공고 조회·접수 상태 필터
           → 현재 공고 ID·내용 해시로 Qdrant 검색 범위 제한
           → 질의 임베딩에 가까운 후보 최대 20개 선택
           → POST /internal/v1/support-program-rankings/rank
@@ -31,6 +31,9 @@ Accept: application/json
 
 ## 공개 검색 준비 상태
 
+제공처별 `sources`는 필수 필드이며 부분 검색 상태도 추가되었습니다. 이 계약을 사용하는 Core와 Frontend는
+함께 갱신해야 합니다. 이전 응답에 없는 제공처 상태를 Frontend가 추정하지 않습니다.
+
 채팅 화면은 검색 요청 전에 다음 endpoint로 현재 공개 스냅샷의 준비 상태를 조회합니다. 이 endpoint는
 외부 API·AI Service·Qdrant를 호출하지 않고 MySQL에 기록된 마지막 전체 동기화·색인 준비 결과만 반환합니다.
 
@@ -45,25 +48,47 @@ Accept: application/json
   "programCount": 128,
   "indexReady": true,
   "lastSuccessfulSyncAt": "2026-09-05T09:00:00+09:00",
-  "lastFailedSyncAt": "2026-09-05T10:00:00+09:00"
+  "lastFailedSyncAt": "2026-09-05T10:00:00+09:00",
+  "sources": [
+    {
+      "sourceCode": "BIZINFO",
+      "sourceName": "기업마당",
+      "searchState": "SEARCHABLE_WITH_SYNC_FAILURE",
+      "programCount": 128,
+      "indexReady": true,
+      "lastSuccessfulSyncAt": "2026-09-05T09:00:00+09:00",
+      "lastFailedSyncAt": "2026-09-05T10:00:00+09:00"
+    }
+  ]
 }
 ```
 
 | 필드 | 설명 |
 |---|---|
-| `searchState` | `PREPARING`, `SEARCHABLE`, `SEARCHABLE_WITH_SYNC_FAILURE`, `UNAVAILABLE` 중 하나 |
-| `programCount` | 마지막으로 원자적으로 공개된 기업마당 스냅샷의 공고 수. 현재 제공처가 기업마당 하나이므로 현재 검색 카탈로그 수와 같다. |
-| `indexReady` | 이 공개 스냅샷 전체의 마지막 색인 준비가 성공했는지. 실시간 Qdrant Health는 확인하지 않는다. |
-| `lastSuccessfulSyncAt` | 마지막 전체 카탈로그 동기화가 공개까지 성공한 시각. 없으면 `null` |
-| `lastFailedSyncAt` | 현재 세대의 수집·공개 전 필수 색인 실패를 기록한 마지막 시각. 없으면 `null` |
+| `searchState` | `PREPARING`, `SEARCHABLE`, `SEARCHABLE_WITH_SYNC_FAILURE`, `SEARCHABLE_WITH_PARTIAL_SOURCES`, `UNAVAILABLE` 중 하나 |
+| `programCount` | 검색 가능한 제공처들의 공고 수 합계. 접수 상태 필터 적용 전의 수이며 미준비 제공처는 포함하지 않는다. |
+| `indexReady` | 한 제공처 이상의 공개 스냅샷 색인 준비가 확인되었는지. 실시간 Qdrant Health는 확인하지 않는다. |
+| `lastSuccessfulSyncAt` | 제공처별 동기화 성공 시각 중 가장 최근 값. 없으면 `null` |
+| `lastFailedSyncAt` | 제공처별 동기화 실패 시각 중 가장 최근 값. 없으면 `null` |
+| `sources` | 필수 배열. 각 원소는 `sourceCode`, `sourceName`, `searchState`, `programCount`, `indexReady`, `lastSuccessfulSyncAt`, `lastFailedSyncAt`을 포함한다. |
+
+`sources[].searchState`는 기존 네 상태만 사용하며 부분 준비 상태는 전체 집계에만 사용합니다.
+제공처별 `programCount`는 저장된 공개 공고 수이므로 미준비 제공처도 0보다 클 수 있습니다.
+제공처별 `indexReady`와 성공/실패 시각은 해당 제공처 스냅샷에만 적용합니다. 상태 행 없는 현재 공고도
+해당 제공처를 `UNAVAILABLE`·`indexReady=false`·동기화 시각 `null`로 안내합니다. 초기 빈 DB에는 `BIZINFO`만
+포함하며 K-Startup URL 허용만으로 새 제공처를 등록하지 않습니다.
 
 `SEARCHABLE`은 성공적으로 공개·색인된 스냅샷을 뜻하며 공고 수가 0인 경우도 포함합니다.
 `SEARCHABLE_WITH_SYNC_FAILURE`은 이전 스냅샷은 계속 검색 가능하지만 더 최근 동기화가 실패한 경우입니다.
-`UNAVAILABLE`은 상태 행은 있으나 해당 공개 스냅샷의 색인 준비가 확인되지 않은 경우입니다.
-`PREPARING`은 신뢰할 수 있는 상태 행이 아직 없는 초기 상태입니다. V4 상태 테이블을 도입하기 전부터
-존재하던 **비어 있지 않은** 기업마당 공고는 전체 복구 색인이 성공한 뒤에만, 그때 읽은 지문·공고 수를 sentinel
-세대 `0`으로 조건부 채택해 `SEARCHABLE`이 될 수 있습니다. 빈 초기 DB·복구 전 legacy 공고는 이 상태를 유지하고,
+`SEARCHABLE_WITH_PARTIAL_SOURCES`는 검색 가능한 제공처와 미준비 제공처가 함께 있을 때 우선하는 집계 상태입니다.
+이때 Frontend는 검색을 허용하고 준비된 제공처 이름과 각 제공처의 개별 실패 상태를 표시합니다.
+준비된 제공처가 없으면 하나라도 `UNAVAILABLE`일 때 전체도 `UNAVAILABLE`, 그 외에는 `PREPARING`입니다.
+`UNAVAILABLE`은 공개 스냅샷의 색인 준비가 확인되지 않은 경우이며, 상태 행 없는 기존 공고도 포함합니다.
+`PREPARING`은 공개 공고가 없는 초기 상태나 성공·실패가 아직 기록되지 않은 첫 동기화 상태입니다. V4 상태 테이블을 도입하기 전부터
+존재하던 **비어 있지 않은** 제공처별 공고는 해당 제공처 전체 복구 색인이 성공한 뒤에만, 그때 읽은 지문·공고 수를 sentinel
+세대 `0`으로 조건부 채택해 `SEARCHABLE`이 될 수 있습니다. 빈 초기 DB는 `PREPARING`, 복구 전 legacy 공고는 `UNAVAILABLE`이며,
 실제 새 스냅샷의 지문은 bootstrap이 바꾸지 않습니다. 시각은 `Asia/Seoul` 오프셋을 포함한 ISO-8601 문자열입니다.
+제공처별 복구와 현재 미연동 범위는 [6단계 다중 제공처 준비](support-program-multi-source-preparation.md)에 정리합니다.
 
 ## 내부 LLM 점수화 요청
 
@@ -181,6 +206,11 @@ Core는 다음 불변식을 다시 검사합니다.
 적격 공고가 없으면 `programs`는 빈 배열입니다. 원본에 없는 지원금액은 생성하지 않으며 `sourceUrl`로
 공식 원문을 확인할 수 있습니다.
 
+Frontend의 원문 URL 검증은 `BIZINFO`에 `bizinfo.go.kr`, `KSTARTUP`에 `k-startup.go.kr`와 각 하위
+도메인의 HTTP(S) URL을 허용합니다. 제공처/호스트 불일치, 위장 호스트, userinfo, 비표준 포트, 다른 스킴은
+거부합니다. 알 수 없는 제공처나 잘못된 URL이 한 건이라도 포함되면 전체 응답을 거부하며 일부 공고만
+남겨 성공으로 처리하지 않습니다. K-Startup URL 허용은 실제 공고 수집 또는 원문 질문 지원을 뜻하지 않습니다.
+
 ## 공개 상세 조회
 
 검색 결과의 `id`는 제공처 안에서의 원본 공고 ID입니다. 제공처가 다르면 같은 `id`가 존재할 수 있으므로,
@@ -217,6 +247,8 @@ Accept: application/json
 목록 검색이나 상세 GET은 기업마당 상세 페이지를 수집하지 않습니다. 사용자가 특정 공고에 질문을 제출할 때만
 다음 endpoint가 기업마당 공식 HTML 원문을 사용합니다. 현재 지원 제공처는 `BIZINFO`뿐이며, 현재 공개된
 공고가 아닌 경우에는 원문 수집 전에 상세 조회와 같은 404를 반환합니다.
+Frontend는 `KSTARTUP`을 포함한 비 `BIZINFO` 상세에서 질문 입력 대신 미지원 설명과 기존 원문 링크를
+표시하고 근거 질문 HTTP 요청을 보내지 않습니다. 서버의 미지원 제공처 422 계약도 유지합니다.
 
 ```http
 POST /api/v1/support-programs/detail/answers
@@ -294,9 +326,13 @@ LLM 전용 입출력은 HTTP 계약과 다릅니다. Agent는 해시 ID 대신 �
 
 ## 전체 카탈로그 후보 검색
 
-검색어가 있으면 Core는 MySQL에서 현재 노출된 전체 제공처 공고를 읽어 접수 상태를 적용합니다.
+검색어가 있으면 Core는 `findSearchablePresent`에서 현재 노출 공고와 `support_program_sync_status`를
+`source_code`로 JOIN하여 `index_ready=true`인 제공처의 공고만 읽고 접수 상태를 적용합니다.
 그 전체 허용 목록의 ID·검색 텍스트 해시를 AI Service에 보내고, Qdrant의 의미 검색으로 최대 20개를
 선택합니다. 최신순 21번째 이후의 공고도 후보가 될 수 있습니다. 빈 검색어만 최신순 최대 5개를 반환합니다.
+빈 검색어 최신 목록과 신규 평가 fixture/capture도 같은 준비된 제공처 범위를 사용합니다. 이 상태 필터는
+저장된 준비 결과로 검색 범위를 정하며, 범위 안에서 발생한 AI·벡터 검색 오류는 기존처럼 명시적으로 반환합니다.
+기존 고정 평가 스냅샷·판정 원표·캡처의 의미와 지표는 변경하지 않습니다.
 
 내부 색인 API는 다음 세 가지입니다. 공개 브라우저 API가 아니며 FastAPI 내부 포트에서만 제공합니다.
 
@@ -320,6 +356,7 @@ LLM 전용 입출력은 HTTP 계약과 다릅니다. Agent는 해시 ID 대신 �
 공개 세대·카탈로그 지문·공고 수·`indexReady=true`·성공 시각도 기록합니다. 더 최근에 시작한 작업이 있으면
 이전 작업의 공개·실패 기록을 모두 건너뜁니다. 현재 세대의 수집 또는 사전 색인 실패는 이전 공개 스냅샷을
 바꾸지 않고 실패 시각만 기록합니다. 별도 기본 `PT1M` 스케줄러는 이미 공개된 공고의 누락 벡터만 복구합니다.
+복구는 제공처별로 수행하며 한 제공처 실패 이후에도 다른 제공처를 처리하고, 완료 후 실패를 오류로 전달합니다.
 복구의 성공·실패는 자신이 읽은 세대·지문·공고 수가 상태 행과 아직 같을 때만 `indexReady`를 바꾸므로,
 늦게 끝난 복구가 새 스냅샷 준비 상태를 덮지 못합니다.
 두 경로 모두 `prune`을 호출하지 않으며, 정확한 현재 ID·해시 필터가 오래된 벡터를 검색에서 제외합니다.
@@ -336,8 +373,8 @@ Core는 반환된 ID가 허용 목록에 있고 내용 해시가 일치하는지
 최대 5개 반환하며, 적격 공고가 없을 때의 빈 목록은
 정상 성공 응답입니다. 원문 근거 질문은 위의 별도 endpoint이며 이 목록 검색 경로의 동작을 바꾸지 않습니다.
 후보·최종 추천 비교를 위한 [검색 평가 자료와 실행 도구](../evaluation/support-program-search/README.md)를
-추가했습니다. `evaluation-fixture-export`는 공개 API가 아닌 비웹 실행 프로필이며, 현재 MySQL의 `OPEN`
-모든 제공처의 현재 `OPEN` 공고를 운영 색인과 같은 ID·내용 해시·검색 문서로 미라벨 fixture 초안에 기록합니다.
+추가했습니다. `evaluation-fixture-export`는 공개 API가 아닌 비웹 실행 프로필이며, 현재 MySQL에서 색인 준비된
+제공처의 `OPEN` 공고를 운영 색인과 같은 ID·내용 해시·검색 문서로 미라벨 fixture 초안에 기록합니다.
 `evaluation-capture`는 사람이 fixture에 질문·정답을 라벨링한 뒤 fixture와 같은 `referenceDate`에서 현재 Search
 Service가 만든 후보 최대 20개와 최종 추천 최대 5개의 ID를 기록합니다. 기준 날짜는 실행 시점의 오늘이 아니라
 신청 시작·종료일로 접수 상태를 다시 계산하는 날짜이며, fixture와 capture가 다르면 평가기가 거부합니다.

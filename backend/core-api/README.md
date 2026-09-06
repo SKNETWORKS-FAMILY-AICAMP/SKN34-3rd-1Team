@@ -23,7 +23,8 @@ cd backend/core-api
 
 기본 주소는 `http://127.0.0.1:8080`입니다. 실행 시 Flyway가 MySQL 스키마를 적용합니다.
 `DATA_GO_KR_SERVICE_KEY`가 비어 있으면 수집 작업은 실패를 기록하며 다음 주기에 다시 시도합니다.
-기존 DB의 빈 검색어 목록·상세 조회는 가능하고, 검색어가 있는 검색은 AI Service와 해당 공고 버전의
+빈 검색어 목록은 색인 준비가 확인된 제공처의 기존 DB 공고만 반환하며, 상세 조회는 현재 공개 공고를
+제공처별 색인 준비와 별개로 조회합니다. 검색어가 있는 검색은 AI Service와 해당 공고 버전의
 색인이 있어야 성공합니다. 새 카탈로그 공개에도 색인 준비가 필수이므로 기업마당 키만으로 동기화가
 완료되지는 않습니다.
 
@@ -31,8 +32,8 @@ cd backend/core-api
 
 ### 실제 공고 fixture 초안 내보내기
 
-실데이터 평가의 시작점은 `evaluation-fixture-export` 프로필입니다. 이 비웹 프로필은 현재 MySQL의 모든
-제공처 공개 공고 중 지정한 `referenceDate` 기준 `OPEN` 공고만 읽고, 운영 색인과 같은 `SupportProgramIndexDocumentMapper.fromCatalog`로
+실데이터 평가의 시작점은 `evaluation-fixture-export` 프로필입니다. 이 비웹 프로필은 현재 MySQL에서
+색인 준비가 확인된 제공처의 공개 공고 중 지정한 `referenceDate` 기준 `OPEN` 공고만 읽고, 운영 색인과 같은 `SupportProgramIndexDocumentMapper.fromCatalog`로
 `id`·`contentHash`·`text`를 만듭니다. 공고 수와 카탈로그 지문을 포함한 전체 fixture 초안을 기록하므로,
 이후 캡처 결과가 같은 공고 스냅샷에서 나왔는지 확인할 수 있습니다.
 
@@ -63,7 +64,8 @@ fixture와 같은 질문 묶음을 준비한 뒤에는 공개 API를 반복 호�
 `evaluation-capture` 프로필을 실행합니다. 이 프로필은 웹 서버·기업마당 동기화·누락 색인 복구를 끈 뒤,
 질문 묶음의 각 항목을 현재 `SupportProgramSearchService`에 전달합니다. 따라서 MySQL의 적격 공고 선정,
 Qdrant·키워드 순위를 결합한 후보 최대 20개, AI 최종 추천 최대 5개라는 운영 검색 흐름에서 나온 ID를
-그대로 JSON 파일에 기록합니다.
+그대로 JSON 파일에 기록합니다. fixture와 capture는 모두 `findSearchablePresent`로 준비된 제공처의
+공고만 읽습니다. 기존 고정 평가 자료는 당시 스냅샷·실행 조건의 기록이며 이번 조회 범위로 다시 해석하지 않습니다.
 
 질문 파일은 [예시](../../evaluation/support-program-search/query-set.example.json)를 복사해 준비합니다.
 fixture 내보내기는 지정한 기준 날짜의 `OPEN` 공고만 담으므로, 캡처도 기본값인 `acceptingOnly=true`와
@@ -116,11 +118,14 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
   기준을 통과한 0~5개를 반환합니다. 키워드는 색인 본문의 NFC·소문자 토큰 집합 교집합 수로 정렬하고
   동점은 최신순·제공처 포함 ID순입니다. RRF 동점은 의미 검색 순위·제공처 포함 ID순입니다.
   의미 검색 실패는 오류로 반환합니다. 빈 검색어는 AI를 호출하지 않고 최신순 최대 5개를 반환합니다.
-- 검색 준비 상태: `readiness`는 현재 신뢰할 수 있는 공개 스냅샷의 공고 수, 마지막 동기화 성공·실패 시각,
-  해당 스냅샷의 전체 색인 준비 여부를 반환합니다. `SEARCHABLE`은 공고 수가 0인 성공 스냅샷도 포함하며,
+- 검색 준비 상태: `readiness`는 필수 `sources` 배열로 제공처별 저장 공고 수·색인 준비·동기화 성공/실패를
+  반환합니다. 전체 공고 수는 검색 가능한 제공처의 합계이고 `indexReady`는 한 제공처 이상 준비되었는지입니다.
+  `SEARCHABLE_WITH_PARTIAL_SOURCES`는 일부만 준비된 상태이며 검색은 준비된 범위에서 가능합니다.
+  `SEARCHABLE`은 공고 수가 0인 성공 스냅샷도 포함하며,
   `SEARCHABLE_WITH_SYNC_FAILURE`은 이전 스냅샷은 검색 가능하지만 최신 수집·사전 색인 시도가 실패한 경우입니다.
-  `PREPARING`은 아직 신뢰할 수 있는 상태 행이 없는 초기 상태이고, `UNAVAILABLE`은 상태 행은 있으나 현재
-  공개 스냅샷의 색인 준비가 확인되지 않은 경우입니다. 시각은 `Asia/Seoul` 오프셋을 포함한 ISO-8601 문자열입니다.
+  `PREPARING`은 공개 공고 없는 초기 상태 또는 결과가 아직 없는 첫 동기화이고, `UNAVAILABLE`은 현재
+  공개 스냅샷의 색인 준비가 확인되지 않은 경우입니다. 상태 행 없는 현재 공고의 제공처도 `UNAVAILABLE`로
+  표시합니다. 초기 빈 DB에는 `BIZINFO`만 포함됩니다. 시각은 `Asia/Seoul` 오프셋을 포함한 ISO-8601 문자열입니다.
 - 상세: 필수 `sourceCode`는 `[A-Z][A-Z0-9_]{0,63}` 형식, `sourceProgramId`는 최대 255자이며 공백만 있는 값은 허용하지
   않습니다. 현재 노출된 행만 반환하며, 없는·미노출 공고는 404입니다. 검색 문맥이 없으므로 추천 이유는
   빈 배열, 추천 점수는 `null`입니다.
@@ -133,9 +138,12 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
   상세 URL의 리디렉션은 매번 공식 HTTPS 호스트와 같은 `pblancId`인지 검증하며 최대 3회 따릅니다.
   HTML은 jsoup `1.23.2`로 파싱하고 `.support_project_detail`의 제목이 요청한 공고와 일치할 때
   `.view_cont` 본문만 추출합니다. 인용에는 검색된 청크 전체를 반환하며 청크당 최대 1,500 UTF-16 코드 단위입니다.
-- 현재 수집기는 `BIZINFO` 한 제공처만 구현되어 있습니다. 전체 검색·색인·평가 fixture는 현재 MySQL의
-  모든 제공처 공고를 다루며, 내부 식별자 `sourceCode:sourceProgramId`로 같은 원본 ID를 구분합니다.
-  다른 제공처를 실제로 수집하려면 별도 Client·Facade·동기화 설정을 구현해야 합니다.
+- 현재 수집기는 `BIZINFO` 한 제공처만 구현되어 있습니다. 검색·최신 목록·평가 fixture/capture는
+  `findSearchablePresent`의 제공처 상태 JOIN으로 `index_ready=true`인 공고만 읽고, 색인 복구는
+  미준비 공고도 제공처별로 처리합니다. 내부 식별자 `sourceCode:sourceProgramId`로 같은 원본 ID를 구분합니다.
+  K-Startup은 Frontend의 공식 URL 허용과 RAG 미지원 사전 안내만 준비했으며 수집 Client·동기화는 없습니다.
+
+제공처별 복구 실패 격리와 구현/미구현 범위는 [6단계 다중 제공처 준비](../../docs/support-program-multi-source-preparation.md)에 정리합니다.
 
 요청·응답 JSON과 상세 오류 계약은 [지원사업 API 계약](../../docs/support-program-search-contract.md),
 SampleItem 예제는 [별도 계약](../../docs/sample-item-contract.md)에 있습니다.
@@ -195,6 +203,7 @@ supportprogram/
 ├── service/
 │   ├── search             # DB 조회 → 의미·키워드 순위 결합 → AI 점수화
 │   ├── detail             # 현재 공고 상세 조회
+│   ├── readiness          # 제공처별 준비 상태와 전체 검색 범위 집계
 │   ├── evidence           # 공식 원문 캐시·청킹 → 근거 검색·답변
 │   ├── sync               # 수집·색인 준비·DB 공개와 별도 벡터 복구
 │   ├── evaluation         # 비웹 fixture 내보내기·검색 품질 평가 캡처 프로필
@@ -244,9 +253,11 @@ SQL은 [`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/re
 - 수집 또는 공개 전 필수 색인이 실패하면 현재 세대일 때만 실패 시각을 기록합니다. 이때 이전 공개 스냅샷의
   공고·색인 준비 상태는 바꾸지 않습니다. 별도 복구가 실패하면 자신이 읽어 색인한 세대·지문·공고 수와 상태 행이
   여전히 일치할 때만 `indexReady=false`로 바꿉니다. 복구 성공도 같은 조건에서만 준비 완료를 기록합니다.
+- 복구는 제공처별로 벡터를 확인하고 상태를 갱신합니다. 한 제공처의 실패 이후에도 다른 제공처를 처리하고,
+  전체 처리가 끝나면 실패를 오류로 전달합니다. 최신 수집 실패와 기존 공개 스냅샷 복구 실패는 서로 다른 상태입니다.
 - V4 적용 전부터 있던 공고에는 공개 세대·검색 문서 지문·과거 색인 성공 여부가 없습니다. 다만 현재 공개된
-  기업마당 공고가 1건 이상이고 별도 전체 색인 복구가 성공하면, 그때 읽어 색인한 지문·공고 수를 sentinel 세대 `0`과
-  함께 한 번만 채택합니다. 빈 초기 DB·복구 전 legacy 공고는 `PREPARING`을 유지하며, 실제 새 스냅샷의 지문은 이
+  제공처별 공고가 1건 이상이고 해당 제공처 전체 색인 복구가 성공하면, 그때 읽어 색인한 지문·공고 수를 sentinel 세대 `0`과
+  함께 한 번만 채택합니다. 빈 초기 DB는 `PREPARING`, 복구 전 legacy 공고는 `UNAVAILABLE`이며, 실제 새 스냅샷의 지문은 이
   bootstrap이 덮어쓰지 않습니다.
 - 원본 ID 표기의 대소문자만 바뀌어도 UPSERT가 최신 표기를 저장하여 DB ID와 벡터 ID를 맞춥니다.
   DB 고유키의 비교는 `utf8mb4_0900_ai_ci` collation을 따릅니다.

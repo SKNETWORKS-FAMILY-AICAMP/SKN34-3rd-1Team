@@ -42,6 +42,7 @@ GET /api/v1/support-programs/search
   → SupportProgramController
     → SupportProgramSearchService
       → SupportProgramRepository → MyBatis Mapper → Mapper XML → MySQL
+        → findSearchablePresent: 공개 공고와 제공처 상태 JOIN, index_ready=true인 제공처만 선택
       → 접수 상태 계산·필터
       ├→ 빈 검색어: 최신순 최대 5개 반환
       └→ 검색어 있음:
@@ -53,7 +54,7 @@ GET /api/v1/support-programs/search
           Core의 응답 검증 → 최종 추천 0~5개
 ```
 
-1. Repository는 `is_source_present = TRUE`인 모든 제공처 공고를 읽고, 저장된 신청 기간과
+1. Repository는 `is_source_present = TRUE`이고 제공처 상태의 `index_ready = TRUE`인 공고를 읽고, 저장된 신청 기간과
    서울 날짜로 접수 상태를 다시 계산합니다. `acceptingOnly=true`이면 `OPEN`만 남깁니다.
 2. 검색어는 앞뒤 공백을 제거합니다. 대상 공고가 없으면 빈 목록, 검색어가 비어 있으면
    `source_sort_timestamp` 내림차순·제공처 코드·원본 ID 오름차순의 최대 5개를 반환합니다. 이 두 경로는 AI를 호출하지 않습니다.
@@ -77,14 +78,20 @@ GET /api/v1/support-programs/search
 GET /api/v1/support-programs/readiness
   → SupportProgramController → SupportProgramSearchReadinessService
   → SupportProgramRepository → MyBatis Mapper → Mapper XML → MySQL
-  → 공개 스냅샷 공고 수·색인 준비·최근 동기화 성공/실패 시각을 반환
+  → 제공처별 공고 수·색인 준비·최근 동기화 시각과 전체 검색 범위를 반환
 ```
 
-`support_program_sync_status`는 현재 공개된 기업마당 스냅샷의 세대·검색 문서 지문·공고 수와 색인 준비 상태를
-최근 카탈로그 동기화 결과와 분리해 보관합니다. `indexReady=true`이면 공고 수가 0이어도 `SEARCHABLE`입니다.
+`support_program_sync_status`는 제공처별 공개 스냅샷의 세대·검색 문서 지문·공고 수와 색인 준비 상태를
+최근 카탈로그 동기화 결과와 분리해 보관합니다. 제공처별 `indexReady=true`이면 공고 수가 0이어도 검색 가능합니다.
 색인이 준비된 이전 스냅샷을 유지한 채 새 수집·사전 색인이 실패하면 `SEARCHABLE_WITH_SYNC_FAILURE`이며,
-색인 준비가 확인되지 않은 상태 행은 `UNAVAILABLE`입니다. 상태 행 자체가 없는 초기 상태만 `PREPARING`입니다.
+색인 준비가 확인되지 않은 공개/실패 상태는 `UNAVAILABLE`입니다.
+공고 없는 초기 준비는 `PREPARING`, 상태 행 없이 공고가 남아 있는 복구 전 legacy는 `UNAVAILABLE`입니다.
 시각은 서울 시계를 사용해 저장하고 API에서는 `+09:00` 오프셋이 포함된 ISO-8601 문자열로 반환합니다.
+
+`SupportProgramSourceReadinessResult → SupportProgramSourceReadinessResponse` 변환으로 필수 `sources`와
+전체 검색 범위를 제공합니다. 일부만 준비되면 `SEARCHABLE_WITH_PARTIAL_SOURCES`이며 외부 호출은 없습니다.
+상태가 아직 없는 현재 공고의 제공처도 준비 미확인으로 표시하고 초기 빈 DB에서는 구성된 기업마당만 표시합니다.
+세부 정책과 검증은 [다중 제공처 준비](support-program-multi-source-preparation.md)에 있습니다.
 
 점수화 계약은 `govbiz-support-program-ranking-v3`입니다. 의미 관련성 20/40점 이상과 총점 60/100점 이상을
 충족해야 하며, `targetEligibility` 또는 `regionEligibility`가 `INCOMPATIBLE`이면 추천에서 제외합니다.
@@ -141,6 +148,9 @@ POST /api/v1/support-programs/detail/answers
 실패하면 503 `SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE`을 반환합니다. AI 근거 색인·검색·답변의 연결·시간 초과·계약
 오류는 일반 AI 경계와 같은 502/503/504 분류를 사용합니다.
 
+Frontend는 `KSTARTUP`을 포함한 비 `BIZINFO` 상세에서 질문 입력을 숨기고 미지원 안내와 원문 링크를
+표시하며, ViewModel에서도 질문 전송을 차단합니다. K-Startup 공식 URL 표시 허용은 원문 수집·RAG 지원과 별개입니다.
+
 원문은 제목·공식 URL을 포함한 텍스트로 저장하며, 같은 원문은 요청마다 다시 수집하지 않고 최대 6시간
 재사용합니다. 청크는 내용·원문 해시·순서에서 결정적으로 만들며 각 청크는 최대 1,500 UTF-16 코드 단위입니다. AI Service는
 일반 공고 검색 컬렉션과 다른 Qdrant 컬렉션만 사용하고, 요청 공고의 청크 집합으로 검색 범위를 제한합니다.
@@ -161,7 +171,7 @@ POST /api/v1/support-programs/detail/answers
 
 ```text
 evaluation-fixture-export profile (비웹 실행)
-  → MySQL의 현재 공개 공고 전체 조회 → 지정한 referenceDate 기준 OPEN 공고만 선정
+  → findSearchablePresent로 준비된 제공처의 공개 공고 조회 → 지정한 referenceDate 기준 OPEN 공고만 선정
   → SupportProgramIndexDocumentMapper와 같은 ID·내용 해시·검색 문서 생성
   → 기준 날짜·전체 적격 카탈로그와 cases: []인 미라벨 fixture 초안을 원자적으로 JSON 기록
   → 질문을 고정하고 선택한 AI-only·혼합·사람 검토 방식으로 참조 라벨 확정
@@ -169,7 +179,7 @@ evaluation-fixture-export profile (비웹 실행)
 evaluation-capture profile (비웹 실행)
   → 질문 묶음 JSON 검증
   → 같은 referenceDate로 SupportProgramSearchService.searchWithTrace
-      → MySQL 현재 공고 → 기준 날짜의 적격 공고 → 의미·키워드 RRF 후보 최대 20개 → AI 최종 추천 최대 5개
+      → 준비된 제공처의 현재 공고 → 기준 날짜의 적격 공고 → 의미·키워드 RRF 후보 최대 20개 → AI 최종 추천 최대 5개
   → 기준 날짜·질문별 후보 ID·최종 ID·카탈로그 지문을 원자적으로 JSON 기록
   → 별도 Python 평가 도구가 선택한 판정 출처의 fixture와 대조
 ```
@@ -190,6 +200,8 @@ evaluation-capture profile (비웹 실행)
 후보·최종 결과를 기록하므로 평가 코드가 운영 검색 흐름을 별도로 재현하지 않습니다. 실제 AI Service를
 호출할 수 있으므로 기본 실행·CI에는 포함하지 않습니다. fixture 내보내기·라벨·캡처·평가 실행 규칙은
 [검색 평가 자료](../evaluation/support-program-search/README.md)를 따릅니다.
+새 fixture/capture는 같은 준비된 제공처 범위를 사용합니다. 기존 고정 평가 스냅샷·원표·캡처는 당시의
+입력과 실행 결과로 보존하며, 이번 상태 필터를 소급 적용하거나 과거 지표를 다시 해석하지 않습니다.
 
 ## 기업마당 동기화와 공개 순서
 
@@ -238,13 +250,15 @@ AI Service는 문서 ID·내용 해시에서 Qdrant point ID를 결정하며, �
 ```text
 SupportProgramIndexSyncScheduler (기본: 최초 PT0S, 완료 후 PT1M)
   → SupportProgramIndexSyncService.repair
-  → Repository: 현재 MySQL 공개 공고 목록 조회
-  → AI Service: 해당 버전의 누락 벡터 생성·저장
-  → 상태 행의 공개 세대·지문·공고 수가 읽은 스냅샷과 같을 때만 indexReady 갱신
+  → Repository: 현재 MySQL 공개 공고 목록·제공처별 상태 조회
+  → 제공처별로 AI Service: 해당 버전의 누락 벡터 생성·저장
+  → 해당 제공처 상태의 공개 세대·지문·공고 수가 읽은 스냅샷과 같을 때만 indexReady 갱신
+  → 한 제공처 실패 이후에도 다른 제공처를 처리하고, 완료 후 실패를 오류로 전달
 ```
 
 복구는 제공처 수집과 별도 단일 스레드에서 실행합니다. `SUPPORT_PROGRAM_INDEX_ENABLED=false`는
 이 복구 작업만 끄며, 새 카탈로그 공개 전의 필수 색인은 끄지 않습니다.
+공고가 0개인 공개 스냅샷도 제공처 상태를 기준으로 처리하고, legacy 채택도 제공처별로 수행합니다.
 
 복구 색인이 실패하면 자신이 읽은 스냅샷과 상태 행이 여전히 같을 때만 `indexReady=false`로 바꾸며,
 최근 카탈로그 동기화 성공·실패 기록은 바꾸지 않습니다. 복구가 늦게 끝난 동안 새 스냅샷이 공개되면 조건부
@@ -273,10 +287,10 @@ MySQL의 `support_program`은 `(source_code, source_program_id)` 고유키로 �
 원문 질문을 제공하지 않습니다. 이 테이블은 정기 목록 동기화에서 채우지 않고 명시적 원문 질문의 수집·검증이
 성공했을 때 UPSERT합니다.
 
-`support_program_sync_status`는 V4 이후 성공적으로 공개된 기업마당 스냅샷의 공개 세대·지문·공고 수를 기록합니다.
-V4 적용 전부터 있던 공고는 과거 공개 세대를 복원하지 않습니다. 대신 현재 공개된 기업마당 공고가 1건 이상인 경우에
+`support_program_sync_status`는 제공처별 스냅샷의 공개 세대·지문·공고 수를 기록합니다.
+V4 적용 전부터 있던 공고는 과거 공개 세대를 복원하지 않습니다. 대신 해당 제공처의 현재 공개 공고가 1건 이상인 경우에
 한해, 전체 복구 색인이 성공한 뒤 그때 읽은 지문·공고 수를 sentinel 세대 `0`으로 조건부 채택할 수 있습니다.
-빈 초기 DB·복구 전 legacy 공고는 `PREPARING`이며, 이미 실제 지문이 있는 새 스냅샷은 bootstrap이 덮어쓰지 않습니다.
+빈 초기 DB는 `PREPARING`, 복구 전 legacy 공고는 `UNAVAILABLE`이며, 실제 지문이 있는 새 스냅샷은 bootstrap이 덮어쓰지 않습니다.
 
 접수 상태는 `SupportProgramStatusResolver`가 읽을 때 계산합니다. 파싱된 시작일 전은 `UPCOMING`,
 종료일 이후는 `CLOSED`, 시작일·종료일 범위 안은 `OPEN`입니다. 날짜 경계는 포함합니다.
@@ -285,8 +299,9 @@ V4 적용 전부터 있던 공고는 과거 공개 세대를 복원하지 않습
 상시 접수보다 우선하더라도 파싱된 날짜를 무조건 덮어쓰지는 않습니다.
 
 현재 수집 Client·동기화는 `BIZINFO` 한 제공처만 구현되어 있습니다. 반면 production 검색·색인·AI 점수화는
-`sourceCode:sourceProgramId`를 내부 식별자로 사용해 모든 현재 공개 공고를 함께 처리합니다. 두 번째 제공처를
-추가하려면 그 제공처의 Client·정규화·동기화와 표시 이름을 구현해야 합니다.
+`sourceCode:sourceProgramId`를 내부 식별자로 사용하고 검색은 준비된 제공처 범위에서 실행합니다.
+K-Startup 공식 URL·표시 이름·미지원 질문 안내는 준비했으나 실제 Client·정규화·동기화는 추가하지 않았습니다.
+이번 준비에는 새 스키마·의존성·제공처 Registry가 없습니다.
 
 ## Frontend와 내부 계약
 

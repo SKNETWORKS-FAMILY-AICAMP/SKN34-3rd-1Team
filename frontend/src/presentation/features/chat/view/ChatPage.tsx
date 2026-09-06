@@ -2,7 +2,10 @@ import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
-import type { SupportProgramSearchReadiness } from '../../../../domain/entities/SupportProgramSearchReadiness'
+import type {
+  SupportProgramSearchReadiness,
+  SupportProgramSourceSearchState,
+} from '../../../../domain/entities/SupportProgramSearchReadiness'
 import {
   supportProgramChatSuggestions,
   useSupportProgramChatViewModel,
@@ -493,7 +496,7 @@ function SupportProgramSearchReadinessNotice({
         <p className={chatPageStyles.readinessDescription}>{content.description}</p>
         <dl className={chatPageStyles.readinessDetails}>
           <div>
-            <dt>현재 동기화된 공고</dt>
+            <dt>검색 가능한 공고</dt>
             <dd>{readiness.programCount}건</dd>
           </div>
           <div>
@@ -509,8 +512,36 @@ function SupportProgramSearchReadinessNotice({
             <dd>{formatSyncTime(readiness.lastFailedSyncAt)}</dd>
           </div>
         </dl>
+        <ul className={chatPageStyles.readinessSources} aria-label="제공처별 공고 준비 상태">
+          {readiness.sources.map((source) => (
+            <li key={source.sourceCode} className={chatPageStyles.readinessSource}>
+              <strong>{source.sourceName}</strong>
+              <span className={chatPageStyles.readinessSourceState}>
+                {formatSourceSearchState(source.searchState)}
+              </span>
+              <dl className={chatPageStyles.readinessDetails}>
+                <div>
+                  <dt>저장된 공고</dt>
+                  <dd>{source.programCount}건</dd>
+                </div>
+                <div>
+                  <dt>검색 준비</dt>
+                  <dd>{source.indexReady ? '준비됨' : source.searchState === 'PREPARING' ? '준비 중' : '준비 확인 불가'}</dd>
+                </div>
+                <div>
+                  <dt>성공 동기화</dt>
+                  <dd>{formatSyncTime(source.lastSuccessfulSyncAt)}</dd>
+                </div>
+                <div>
+                  <dt>실패 동기화</dt>
+                  <dd>{formatSyncTime(source.lastFailedSyncAt)}</dd>
+                </div>
+              </dl>
+            </li>
+          ))}
+        </ul>
       </div>
-      {isUnavailable ? (
+      {isUnavailable || readiness.searchState === 'SEARCHABLE_WITH_PARTIAL_SOURCES' ? (
         <button
           type="button"
           className={chatPageStyles.readinessRetryButton}
@@ -549,12 +580,32 @@ function getReadinessNoticeContent(readiness: SupportProgramSearchReadiness) {
         title: '이전 공고 데이터로 검색할 수 있습니다.',
         description: '최신 공고 동기화에 실패했지만, 이전에 저장된 공고는 계속 검색할 수 있습니다.',
       }
+    case 'SEARCHABLE_WITH_PARTIAL_SOURCES': {
+      const searchableSources = readiness.sources
+        .filter((source) => source.searchState === 'SEARCHABLE'
+          || source.searchState === 'SEARCHABLE_WITH_SYNC_FAILURE')
+        .map((source) => source.sourceName)
+      return {
+        title: '일부 제공처의 공고를 검색할 수 있습니다.',
+        description: `현재 검색 범위: ${searchableSources.join(', ')}. 나머지 제공처는 준비가 완료되면 검색에 포함됩니다.`,
+      }
+    }
     case 'UNAVAILABLE':
       return {
         title: '현재 공고 데이터를 검색할 수 없습니다.',
         description: '잠시 후 상태를 다시 확인해 주세요.',
       }
   }
+}
+
+function formatSourceSearchState(state: SupportProgramSourceSearchState) {
+  const labels: Record<SupportProgramSourceSearchState, string> = {
+    PREPARING: '초기 준비 중',
+    SEARCHABLE: '검색 가능',
+    SEARCHABLE_WITH_SYNC_FAILURE: '이전 공고 검색 가능 · 최신 동기화 실패',
+    UNAVAILABLE: '검색 불가',
+  }
+  return labels[state]
 }
 
 function formatSyncTime(value: string | null) {

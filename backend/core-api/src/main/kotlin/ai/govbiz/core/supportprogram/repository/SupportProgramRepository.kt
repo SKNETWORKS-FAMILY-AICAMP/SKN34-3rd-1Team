@@ -30,14 +30,15 @@ class SupportProgramRepository(
 
     @Transactional
     fun upsert(catalogProgram: CatalogSupportProgram) {
+        requireSourceCode(catalogProgram.program.sourceCode)
         supportProgramMapper.upsert(catalogProgram.toDbRow())
     }
 
-    /** 기업마당의 완전한 최신 목록으로 기존 기업마당 데이터의 노출 상태와 내용을 원자적으로 갱신합니다. */
+    /** 제공처의 완전한 최신 목록으로 해당 제공처 데이터의 노출 상태와 내용을 원자적으로 갱신합니다. */
     @Transactional
-    fun synchronizeBizInfo(programs: List<CatalogSupportProgram>) {
-        requireBizInfoPrograms(programs)
-        replaceBizInfoSnapshot(programs)
+    fun synchronizeSource(sourceCode: String, programs: List<CatalogSupportProgram>) {
+        requireSourcePrograms(sourceCode, programs)
+        replaceSourceSnapshot(sourceCode, programs)
     }
 
     /**
@@ -47,16 +48,18 @@ class SupportProgramRepository(
      * 끝나더라도 최신 세대만 카탈로그를 공개하게 합니다.
      */
     @Transactional
-    fun startBizInfoSyncGeneration(): Long {
-        supportProgramMapper.insertSyncGenerationIfAbsent(BIZINFO_SOURCE_CODE)
+    fun startSyncGeneration(sourceCode: String): Long {
+        requireSourceCode(sourceCode)
+        supportProgramMapper.insertSyncGenerationIfAbsent(sourceCode)
         val currentGeneration = requireNotNull(
-            supportProgramMapper.lockLatestStartedGeneration(BIZINFO_SOURCE_CODE),
-        ) { "BizInfo sync generation row was not created" }
-        check(currentGeneration < Long.MAX_VALUE) { "BizInfo sync generation overflow" }
+            supportProgramMapper.lockLatestStartedGeneration(sourceCode),
+        ) { "$sourceCode sync generation row was not created" }
+        check(currentGeneration < Long.MAX_VALUE) { "$sourceCode sync generation overflow" }
         val nextGeneration = currentGeneration + 1
         check(
-            supportProgramMapper.updateLatestStartedGeneration(BIZINFO_SOURCE_CODE, nextGeneration) == 1,
-        ) { "BizInfo sync generation was not updated" }
+            supportProgramMapper.updateLatestStartedGeneration(sourceCode, nextGeneration) == 1,
+        ) { "$sourceCode sync generation was not updated" }
+        supportProgramMapper.insertSyncStatusIfAbsent(sourceCode)
         return nextGeneration
     }
 
@@ -67,19 +70,20 @@ class SupportProgramRepository(
      * 더 최신 실행의 결과를 덮어쓰지 못하게 합니다.
      */
     @Transactional
-    fun publishBizInfoSnapshotIfCurrent(
+    fun publishSnapshotIfCurrent(
+        sourceCode: String,
         programs: List<CatalogSupportProgram>,
         generation: Long,
     ): Boolean {
-        requireBizInfoPrograms(programs)
+        requireSourcePrograms(sourceCode, programs)
         val latestGeneration = requireNotNull(
-            supportProgramMapper.lockLatestStartedGeneration(BIZINFO_SOURCE_CODE),
-        ) { "BizInfo sync generation row does not exist" }
+            supportProgramMapper.lockLatestStartedGeneration(sourceCode),
+        ) { "$sourceCode sync generation row does not exist" }
         if (latestGeneration != generation) return false
 
-        replaceBizInfoSnapshot(programs)
+        replaceSourceSnapshot(sourceCode, programs)
         supportProgramMapper.upsertSyncSuccess(
-            sourceCode = BIZINFO_SOURCE_CODE,
+            sourceCode = sourceCode,
             generation = generation,
             catalogFingerprint = SupportProgramCatalogFingerprintHelper.calculate(programs),
             programCount = programs.size,
@@ -90,31 +94,37 @@ class SupportProgramRepository(
 
     /** 색인 복구가 읽은 공개 스냅샷과 상태 행이 아직 같을 때만 준비 완료를 기록합니다. */
     @Transactional
-    fun markBizInfoIndexReadyIfPublishedSnapshotMatches(
+    fun markIndexReadyIfPublishedSnapshotMatches(
+        sourceCode: String,
         publishedGeneration: Long,
         expectedCatalogFingerprint: String,
         expectedProgramCount: Int,
-    ): Boolean =
-        supportProgramMapper.markSyncIndexReady(
-            sourceCode = BIZINFO_SOURCE_CODE,
+    ): Boolean {
+        requireSourceCode(sourceCode)
+        return supportProgramMapper.markSyncIndexReady(
+            sourceCode = sourceCode,
             publishedGeneration = publishedGeneration,
             catalogFingerprint = expectedCatalogFingerprint,
             programCount = expectedProgramCount,
         ) == 1
+    }
 
     /** 색인 복구가 읽은 공개 스냅샷과 상태 행이 아직 같을 때만 준비 실패를 기록합니다. */
     @Transactional
-    fun markBizInfoIndexNotReadyIfPublishedSnapshotMatches(
+    fun markIndexNotReadyIfPublishedSnapshotMatches(
+        sourceCode: String,
         publishedGeneration: Long,
         expectedCatalogFingerprint: String,
         expectedProgramCount: Int,
-    ): Boolean =
-        supportProgramMapper.markSyncIndexNotReady(
-            sourceCode = BIZINFO_SOURCE_CODE,
+    ): Boolean {
+        requireSourceCode(sourceCode)
+        return supportProgramMapper.markSyncIndexNotReady(
+            sourceCode = sourceCode,
             publishedGeneration = publishedGeneration,
             catalogFingerprint = expectedCatalogFingerprint,
             programCount = expectedProgramCount,
         ) == 1
+    }
 
     /**
      * V4 상태 행이 없던 기존 공개 공고를 전체 색인 복구가 성공한 뒤에만 신뢰 가능한 준비 상태로 채택합니다.
@@ -123,28 +133,32 @@ class SupportProgramRepository(
      * SQL의 조건부 갱신으로 절대 바꾸지 않습니다.
      */
     @Transactional
-    fun bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(programs: List<CatalogSupportProgram>): Boolean {
-        val bizInfoPrograms = programs.filter { it.program.sourceCode == BIZINFO_SOURCE_CODE }
-        if (bizInfoPrograms.isEmpty()) return false
+    fun bootstrapLegacySnapshotAfterSuccessfulRepair(
+        sourceCode: String,
+        programs: List<CatalogSupportProgram>,
+    ): Boolean {
+        requireSourcePrograms(sourceCode, programs)
+        if (programs.isEmpty()) return false
 
-        supportProgramMapper.insertSyncStatusIfAbsent(BIZINFO_SOURCE_CODE)
+        supportProgramMapper.insertSyncStatusIfAbsent(sourceCode)
         return supportProgramMapper.bootstrapSyncStatusIfUntrusted(
-            sourceCode = BIZINFO_SOURCE_CODE,
-            catalogFingerprint = SupportProgramCatalogFingerprintHelper.calculate(bizInfoPrograms),
-            programCount = bizInfoPrograms.size,
+            sourceCode = sourceCode,
+            catalogFingerprint = SupportProgramCatalogFingerprintHelper.calculate(programs),
+            programCount = programs.size,
         ) > 0
     }
 
     /** 현재 세대의 수집 또는 필수 색인 실패만 기록하고, 이전 공개 카탈로그는 변경하지 않습니다. */
     @Transactional
-    fun recordBizInfoSyncFailureIfCurrent(generation: Long): Boolean {
+    fun recordSyncFailureIfCurrent(sourceCode: String, generation: Long): Boolean {
+        requireSourceCode(sourceCode)
         val latestGeneration = requireNotNull(
-            supportProgramMapper.lockLatestStartedGeneration(BIZINFO_SOURCE_CODE),
-        ) { "BizInfo sync generation row does not exist" }
+            supportProgramMapper.lockLatestStartedGeneration(sourceCode),
+        ) { "$sourceCode sync generation row does not exist" }
         if (latestGeneration != generation) return false
 
         supportProgramMapper.upsertSyncFailure(
-            sourceCode = BIZINFO_SOURCE_CODE,
+            sourceCode = sourceCode,
             occurredAt = LocalDateTime.now(clock),
         )
         return true
@@ -154,11 +168,13 @@ class SupportProgramRepository(
     fun findPresentBySourceAndProgramId(
         sourceCode: String,
         sourceProgramId: String,
-    ): CatalogSupportProgram? =
-        supportProgramMapper.findBySourceAndProgramId(sourceCode, sourceProgramId)
+    ): CatalogSupportProgram? {
+        requireSourceCode(sourceCode)
+        return supportProgramMapper.findBySourceAndProgramId(sourceCode, sourceProgramId)
             ?.toCatalogProgram()
+    }
 
-    /** 현재 모든 제공처 스냅샷에 포함된 공고를 검색 후보로 반환합니다. */
+    /** 색인 복구를 위해 준비 상태와 무관하게 모든 제공처의 현재 공고를 반환합니다. */
     fun findPresent(): List<CatalogSupportProgram> =
         java.util.List.copyOf(
             supportProgramMapper
@@ -166,22 +182,37 @@ class SupportProgramRepository(
                 .map { it.toCatalogProgram() },
         )
 
-    /** 기업마당 동기화가 한 번도 성공·실패하지 않았으면 null을 반환합니다. */
-    fun findBizInfoSyncStatus(): SupportProgramSyncStatus? =
-        supportProgramMapper.findSyncStatus(BIZINFO_SOURCE_CODE)?.toSyncStatus()
+    /** 색인이 준비된 제공처의 현재 공고만 하나의 DB 조회로 검색 후보에 포함합니다. */
+    fun findSearchablePresent(): List<CatalogSupportProgram> =
+        java.util.List.copyOf(
+            supportProgramMapper.findSearchablePresent().map { it.toCatalogProgram() },
+        )
+
+    /** 해당 제공처의 동기화 또는 기존 공고 색인 복구가 아직 시작되지 않았으면 null을 반환합니다. */
+    fun findSyncStatus(sourceCode: String): SupportProgramSyncStatus? {
+        requireSourceCode(sourceCode)
+        return supportProgramMapper.findSyncStatus(sourceCode)?.toSyncStatus()
+    }
+
+    /** 저장된 동기화 상태와 상태 행 없이 기존 공고만 남아 있는 제공처의 미확인 상태를 반환합니다. */
+    fun findSyncStatuses(): List<SupportProgramSyncStatus> =
+        java.util.List.copyOf(supportProgramMapper.findSyncStatuses().map { it.toSyncStatus() })
 
     /** 현재 공개된 공고에 연결된 공식 원문 근거 문서를 조회합니다. */
     fun findPresentSourceDocument(
         sourceCode: String,
         sourceProgramId: String,
-    ): SupportProgramSourceDocument? =
-        supportProgramMapper
+    ): SupportProgramSourceDocument? {
+        requireSourceCode(sourceCode)
+        return supportProgramMapper
             .findPresentSourceDocument(sourceCode, sourceProgramId)
             ?.toSourceDocument()
+    }
 
     /** 외부 호출을 끝낸 뒤 짧은 DB transaction으로 공식 원문 근거 문서를 저장합니다. */
     @Transactional
     fun upsertSourceDocument(document: SupportProgramSourceDocument) {
+        requireSourceCode(document.sourceCode)
         supportProgramMapper.upsertSourceDocument(document.toDbRow())
     }
 
@@ -274,25 +305,34 @@ class SupportProgramRepository(
         java.util.List.copyOf(objectMapper.readValue(value, STRING_LIST_TYPE))
 
     private fun sourceNameFor(sourceCode: String): String =
-        if (sourceCode == BIZINFO_SOURCE_CODE) BIZINFO_SOURCE_NAME else sourceCode
+        when (sourceCode) {
+            "BIZINFO" -> "기업마당"
+            "KSTARTUP" -> "K-Startup"
+            else -> sourceCode
+        }
 
-    private fun requireBizInfoPrograms(programs: List<CatalogSupportProgram>) {
-        require(programs.all { it.program.sourceCode == BIZINFO_SOURCE_CODE }) {
-            "BizInfo synchronization accepts only BIZINFO source programs"
+    private fun requireSourceCode(sourceCode: String) {
+        require(SOURCE_CODE_PATTERN.matches(sourceCode)) {
+            "sourceCode must match [A-Z][A-Z0-9_]{0,63}"
         }
     }
 
-    private fun replaceBizInfoSnapshot(programs: List<CatalogSupportProgram>) {
-        supportProgramMapper.markAllNotPresentBySourceCode(BIZINFO_SOURCE_CODE)
+    private fun requireSourcePrograms(sourceCode: String, programs: List<CatalogSupportProgram>) {
+        requireSourceCode(sourceCode)
+        require(programs.all { it.program.sourceCode == sourceCode }) {
+            "$sourceCode synchronization accepts only matching source programs"
+        }
+    }
+
+    private fun replaceSourceSnapshot(sourceCode: String, programs: List<CatalogSupportProgram>) {
+        supportProgramMapper.markAllNotPresentBySourceCode(sourceCode)
         programs.forEach { program ->
             supportProgramMapper.upsert(program.toDbRow())
         }
     }
 
     private companion object {
-        const val BIZINFO_SOURCE_CODE = "BIZINFO"
-        const val BIZINFO_SOURCE_NAME = "기업마당"
-
+        val SOURCE_CODE_PATTERN = Regex("[A-Z][A-Z0-9_]{0,63}")
         val STRING_LIST_TYPE = object : TypeReference<List<String>>() {}
     }
 }

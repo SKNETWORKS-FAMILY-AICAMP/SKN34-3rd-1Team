@@ -22,6 +22,22 @@ afterEach(() => {
 })
 
 describe('useSupportProgramEvidenceQuestionViewModel', () => {
+  it.each(['KSTARTUP', 'OTHERSOURCE'])('blocks %s questions before executing the use case', async (sourceCode) => {
+    const execute = vi.fn()
+    const { result } = renderHook(() => useSupportProgramEvidenceQuestionViewModel(
+      { ...getIdentity(), sourceCode },
+      createEvidenceQuestionUseCase(execute),
+    ))
+
+    act(() => result.current.updateQuestion('신청 대상은 누구인가요?'))
+    expect(result.current.isSupported).toBe(false)
+    expect(result.current.canSubmit).toBe(false)
+    await act(async () => result.current.submitQuestion())
+
+    expect(execute).not.toHaveBeenCalled()
+    expect(result.current.state.status).toBe('not-supported')
+  })
+
   it('does not fetch automatically and sends a trimmed question only after explicit submission', async () => {
     const execute = vi.fn().mockResolvedValue(answerResult())
     const identity = getIdentity()

@@ -116,6 +116,9 @@ export const chatPageStyles = {
   readinessTitle: 'block text-[0.78rem] font-bold',
   readinessDescription: 'mt-[0.25rem] mb-0 leading-[1.45]',
   readinessDetails: 'mt-[0.55rem] mb-0 grid grid-cols-2 gap-x-4 gap-y-1 text-[0.7rem] leading-[1.4] max-chat:grid-cols-1',
+  readinessSources: 'mt-2 mb-0 grid list-none grid-cols-2 gap-2 p-0 max-chat:grid-cols-1',
+  readinessSource: 'min-w-0 rounded-md border border-current/15 px-2 py-2',
+  readinessSourceState: 'mt-1 block text-[0.7rem]',
   readinessRetryButton:
     'shrink-0 cursor-pointer rounded-[0.45rem] border border-[#dcaab2] bg-white px-2 py-[0.3rem] text-[0.72rem] font-bold text-[#8f3340]',
   readinessRefreshing: 'mt-[0.5rem] block text-[0.7rem] text-[#6471a0]',

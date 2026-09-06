@@ -42,8 +42,9 @@ export function useSupportProgramEvidenceQuestionViewModel(
   } | null>(null)
   const latestRequestId = useRef(0)
   const questionLength = question.length
+  const isSupported = sourceCode === 'BIZINFO'
   const isAnswering = state.status === 'loading'
-  const canSubmit = !isAnswering
+  const canSubmit = isSupported && !isAnswering
     && question.trim().length > 0
     && questionLength <= maximumSupportProgramEvidenceQuestionLength
 
@@ -75,6 +76,10 @@ export function useSupportProgramEvidenceQuestionViewModel(
   }
 
   async function submitQuestion(): Promise<void> {
+    if (!isSupported) {
+      setState({ status: 'not-supported' })
+      return
+    }
     const normalizedQuestion = question.trim()
     if (normalizedQuestion.length === 0) {
       setState({
@@ -131,6 +136,7 @@ export function useSupportProgramEvidenceQuestionViewModel(
     canSubmit,
     cancelQuestion,
     isAnswering,
+    isSupported,
     question,
     questionLength,
     state,

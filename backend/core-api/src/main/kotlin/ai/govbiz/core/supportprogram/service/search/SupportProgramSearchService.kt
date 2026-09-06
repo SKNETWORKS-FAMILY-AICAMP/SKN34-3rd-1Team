@@ -55,7 +55,7 @@ class SupportProgramSearchService(
         referenceDate: LocalDate? = null,
     ): SearchExecution {
         val query = rawQuery?.trim().orEmpty()
-        val presentPrograms = supportProgramRepository.findPresent().let { programs ->
+        val presentPrograms = supportProgramRepository.findSearchablePresent().let { programs ->
             referenceDate?.let { date -> programs.map { it.withStatusAt(date) } } ?: programs
         }
         val eligiblePrograms = presentPrograms
