@@ -59,6 +59,9 @@ OPENAI_API_KEY=발급받은_OpenAI_API_키
 | `LLM_MODEL_TIMEOUT_SECONDS` | `25.0` | OpenAI 모델 호출 한 번의 제한시간(초) |
 | `LLM_RUN_TIMEOUT_SECONDS` | `30.0` | Agent의 `Runner.run` 실행 제한시간(초) |
 | `AI_SERVICE_READ_TIMEOUT` | `35s` | Core API의 AI Health·점수화·원문 근거 답변 읽기 제한시간 |
+| `SUPPORT_PROGRAM_REQUEST_PER_CLIENT_PER_MINUTE` | `6` | 검색·원문 질문이 공유하는 접속 주소별 최근 60초 허용 요청 수 |
+| `SUPPORT_PROGRAM_REQUEST_GLOBAL_PER_MINUTE` | `60` | Core 프로세스 전체의 최근 60초 허용 요청 수 |
+| `SUPPORT_PROGRAM_REQUEST_MAX_CONCURRENT` | `4` | 두 API의 최대 동시 처리 수. 초과 시 대기 없이 거절 |
 | `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | Core API의 색인·의미 검색 요청 제한시간 |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | 공고·질의 임베딩 모델 |
 | `OPENAI_EMBEDDING_DIMENSIONS` | `1536` | 임베딩 차원 수. 모델·차원이 바뀌면 별도 컬렉션을 사용 |
@@ -158,6 +161,10 @@ Docker Engine·Compose v2·Bash·curl이 필요합니다. 다음 스크립트는
 
 스텁 주소와 더미 인증키를 강제하므로 개인 키를 외부로 전송하거나 실제 OpenAI 비용을 발생시키지 않습니다.
 기업마당 스텁은 디코딩된 키도 확인합니다. 기업마당 동기화와 색인은 `PT2S` 주기로 실행합니다.
+장애·복구 확인을 위해 같은 API를 반복 호출하므로 스크립트는 요청량을 주소별·전체 각각 1,000건,
+동시 처리 4건으로 설정합니다. 이는 서비스 연결 검증이며 기본 6건·60건의 한도 도달이나 적정 처리량을
+검증하는 부하 테스트는 아닙니다. 낮은 한도·혼잡·오류 화면은 Core·Frontend 회귀 테스트에서 검증합니다.
+설정 범위와 프록시/NAT 공유 등 운영 제약은 [요청 제한 안내](../docs/support-program-request-limits.md)를 참고하세요.
 검증용 MySQL·Qdrant는 기본 Host 포트 `13306`·`16333`을 사용하며 각각
 `VERIFY_COMPOSE_MYSQL_HOST_PORT`·`VERIFY_COMPOSE_QDRANT_HOST_PORT`로 변경할 수 있습니다.
 

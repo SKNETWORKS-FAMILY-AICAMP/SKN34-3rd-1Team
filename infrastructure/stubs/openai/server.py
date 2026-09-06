@@ -43,19 +43,24 @@ class Handler(BaseHTTPRequestHandler):
                 content = user["content"]
                 text = content if isinstance(content, str) else "".join(part.get("text", "") for part in content)
                 payload = json.loads(text)
-            rankings = []
+            # Match the Agent's keyed assessment contract. The production Service
+            # attaches program IDs and calculates totals; the model does neither.
+            rankings = {}
             for candidate in payload["candidates"]:
                 relevant = topic(candidate["title"] + " " + candidate["summary"]) == topic(payload["originalQuery"])
-                rankings.append({
-                    "programId": candidate["id"], "semanticRelevance": 40 if relevant else 0,
-                    "targetFit": 25 if relevant else 0,
-                    "targetEligibility": "MATCH" if relevant else "UNKNOWN",
-                    "regionFit": 15 if relevant else 0,
-                    "regionEligibility": "MATCH" if relevant else "UNKNOWN",
+                rankings[candidate["id"]] = {
+                    "semanticRelevance": 40 if relevant else 0,
+                    "targetAssessment": {
+                        "eligibility": "MATCH" if relevant else "UNKNOWN",
+                        "score": 25 if relevant else 0,
+                    },
+                    "regionAssessment": {
+                        "eligibility": "MATCH" if relevant else "UNKNOWN",
+                        "score": 15 if relevant else 0,
+                    },
                     "applicationStatusFit": 10 if relevant else 0, "supportTypeFit": 10 if relevant else 0,
-                    "totalScore": 100 if relevant else 0,
                     "recommendationReasons": [candidate["title"][:100]],
-                })
+                }
             self.respond(200, {
                 "id": "resp_fixture", "created_at": 0, "object": "response", "model": request["model"],
                 "error": None, "incomplete_details": None, "status": "completed", "parallel_tool_calls": False,
