@@ -4,6 +4,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
+import { SupportProgramRequestError } from '../../../../domain/errors/SupportProgramRequestError'
 import type { SupportProgramEvidenceAnswer } from '../../../../domain/entities/SupportProgramEvidenceAnswer'
 import type {
   SupportProgramEvidenceQuestionResult,
@@ -15,7 +16,10 @@ import {
   useSupportProgramEvidenceQuestionViewModel,
 } from './useSupportProgramEvidenceQuestionViewModel'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 describe('useSupportProgramEvidenceQuestionViewModel', () => {
   it('does not fetch automatically and sends a trimmed question only after explicit submission', async () => {
@@ -108,6 +112,29 @@ describe('useSupportProgramEvidenceQuestionViewModel', () => {
     pending.resolve(answerResult())
     await act(async () => request)
     expect(result.current.state).toEqual({ status: 'cancelled' })
+  })
+
+  it.each([
+    ['rate-limited', 12, '짧은 시간에 요청이 많아 잠시 제한되었습니다. 약 12초 후 직접 다시 시도해 주세요.'],
+    ['busy', 3, '현재 다른 요청을 처리하고 있어 새 요청을 시작할 수 없습니다. 약 3초 후 직접 다시 시도해 주세요.'],
+    ['busy', null, '현재 다른 요청을 처리하고 있어 새 요청을 시작할 수 없습니다. 잠시 후 직접 다시 시도해 주세요.'],
+  ] as const)('shows %s feedback and keeps the evidence question for manual retry only', async (reason, seconds, message) => {
+    vi.useFakeTimers()
+    const execute = vi.fn()
+      .mockRejectedValueOnce(new SupportProgramRequestError(reason, seconds))
+      .mockResolvedValueOnce(answerResult())
+    const { result } = renderHook(() => useSupportProgramEvidenceQuestionViewModel(getIdentity(), createEvidenceQuestionUseCase(execute)))
+    act(() => result.current.updateQuestion('신청 대상은 누구인가요?'))
+    await act(async () => result.current.submitQuestion())
+    expect(result.current.state).toEqual({ status: reason, message })
+    expect(result.current.question).toBe('신청 대상은 누구인가요?')
+    expect(result.current.canSubmit).toBe(true)
+    await act(async () => vi.advanceTimersByTimeAsync(60_000))
+    expect(execute).toHaveBeenCalledOnce()
+
+    await act(async () => result.current.submitQuestion())
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(result.current.state.status).toBe('answered')
   })
 
   it('aborts a question when the selected program changes and ignores the stale response', async () => {

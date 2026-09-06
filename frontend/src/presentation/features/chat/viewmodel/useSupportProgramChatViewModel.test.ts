@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createAppStore } from '../../../../app/store'
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
+import { SupportProgramRequestError } from '../../../../domain/errors/SupportProgramRequestError'
 import type { SearchSupportProgramsUseCase } from '../../../../domain/usecases/SearchSupportProgramsUseCase'
 import {
   draftChanged,
@@ -156,6 +157,38 @@ describe('Redux chat flow', () => {
     expect(chat.draft).toBe('서울')
     expect(chat.searchError).toBe('지원사업을 검색하지 못했습니다. 잠시 후 다시 시도해 주세요.')
     expect(chat.searchError).not.toContain('private server detail')
+  })
+
+  it.each([
+    ['rate-limited', 12, '짧은 시간에 요청이 많아 잠시 제한되었습니다. 약 12초 후 직접 다시 시도해 주세요.'],
+    ['busy', 3, '현재 다른 요청을 처리하고 있어 새 요청을 시작할 수 없습니다. 약 3초 후 직접 다시 시도해 주세요.'],
+    ['rate-limited', null, '짧은 시간에 요청이 많아 잠시 제한되었습니다. 잠시 후 직접 다시 시도해 주세요.'],
+  ] as const)('keeps the conversation and query for manual retry after %s', async (reason, seconds, message) => {
+    vi.useFakeTimers()
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ query: '서울', programs: [supportPrograms[0]] })
+      .mockRejectedValueOnce(new SupportProgramRequestError(reason, seconds))
+      .mockResolvedValueOnce({ query: '수출', programs: [supportPrograms[3]] })
+    const store = createAppStore()
+    const { result } = renderChatViewModel(store, createSearchUseCase(execute))
+    act(() => result.current.updateDraft('서울'))
+    await act(async () => result.current.submitMessage())
+    const priorMessages = store.getState().chat.messages
+
+    act(() => result.current.updateDraft('수출'))
+    await act(async () => result.current.submitMessage())
+    expect(result.current.searchError).toBe(message)
+    expect(result.current.draft).toBe('수출')
+    expect(result.current.canRetrySearch).toBe(true)
+    expect(store.getState().chat.messages.slice(0, 3)).toEqual(priorMessages)
+    expect(store.getState().chat.messages.at(-1)?.text).toBe('수출')
+
+    await act(async () => vi.advanceTimersByTimeAsync(60_000))
+    expect(execute).toHaveBeenCalledTimes(2)
+    await act(async () => result.current.submitMessage())
+    expect(execute).toHaveBeenCalledTimes(3)
+    expect(store.getState().chat.messages.slice(0, 3)).toEqual(priorMessages)
+    expect(result.current.searchError).toBeNull()
   })
 
   it('cancels a pending search, restores its query, and clears the pending state', async () => {

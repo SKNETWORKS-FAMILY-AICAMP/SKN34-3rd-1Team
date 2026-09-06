@@ -137,7 +137,7 @@ function EvidenceQuestionFeedback({
     )
   }
 
-  if (state.status === 'validation-failed') {
+  if (state.status === 'validation-failed' || state.status === 'rate-limited' || state.status === 'busy') {
     return <p className={supportProgramDetailStyles.evidenceError} role="alert">{state.message}</p>
   }
 
@@ -159,7 +159,7 @@ function EvidenceQuestionFeedback({
 function evidenceFeedbackMessage(
   status: Exclude<
     ReturnType<typeof useSupportProgramEvidenceQuestionViewModel>['state']['status'],
-    'idle' | 'loading' | 'answered' | 'validation-failed'
+    'idle' | 'loading' | 'answered' | 'validation-failed' | 'rate-limited' | 'busy'
   >,
 ) {
   const messages = {

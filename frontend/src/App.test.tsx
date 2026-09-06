@@ -228,6 +228,8 @@ describe('App navigation', () => {
     }, '공고 원문에서 이 질문에 답할 만큼 충분한 근거를 찾지 못했습니다. 원문 공고를 확인해 주세요.'],
     [new Response('', { status: 422 }), '이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 원문 공고에서 확인해 주세요.'],
     [new Response('', { status: 503 }), '원문 근거 답변을 지금 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.'],
+    [requestRejectedResponse(429), '짧은 시간에 요청이 많아 잠시 제한되었습니다. 약 12초 후 직접 다시 시도해 주세요.'],
+    [requestRejectedResponse(503), '현재 다른 요청을 처리하고 있어 새 요청을 시작할 수 없습니다. 약 12초 후 직접 다시 시도해 주세요.'],
   ])('원문 답변의 응답 상태에 안전한 안내를 표시한다', async (answerResponse, expectedMessage) => {
     const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
     const fetchMock = vi.fn()
@@ -235,16 +237,52 @@ describe('App navigation', () => {
       .mockResolvedValueOnce(answerResponse instanceof Response ? answerResponse : jsonResponse(answerResponse))
     vi.stubGlobal('fetch', fetchMock)
 
-    renderApp(
-      createAppStore(),
-      `/support-programs/detail?sourceCode=${detail.sourceCode}&sourceProgramId=${detail.id}`,
-    )
+    // 상세 조회 후 질문 화면의 초기 effect까지 끝내고 사용자 입력을 시작합니다.
+    await act(async () => {
+      renderApp(
+        createAppStore(),
+        `/support-programs/detail?sourceCode=${detail.sourceCode}&sourceProgramId=${detail.id}`,
+      )
+    })
 
     const question = await screen.findByRole('textbox', { name: '공고 원문에 질문하기' })
     fireEvent.change(question, { target: { value: '신청 대상은 누구인가요?' } })
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: '질문하고 근거 받기' }) as HTMLButtonElement).disabled).toBe(false)
+    })
     fireEvent.submit(question.closest('form')!)
 
     expect(await screen.findByText(expectedMessage)).toBeTruthy()
+    expect((question as HTMLTextAreaElement).value).toBe('신청 대상은 누구인가요?')
+    expect((screen.getByRole('button', { name: '질문하고 근거 받기' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByText('private server detail')).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    [429, '짧은 시간에 요청이 많아 잠시 제한되었습니다. 약 12초 후 직접 다시 시도해 주세요.'],
+    [503, '현재 다른 요청을 처리하고 있어 새 요청을 시작할 수 없습니다. 약 12초 후 직접 다시 시도해 주세요.'],
+  ])('검색 HTTP %s를 장애와 구별하여 안내하고 직접 다시 검색할 수 있다', async (status, message) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(requestRejectedResponse(status))
+      .mockResolvedValueOnce(jsonResponse({ query: '서울 AI', programs: [supportPrograms[0]] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const store = createAppStore()
+    renderApp(store)
+
+    const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    fireEvent.change(searchInput, { target: { value: '서울 AI' } })
+    fireEvent.submit(searchInput.closest('form')!)
+    expect((await screen.findByText(message)).closest('[role="alert"]')).toBeTruthy()
+    expect((searchInput as HTMLTextAreaElement).value).toBe('서울 AI')
+    expect(screen.queryByText('private server detail')).toBeNull()
+    const rejectedMessages = [...store.getState().chat.messages]
+    expect(fetchMock).toHaveBeenCalledOnce()
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 검색' }))
+    await screen.findByRole('link', { name: '상세 조건 보기' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(store.getState().chat.messages.slice(0, rejectedMessages.length)).toEqual(rejectedMessages)
   })
 
   it('제공처가 다른 동일 원본 ID 공고를 각각 표시하고 올바른 상세 식별자로 조회한다', async () => {
@@ -746,6 +784,18 @@ function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function requestRejectedResponse(status: number) {
+  return new Response(JSON.stringify({
+    type: 'about:blank', title: 'Request rejected', status,
+    detail: 'private server detail', instance: '/api/v1/support-programs/search',
+    code: status === 429 ? 'SUPPORT_PROGRAM_RATE_LIMITED' : 'SUPPORT_PROGRAM_BUSY',
+    retryAfterSeconds: 12,
+  }), {
+    status,
+    headers: { 'Content-Type': 'application/problem+json', 'Retry-After': '12' },
   })
 }
 

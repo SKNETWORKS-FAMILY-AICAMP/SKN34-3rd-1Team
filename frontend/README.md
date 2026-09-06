@@ -99,7 +99,20 @@ Redux에는 직렬화 가능한 데이터만 저장하며 `AbortController`는 V
 - 한글 IME 조합 중 Enter와 Safari `keyCode 229` Enter 제출 차단
 - Enter 전송, Shift+Enter 줄바꿈
 - 검색 실패 시 내부 예외 대신 안전한 오류 문구 표시
+- 검색·원문 근거 질문의 요청량 제한과 동시 처리 혼잡을 일반 장애와 구별하여 안내
 - 검색이 70초를 넘으면 요청 취소, 검색어 복원과 재시도 허용
+
+요청량 제한은 HTTP `429`와 `SUPPORT_PROGRAM_RATE_LIMITED`, 동시 처리 혼잡은 HTTP `503`과
+`SUPPORT_PROGRAM_BUSY`가 일치하는 `application/problem+json` 응답에만 적용합니다. Data Layer가
+계약을 검증하고 Repository가 HTTP 코드 없는 Domain `SupportProgramRequestError`로 변환합니다.
+ViewModel은 서버의 `detail` 대신 고정된 한국어 문구를 표시합니다. 알 수 없거나 잘못된 `503`
+응답은 기존 장애 처리로 유지합니다.
+
+본문 `retryAfterSeconds`가 정수 `1~60`이고 읽을 수 있는 `Retry-After` 헤더와 일치할 때만
+권장 대기 시간을 표시합니다. 헤더가 없거나 두 값이 잘못되면 초 단위 안내를 생략합니다.
+별도 origin의 Core API는 `Retry-After`를 CORS 노출 헤더에 포함해야 합니다. 자동 재시도나
+카운트다운은 없으며, 검색 대화·검색어·근거 질문을 유지한 채 사용자가 직접 재시도합니다.
+화면에서 취소해도 이미 시작된 서버의 AI 실행이 즉시 중단된다는 뜻은 아닙니다.
 
 검색 제한 70초는 Core의 순차적인 의미 검색 읽기 제한 30초와 점수화 읽기 제한 35초에 여유를 둔 값입니다.
 서버 제한시간을 변경할 때도 이 순차 호출 시간을 고려해야 하며, 70초는 응답시간 목표가 아닙니다.

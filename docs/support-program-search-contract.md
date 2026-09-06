@@ -342,6 +342,12 @@ Service가 만든 후보 최대 20개와 최종 추천 최대 5개의 ID를 기�
 
 ## 비밀정보와 오류 처리
 
+검색과 근거 답변은 같은 공개 요청 한도를 사용합니다. 기본값은 한 Core 프로세스에서 접속 주소별
+최근 60초 6건·전체 60건·동시 4건입니다. 요청량 초과는 429, 동시 한도 초과는 503이며
+`Retry-After` 헤더와 `retryAfterSeconds` 본문 필드(동일한 정수 1~60)를 제공합니다.
+두 오류는 `Cache-Control: no-store`이고, 거절된 요청은 DB·외부 호출을 시작하지 않습니다.
+상세 정책과 프록시·다중 서버 한계는 [요청 제한 계약](support-program-request-limits.md)에 있습니다.
+
 `DATA_GO_KR_SERVICE_KEY`는 기업마당 동기화를 위해 Core에, `OPENAI_API_KEY`는 AI Service에만
 주입합니다. 기업마당 동기화 실패는 사용자 검색 요청의 오류가 아니라 백그라운드 동기화 실패로
 처리하며, 이전 MySQL 카탈로그가 있으면 계속 검색합니다. 첫 동기화 전이거나 카탈로그가 비어 있으면
@@ -350,6 +356,8 @@ Service가 만든 후보 최대 20개와 최종 추천 최대 5개의 ID를 기�
 
 | 상황 | HTTP | `code` |
 |---|---:|---|
+| 검색·근거 답변의 주소별 또는 전체 요청량 한도 초과 | 429 | `SUPPORT_PROGRAM_RATE_LIMITED` |
+| 검색·근거 답변의 동시 처리 한도 초과 | 503 | `SUPPORT_PROGRAM_BUSY` |
 | `query`가 500자를 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 상세 조회의 `sourceCode`·`sourceProgramId`가 누락·형식·공백·길이 제한을 위반함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 원문 근거 질문의 `sourceCode`·`sourceProgramId`·`question`이 누락·형식·공백·길이 제한을 위반함 | 400 | `REQUEST_VALIDATION_FAILED` |

@@ -4,6 +4,8 @@ import { appContainer } from '../../../../app/appContainer'
 import type { SupportProgramEvidenceAnswer } from '../../../../domain/entities/SupportProgramEvidenceAnswer'
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import type { AskSupportProgramEvidenceQuestionUseCase } from '../../../../domain/usecases/AskSupportProgramEvidenceQuestionUseCase'
+import { SupportProgramRequestError } from '../../../../domain/errors/SupportProgramRequestError'
+import { supportProgramRequestFailureMessage } from './supportProgramRequestFailureMessage'
 
 export const maximumSupportProgramEvidenceQuestionLength = 500
 
@@ -20,6 +22,7 @@ export type SupportProgramEvidenceQuestionState =
   | { status: 'not-supported' }
   | { status: 'unavailable' }
   | { status: 'failed' }
+  | { status: 'rate-limited' | 'busy'; message: string }
   | { status: 'cancelled' }
   | { status: 'validation-failed'; message: string }
 
@@ -112,9 +115,11 @@ export function useSupportProgramEvidenceQuestionViewModel(
       setState(result.outcome === 'not-supported'
         ? { status: 'not-supported' }
         : { status: 'unavailable' })
-    } catch {
+    } catch (error) {
       if (controller.signal.aborted || activeRequest.current?.requestId !== requestId) return
-      setState({ status: 'failed' })
+      setState(error instanceof SupportProgramRequestError
+        ? { status: error.reason, message: supportProgramRequestFailureMessage(error) }
+        : { status: 'failed' })
     } finally {
       if (activeRequest.current?.requestId === requestId) {
         activeRequest.current = null

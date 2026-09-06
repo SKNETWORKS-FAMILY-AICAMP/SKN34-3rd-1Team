@@ -31,6 +31,11 @@ export AI_SEMANTIC_SEARCH_READ_TIMEOUT="30s"
 export LLM_MODEL_TIMEOUT_SECONDS="25.0"
 export LLM_RUN_TIMEOUT_SECONDS="30.0"
 export AI_SERVICE_READ_TIMEOUT="35s"
+# 이 스모크 테스트는 장애 상태를 반복 폴링하므로 공개 요청 한도를 별도로 높인다.
+# 낮은 한도·동시 거절·우회 방지는 Core/Frontend 회귀 테스트에서 검증한다.
+export SUPPORT_PROGRAM_REQUEST_PER_CLIENT_PER_MINUTE="1000"
+export SUPPORT_PROGRAM_REQUEST_GLOBAL_PER_MINUTE="1000"
+export SUPPORT_PROGRAM_REQUEST_MAX_CONCURRENT="4"
 # The verification stack connects to MySQL through the Compose network. Give its
 # host-only port a separate default so a developer's local MySQL on 3306 does
 # not prevent the smoke test from starting.
