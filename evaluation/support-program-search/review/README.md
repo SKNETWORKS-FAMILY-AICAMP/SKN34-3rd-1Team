@@ -1,7 +1,8 @@
 # 실데이터 검색 관련성 판정: AI / 혼합 / 사람
 
 기존 작업을 이어받는 개발자는 [현재 공유 자료 안내](../runs/support-program-catalog-20260906-v1/README.md)부터
-확인한다. 고정 공고·질문·1,605개 AI 판정과 세 모드의 선택 결과가 Git 포함 대상이므로 처음부터 판정할 필요가 없다.
+확인한다. 고정 공고·질문·최초 1,605개 및 추가 210개 AI 판정과 모드 선택 결과가 Git 포함 대상이다.
+처음부터 판정할 필요가 없다. 현재 합의 303건·미확정 18건이며 실제 검색 측정은 별도다.
 
 ## 검토 방식 선택
 
@@ -80,6 +81,39 @@ python3 -B evaluation/support-program-search/review/select-review-mode.py \
 
 사람 확인 후 저장한 JSON을 `--human-review /path/saved-review.json`으로 넣고 같은 모드를 새 출력 경로에 다시 선택한다.
 새 페이지는 기존 검토 화면과 저장 공간을 분리하며 기존 브라우저 입력을 덮어쓰지 않는다. 이어갈 때 저장한 JSON을 전달한다.
+
+### 미확정 항목의 한 차례 추가 판정
+
+이번 공유 실행은 `codex-ai-recheck-v1/review-plan.md`에 고정한 범위로만 추가 검토했다.
+`recheck-ai-review.py`는 완료된 최초 AI 판정의 **미확정 전부**를 재검토 대상으로 검증한다.
+질문·본문·기준일·정책은 그대로 두며, 원래 실행과 다른 다섯 작업 ID가 필요하다.
+기존 279개 합의는 유지하고 대상 42개는 새 다섯 표로 교체한다. 10표 합산·선별·반복 합의 유도는 하지 않는다.
+`roundLimit: 1`이며 추가 판정 파일을 다시 부모로 사용하는 것은 거부한다.
+
+저장된 판정을 새 파일로 재수집하는 예시다. 모델/API를 호출하지 않는다.
+
+~~~bash
+RUN=evaluation/support-program-search/runs/support-program-catalog-20260906-v1
+POOL="$RUN/review-v2"
+RECHECK="$POOL/codex-ai-recheck-v1"
+
+python3 -B evaluation/support-program-search/review/recheck-ai-review.py \
+  --fixture "$RUN/fixture-unlabeled.json" --query-set "$RUN/query-set.json" \
+  --review-pool "$POOL/review-pool.csv" --pool-manifest "$POOL/review-pool-manifest.json" \
+  --base-ai-review "$POOL/codex-ai-v1/ai-review.json" \
+  --prepared-dir "$RECHECK" --assignments "$RECHECK/assignments.json" \
+  --judge-file "$RECHECK/judge-1.jsonl" --judge-file "$RECHECK/judge-2.jsonl" \
+  --judge-file "$RECHECK/judge-3.jsonl" --judge-file "$RECHECK/judge-4.jsonl" \
+  --judge-file "$RECHECK/judge-5.jsonl" --output "$POOL/local-recollected-recheck.json"
+~~~
+
+현재 결과를 선택하려면 기존 `select-review-mode.py`에
+`--ai-recheck "$RECHECK/ai-recheck.json"`을 추가하고 **새 출력 디렉터리**를 쓴다.
+AI-only·혼합 모드만 이 옵션을 받는다. 사람 모드에는 AI 입력을 전달하지 않는다.
+선택 v2의 `aiRecheckSha256`과 대상 행의 `provenance.recheckSha256`에 출처가 남고,
+`apply-labels.py`도 최종 평가 자료의 source hash로 전달한다. 기존 선택 v1도 계속 지원한다.
+전체 오프라인 재현은 `verify-shared-run.py --run-dir "$RUN" --with-recheck`로 확인한다.
+원인 감사는 독립 표결 완료 뒤 AI가 분석한 기록이며, 표결을 덮어쓰거나 사람 확인으로 취급하지 않는다.
 
 ### 최종 검색 평가와 재사용
 

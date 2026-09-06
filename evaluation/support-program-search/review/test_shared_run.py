@@ -16,9 +16,12 @@ RUN = ROOT / "runs" / "support-program-catalog-20260906-v1"
 
 
 class SharedRunVerificationTest(unittest.TestCase):
-    def run_cli(self, path):
+    def run_cli(self, path, with_recheck=False):
+        command = [sys.executable, "-B", str(SCRIPT), "--run-dir", str(path)]
+        if with_recheck:
+            command.append("--with-recheck")
         return subprocess.run(
-            [sys.executable, "-B", str(SCRIPT), "--run-dir", str(path)],
+            command,
             capture_output=True, text=True, check=False,
         )
 
@@ -69,6 +72,85 @@ class SharedRunVerificationTest(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(RUN / relative, target)
         return copy
+
+    def copied_recheck_run(self, directory):
+        copy = self.copied_run(directory)
+        recheck = RUN / "review-v2" / "codex-ai-recheck-v1"
+        target = copy / "review-v2" / "codex-ai-recheck-v1"
+        target.mkdir(parents=True, exist_ok=True)
+        for name in ("prepared.json", "policy.json", "blind-input.jsonl", "assignments.json", "ai-recheck.json", "cause-audit.json", "review-plan.md"):
+            shutil.copyfile(recheck / name, target / name)
+        for number in range(1, 6):
+            shutil.copyfile(recheck / f"judge-{number}.jsonl", target / f"judge-{number}.jsonl")
+        for mode in ("ai", "hybrid"):
+            source_dir = RUN / "review-v2" / f"selected-{mode}-recheck-v1"
+            destination = copy / "review-v2" / f"selected-{mode}-recheck-v1"
+            destination.mkdir(parents=True, exist_ok=True)
+            for name in ("selection.json", "reviewed.csv", "review-progress.json"):
+                shutil.copyfile(source_dir / name, destination / name)
+        return copy
+
+    def test_recheck_missing_artifact_fails_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            copy = self.copied_recheck_run(directory)
+            path = copy / "review-v2" / "codex-ai-recheck-v1" / "blind-input.jsonl"
+            path.unlink()
+            result = self.run_cli(copy, with_recheck=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads(result.stdout)["status"], "failed")
+
+    def test_recheck_blind_input_tamper_fails_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            copy = self.copied_recheck_run(directory)
+            path = copy / "review-v2" / "codex-ai-recheck-v1" / "blind-input.jsonl"
+            path.write_bytes(path.read_bytes() + b"\n")
+            result = self.run_cli(copy, with_recheck=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads(result.stdout)["status"], "failed")
+
+    def test_recheck_selected_v2_tamper_fails_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            copy = self.copied_recheck_run(directory)
+            path = copy / "review-v2" / "selected-ai-recheck-v1" / "selection.json"
+            value = json.loads(path.read_text(encoding="utf-8"))
+            value["evaluableQueryCount"] += 1
+            path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+            result = self.run_cli(copy, with_recheck=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads(result.stdout)["status"], "failed")
+
+    def test_recheck_cause_audit_rejects_unknown_judge_empty_quote_and_duplicate(self):
+        cases = ("unknown", "empty", "duplicate")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                copy = self.copied_recheck_run(directory)
+                path = copy / "review-v2" / "codex-ai-recheck-v1" / "cause-audit.json"
+                value = json.loads(path.read_text(encoding="utf-8"))
+                if case == "unknown":
+                    value["records"][0]["affectedJudgeIds"] = ["judge-unknown"]
+                elif case == "empty":
+                    value["records"][0]["evidence"] = [""]
+                else:
+                    value["records"].append(dict(value["records"][0]))
+                path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+                result = self.run_cli(copy, with_recheck=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(result.stdout)["status"], "failed")
+
+    def test_recheck_success_summary_and_no_network(self):
+        spec = importlib.util.spec_from_file_location("shared_recheck_network_test", SCRIPT)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+        with patch("socket.socket.connect", side_effect=AssertionError("Network use is forbidden")):
+            value = verifier.verify_run(RUN, with_recheck=True)
+        self.assertEqual(value["status"], "ok")
+        self.assertFalse(value["actualSearchEvaluated"])
+        self.assertEqual(value["recheck"], {
+            "judgments": 210,
+            "modes": {"ai-only": "ready", "hybrid": "needs-human"},
+            "sourceCounts": {"ai": 303, "human": 0, "unresolved": 18},
+            "evaluableQueryCount": 8,
+        })
 
     def test_config_and_provenance_tamper_fail_hash_validation(self):
         for relative in ("pool-config.json", "review-v2/review-pool-provenance.csv"):

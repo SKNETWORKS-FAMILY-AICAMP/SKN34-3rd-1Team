@@ -25,6 +25,7 @@ def load_module(name, filename):
 PAGE = load_module("selection_review_page", "build-review-page.py")
 EXTRACT = load_module("selection_review_export", "extract-review-json.py")
 SCHEMA = "support-program-review-selection-v1"
+SCHEMA_RECHECK = "support-program-review-selection-v2"
 MODES = {"ai-only", "hybrid", "human"}
 RECORD_FIELDS = {"queryId", "programId", "decision", "reason", "reviewer", "source", "requiredHumanReview", "provenance"}
 SELECTION_FIELDS = {
@@ -93,11 +94,17 @@ def human_progress(rows, manifest, human_export=None, seeds=()):
     return progress
 
 
-def ai_consensus(rows, ai_review, ai_hash):
+def ai_consensus(rows, ai_review, ai_hash, recheck=None, recheck_hash=None):
     """Four matching non-unclear votes, but only after all five have completed."""
     by_pair = {(row["query_id"], row["program_id"]): [] for row in rows}
     for item in ai_review["judgments"]:
         by_pair[key(item)].append(item)
+    rechecked = set()
+    if recheck is not None:
+        for item in recheck["judgments"]:
+            rechecked.add(key(item))
+        for pair in rechecked:
+            by_pair[pair] = [item for item in recheck["judgments"] if key(item) == pair]
     records = {}
     for pair, votes in by_pair.items():
         counts = {decision: sum(item["decision"] == decision for item in votes) for decision in ("relevant", "irrelevant", "unclear")}
@@ -107,16 +114,19 @@ def ai_consensus(rows, ai_review, ai_hash):
             decision = next((choice for choice in ("relevant", "irrelevant") if counts[choice] >= 4), "unclear")
         reason = "동일 모델의 독립 실행 5회: 추천 가능 {relevant}, 추천 불가 {irrelevant}, 정보 부족 {unclear}, 미완료 {missing}. ".format(**counts)
         reason += "5회 중 4회 이상 합의(정확도 확률이 아님)." if decision != "unclear" else "미완료 또는 합의 부족으로 정답을 확정하지 않음."
+        provenance = {
+            "kind": "ai_consensus", "aiReviewSha256": ai_hash, "votes": counts,
+            # Pair IDs, judge ID, and source hash reference the full vote without
+            # duplicating long reasons/evidence into bounded provenance.
+            "judgments": [{field: item[field] for field in ("judgeId", "decision")} for item in sorted(votes, key=lambda vote: vote["judgeId"])],
+        }
+        if pair in rechecked:
+            provenance["recheckSha256"] = recheck_hash
         records[pair] = {
             "queryId": pair[0], "programId": pair[1], "decision": decision, "reason": reason,
             "reviewer": "AI 독립 판정 5개", "source": "ai" if decision != "unclear" else "unresolved",
             "requiredHumanReview": False,
-            "provenance": {
-                "kind": "ai_consensus", "aiReviewSha256": ai_hash, "votes": counts,
-                # The pair IDs + judge ID + file hash reference the complete vote.
-                # Do not duplicate long Korean reasons/evidence into bounded provenance.
-                "judgments": [{field: item[field] for field in ("judgeId", "decision")} for item in sorted(votes, key=lambda vote: vote["judgeId"])],
-            },
+            "provenance": provenance,
         }
     return records
 
@@ -156,14 +166,24 @@ def summarize(mode, records, manifest, ai_pending):
 
 
 def compose_selection(mode, rows, manifest, ai_review=None, human_export=None, seeds=(),
-                      ai_review_sha256=None, human_review_sha256=None, conversation_judgments_sha256=None):
+                      ai_review_sha256=None, human_review_sha256=None, conversation_judgments_sha256=None,
+                      ai_recheck=None, ai_recheck_sha256=None):
     if mode not in MODES:
         raise ValueError("Unknown review mode")
     if mode != "human" and ai_review is None:
         raise ValueError("AI-only and hybrid modes require --ai-review")
+    if ai_recheck is not None:
+        if mode == "human":
+            raise ValueError("Human mode must not use an AI recheck")
+        require_hash(ai_recheck_sha256, "aiRecheckSha256")
+        targets = {key(pair) for pair in ai_recheck["targetPairs"]}
+        unresolved = {pair for pair, item in ai_consensus(rows, ai_review, ai_review_sha256).items()
+                      if item["source"] == "unresolved"}
+        if not targets or targets != unresolved or targets != {key(vote) for vote in ai_recheck["judgments"]}:
+            raise ValueError("Recheck targets must equal original unresolved pairs")
     progress = human_progress(rows, manifest, human_export, seeds)
     humans = {key(item): item for item in progress["judgments"]}
-    consensus = ai_consensus(rows, ai_review, ai_review_sha256) if mode != "human" else {}
+    consensus = ai_consensus(rows, ai_review, ai_review_sha256, ai_recheck, ai_recheck_sha256) if mode != "human" else {}
     sample = hybrid_sample(consensus, ai_review_sha256) if mode == "hybrid" else []
     sample_keys = {key(item) for item in sample}
     records = []
@@ -192,7 +212,7 @@ def compose_selection(mode, rows, manifest, ai_review=None, human_export=None, s
         records.append(item)
     pending = ai_review["pendingCount"] if mode != "human" else 0
     selection = {
-        "schemaVersion": SCHEMA, "identity": PAGE.review_identity(manifest), "mode": mode,
+        "schemaVersion": SCHEMA_RECHECK if ai_recheck is not None else SCHEMA, "identity": PAGE.review_identity(manifest), "mode": mode,
         "records": records, "reviewedCsvSha256": None,
         "aiReviewSha256": ai_review_sha256 if mode != "human" else None,
         "humanReviewSha256": human_review_sha256,
@@ -200,6 +220,9 @@ def compose_selection(mode, rows, manifest, ai_review=None, human_export=None, s
         "aiPendingCount": pending, "hybridSample": sample,
         **summarize(mode, records, manifest, pending),
     }
+    if ai_recheck is not None:
+        selection["aiRecheckSha256"] = ai_recheck_sha256
+        selection["aiRecheckTargetPairs"] = [{"queryId": q, "programId": p} for q, p in sorted(targets)]
     output_rows = [{**row, **{field: record[field] for field in PAGE.POOL.MUTABLE_REVIEW_FIELDS}} for row, record in zip(rows, records)]
     csv_text = io.StringIO(newline="")
     writer = csv.DictWriter(csv_text, fieldnames=PAGE.POOL.REVIEW_FIELDS)
@@ -220,9 +243,27 @@ def require_hash(value, description, optional=False):
 
 def validate_selection(selection, rows, manifest):
     """Validate selection/CSV linkage; caller also compares the actual CSV file hash."""
-    PAGE.require_keys(selection, SELECTION_FIELDS, "Review selection")
-    if selection["schemaVersion"] != SCHEMA or selection["mode"] not in MODES:
+    if not isinstance(selection, dict):
+        raise ValueError("Review selection must be an object")
+    schema = selection.get("schemaVersion")
+    required_fields = SELECTION_FIELDS | ({"aiRecheckSha256", "aiRecheckTargetPairs"} if schema == SCHEMA_RECHECK else set())
+    PAGE.require_keys(selection, required_fields, "Review selection")
+    if schema not in {SCHEMA, SCHEMA_RECHECK} or selection["mode"] not in MODES:
         raise ValueError("Unsupported review selection schema or mode")
+    recheck_targets = set()
+    if schema == SCHEMA_RECHECK:
+        if selection["mode"] == "human":
+            raise ValueError("Human mode must not use an AI recheck")
+        require_hash(selection["aiRecheckSha256"], "aiRecheckSha256")
+        if not isinstance(selection["aiRecheckTargetPairs"], list) or not selection["aiRecheckTargetPairs"]:
+            raise ValueError("Invalid AI recheck target pairs")
+        for pair in selection["aiRecheckTargetPairs"]:
+            PAGE.require_keys(pair, {"queryId", "programId"}, "Recheck target pair")
+            for field in ("queryId", "programId"):
+                PAGE.require_text(pair[field], field, nonempty=True)
+            if key(pair) in recheck_targets:
+                raise ValueError("Duplicate AI recheck target pair")
+            recheck_targets.add(key(pair))
     identity = PAGE.review_identity(manifest)
     if selection["identity"] != identity or type(selection["identity"].get("captureIncluded")) is not bool:
         raise ValueError("Review selection belongs to another pool")
@@ -241,6 +282,8 @@ def validate_selection(selection, rows, manifest):
     if not isinstance(records, list) or len(records) != len(rows):
         raise ValueError("Selection must include every pool row")
     row_map = {(row["query_id"], row["program_id"]): row for row in rows}
+    if not recheck_targets <= set(row_map):
+        raise ValueError("Unknown AI recheck target pair")
     seen = set()
     reconstructed_ai = {}
     missing_votes = 0
@@ -274,9 +317,14 @@ def validate_selection(selection, rows, manifest):
             validate_human_judgment({**{field: item[field] for field in PAGE.JUDGMENT_FIELDS}, "provenance": None})
         if mode != "human":
             ai_provenance = provenance if isinstance(provenance, dict) and provenance.get("kind") == "ai_consensus" else (provenance or {}).get("aiReference")
-            PAGE.require_keys(ai_provenance, {"kind", "aiReviewSha256", "votes", "judgments"}, "AI consensus provenance")
+            ai_fields = {"kind", "aiReviewSha256", "votes", "judgments"}
+            if pair in recheck_targets:
+                ai_fields.add("recheckSha256")
+            PAGE.require_keys(ai_provenance, ai_fields, "AI consensus provenance")
             if ai_provenance["kind"] != "ai_consensus" or ai_provenance["aiReviewSha256"] != selection["aiReviewSha256"]:
                 raise ValueError("AI consensus source reference changed")
+            if pair in recheck_targets and ai_provenance["recheckSha256"] != selection["aiRecheckSha256"]:
+                raise ValueError("AI recheck source reference changed")
             votes = ai_provenance["judgments"]
             if not isinstance(votes, list) or len(votes) > 5:
                 raise ValueError("Invalid AI consensus votes")
@@ -390,6 +438,7 @@ def parse_args():
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--mode", choices=sorted(MODES), default="ai-only")
     parser.add_argument("--ai-review")
+    parser.add_argument("--ai-recheck")
     parser.add_argument("--human-review")
     parser.add_argument("--conversation-judgments")
     return parser.parse_args()
@@ -400,7 +449,7 @@ def main():
     output = Path(args.output_dir)
     if output.exists() or output.is_symlink():
         raise FileExistsError(f"Selection output directory already exists: {output}")
-    inputs = [getattr(args, field) for field in ("fixture", "query_set", "review_pool", "pool_manifest", "ai_review", "human_review", "conversation_judgments")]
+    inputs = [getattr(args, field, None) for field in ("fixture", "query_set", "review_pool", "pool_manifest", "ai_review", "ai_recheck", "human_review", "conversation_judgments")]
     if any(path and output.resolve() == Path(path).resolve() for path in inputs):
         raise ValueError("Output directory aliases an input")
     fixture = PAGE.load_fixture(args.fixture)
@@ -413,6 +462,7 @@ def main():
     seeds = PAGE.load_seeds(args.conversation_judgments, fixture, manifest, rows)
     human = PAGE.load_json(args.human_review) if args.human_review else None
     ai = None
+    ai_recheck = None
     if args.mode != "human":
         if not args.ai_review:
             raise ValueError("Selected mode requires --ai-review")
@@ -421,9 +471,16 @@ def main():
         runner.validate_ai_review(ai, fixture, manifest, rows)
         if ai["fixtureSha256"] != file_hash(args.fixture):
             raise ValueError("AI review fixture file hash changed")
+        if getattr(args, "ai_recheck", None):
+            recheck_module = load_module("selection_ai_recheck", "recheck-ai-review.py")
+            ai_recheck = PAGE.load_json(args.ai_recheck)
+            recheck_module.validate_recheck(ai_recheck, ai, file_hash(args.ai_review), fixture, manifest, rows)
+    elif getattr(args, "ai_recheck", None):
+        raise ValueError("Human mode must not use an AI recheck")
     selection, csv_bytes, progress = compose_selection(
         args.mode, rows, manifest, ai, human, seeds,
         ai_review_sha256=file_hash(args.ai_review) if args.mode != "human" else None,
+        ai_recheck=ai_recheck, ai_recheck_sha256=file_hash(args.ai_recheck) if ai_recheck is not None else None,
         human_review_sha256=file_hash(args.human_review), conversation_judgments_sha256=file_hash(args.conversation_judgments),
     )
     html = build_human_page(selection, progress, rows, manifest)
