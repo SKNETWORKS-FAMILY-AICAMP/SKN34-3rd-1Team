@@ -99,6 +99,10 @@ Redux에는 직렬화 가능한 데이터만 저장하며 `AbortController`는 V
 - 한글 IME 조합 중 Enter와 Safari `keyCode 229` Enter 제출 차단
 - Enter 전송, Shift+Enter 줄바꿈
 - 검색 실패 시 내부 예외 대신 안전한 오류 문구 표시
+- 검색이 70초를 넘으면 요청 취소, 검색어 복원과 재시도 허용
+
+검색 제한 70초는 Core의 순차적인 의미 검색 읽기 제한 30초와 점수화 읽기 제한 35초에 여유를 둔 값입니다.
+서버 제한시간을 변경할 때도 이 순차 호출 시간을 고려해야 하며, 70초는 응답시간 목표가 아닙니다.
 
 스타일은 `src/index.css`의 Tailwind `@theme` 토큰과 View 옆 `*.styles.ts`를 사용합니다.
 계층·DI의 상세 규칙은 [아키텍처 문서](../docs/architecture.md#frontend와-내부-계약), 예제 API는

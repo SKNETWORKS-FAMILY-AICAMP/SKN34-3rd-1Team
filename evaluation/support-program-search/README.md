@@ -39,7 +39,8 @@ python3 -m unittest discover -s evaluation/support-program-search -p 'test_*.py'
 수동 `semantic` 비교는 후보 단계의 `macroRecallAtK`와 `noMatchFalsePositiveRate`를 계산한다.
 `--capture`는 실제 검색 흐름을 두 단계로 나눠 계산한다.
 
-- `candidate`: Qdrant 후보 최대 20개의 `macroRecallAtK`, `noMatchFalsePositiveRate`
+- `candidate`: 실제 점수화에 전달한 후보 최대 20개의 `macroRecallAtK`, `noMatchFalsePositiveRate`
+  (현재는 Qdrant 의미 검색·키워드 순위를 결합한 후보이며 과거 캡처는 당시 검색 방식 유지)
 - `final`: AI 최종 추천 최대 5개의 `macroRecallAt5`, `mrrAt5`, `noMatchFalsePositiveRate`
 
 `MRR@5`는 첫 관련 공고가 앞에 있을수록 높다. 이진 관련성 라벨만 있으므로 nDCG나 지원대상·지역
@@ -53,6 +54,11 @@ python3 -m unittest discover -s evaluation/support-program-search -p 'test_*.py'
 이 가상 자료에서 최신 20개 기준의 Recall@20은 약 0.077, 단순 키워드 기준은 1.0이다. 40개 중 최대 20개를 고르는 작은 자료이므로 키워드 기준도 모든 관련 공고를 포함할 수 있다. 이는 벡터 검색의 우월성을 입증하지 않으며, Recall이 높아도 불필요한 후보가 함께 포함되거나 최종 추천 순서가 나쁠 수 있다. 의미 검색 결과와 더 현실적인 자료를 확보하기 전에는 개선 수치를 주장하지 않는다.
 
 ## 기존 의미 검색 후보 파일 비교
+
+현재 4단계의 동일 캡처 전후 비교는 `compare-captures.py`를 사용한다.
+같은 fixture·질문·카탈로그·기준일·후보 한도를 검증하고 기존 양성 질문만으로 Recall/MRR을 비교한다.
+검토 CSV의 연결 해시를 확인하며 missing/blank/unclear를 무관으로 처리하지 않는다.
+출력 덮어쓰기는 금지한다. [실데이터 전후 비교와 실행 명령](runs/support-program-catalog-20260906-v1/stage4-v1/README.md)을 참고한다.
 
 가상 공고만 평가할 때는 이 공고 40개만 넣은 **평가 전용 Qdrant 컬렉션/환경**에서 질문을 실행한다.
 운영 공고 색인에 `SYNTH_*` 공고를 넣거나 운영 공고와 섞어 비교하지 않는다.

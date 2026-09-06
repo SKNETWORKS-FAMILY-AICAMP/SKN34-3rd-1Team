@@ -24,7 +24,7 @@ class SupportProgramSearchService(
         execute(rawQuery, acceptingOnly).result
 
     /**
-     * 평가 전용 호출입니다. 공개 검색 응답에는 노출하지 않고, 비어 있지 않은 질문에서 실제 의미 검색 후보와
+     * 평가 전용 호출입니다. 공개 검색 응답에는 노출하지 않고, 비어 있지 않은 질문에서 실제 결합 검색 후보와
      * 최종 추천 공고의 제공처 포함 식별자를 남깁니다.
      */
     fun searchWithTrace(rawQuery: String?, acceptingOnly: Boolean): SupportProgramSearchTrace =

@@ -56,9 +56,9 @@ OPENAI_API_KEY=발급받은_OpenAI_API_키
 | `BIZINFO_SYNC_FIXED_DELAY` | `PT6H` | 이전 동기화가 끝난 뒤 다음 동기화까지의 ISO-8601 기간 |
 | `OPENAI_API_KEY` | 없음(필수) | AI Service만 사용하는 OpenAI 인증키 |
 | `OPENAI_MODEL` | `gpt-5.6-luna` | 현재 Compose에 설정된 Agent의 Structured Output 모델 |
-| `LLM_MODEL_TIMEOUT_SECONDS` | `8.0` | OpenAI 모델 호출 한 번의 제한시간(초) |
-| `LLM_RUN_TIMEOUT_SECONDS` | `10.0` | Agent의 `Runner.run` 실행 제한시간(초) |
-| `AI_SERVICE_READ_TIMEOUT` | `12s` | Core API의 AI Service 읽기 제한시간 |
+| `LLM_MODEL_TIMEOUT_SECONDS` | `25.0` | OpenAI 모델 호출 한 번의 제한시간(초) |
+| `LLM_RUN_TIMEOUT_SECONDS` | `30.0` | Agent의 `Runner.run` 실행 제한시간(초) |
+| `AI_SERVICE_READ_TIMEOUT` | `35s` | Core API의 AI Health·점수화·원문 근거 답변 읽기 제한시간 |
 | `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | Core API의 색인·의미 검색 요청 제한시간 |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | 공고·질의 임베딩 모델 |
 | `OPENAI_EMBEDDING_DIMENSIONS` | `1536` | 임베딩 차원 수. 모델·차원이 바뀌면 별도 컬렉션을 사용 |
@@ -77,7 +77,10 @@ OPENAI_API_KEY=발급받은_OpenAI_API_키
 
 OpenAI는 공고 임베딩과 후보 점수화의 필수 의존성입니다. 키가 없으면 Compose 설정과 AI Service
 시작이 실패하고, 실행 중 AI 호출이 실패하면 Core API가 오류 종류에 따라 502·503·504로
-전달합니다. Core API 읽기 제한시간 `12s`는 전체 agent run 제한시간 `10s`보다 길게 유지합니다.
+전달합니다. 모델 `25s`·전체 Agent 실행 `30s`·Core API 읽기 `35s` 순서로 제한시간을 유지합니다.
+모델·Agent 설정은 추천 점수화와 원문 근거 답변이 공유합니다. 검색 화면은 순차적인 의미 검색과
+점수화의 Core 읽기 제한 `30s + 35s`에 여유를 둔 `70s` 후 요청을 취소하고 재시도를 허용합니다.
+기존 `.env`나 서버 환경변수에 예전 제한시간을 지정했다면 기본값보다 우선하므로 직접 갱신해야 합니다.
 
 공고 색인에도 OpenAI 임베딩 비용이 발생합니다. 신규·변경된 검색용 텍스트만 임베딩하며, 동일 내용은
 Qdrant에 저장된 벡터를 재사용합니다. 의미 검색·색인 API의 전체 제한시간은 최대 25초이며 Core의

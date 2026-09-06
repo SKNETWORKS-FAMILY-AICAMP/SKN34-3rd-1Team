@@ -17,10 +17,7 @@ import {
   draftChanged,
   maximumSupportProgramSearchQueryLength,
 } from '../state/chatSlice'
-import {
-  supportProgramSearchTimeoutMilliseconds,
-  useSupportProgramChatViewModel,
-} from './useSupportProgramChatViewModel'
+import { useSupportProgramChatViewModel } from './useSupportProgramChatViewModel'
 
 afterEach(() => {
   cleanup()
@@ -190,7 +187,7 @@ describe('Redux chat flow', () => {
     expect(store.getState().chat.messages).toHaveLength(2)
   })
 
-  it('ends a request that exceeds the client timeout and restores the query for retry', async () => {
+  it('waits past 30 seconds, cancels at 70 seconds, and allows retry while ignoring the old result', async () => {
     vi.useFakeTimers()
     const pending = deferredSearchResult()
     let requestSignal: AbortSignal | undefined
@@ -209,7 +206,19 @@ describe('Redux chat flow', () => {
     expect(execute).toHaveBeenCalledOnce()
 
     act(() => {
-      vi.advanceTimersByTime(supportProgramSearchTimeoutMilliseconds)
+      vi.advanceTimersByTime(30_000)
+    })
+    expect(requestSignal?.aborted).toBe(false)
+    expect(store.getState().chat.searchStatus).toBe('pending')
+
+    act(() => {
+      vi.advanceTimersByTime(39_999)
+    })
+    expect(requestSignal?.aborted).toBe(false)
+    expect(store.getState().chat.searchStatus).toBe('pending')
+
+    act(() => {
+      vi.advanceTimersByTime(1)
     })
 
     const chat = store.getState().chat
@@ -217,10 +226,21 @@ describe('Redux chat flow', () => {
     expect(chat.searchStatus).toBe('failed')
     expect(chat.draft).toBe('창업')
     expect(chat.searchError).toBe('검색 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.')
+    expect(result.current.canRetrySearch).toBe(true)
+
+    execute.mockResolvedValueOnce({ query: '창업', programs: [supportPrograms[0]] })
+    await act(async () => result.current.submitMessage())
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute.mock.calls[1][0]).toBe('창업')
+    expect(execute.mock.calls[1][1]?.aborted).toBe(false)
+    expect(store.getState().chat.searchStatus).toBe('idle')
+    expect(store.getState().chat.searchError).toBeNull()
+    expect(store.getState().chat.messages.at(-1)?.programs?.[0]?.id).toBe('fixture-seoul-ai-business')
 
     pending.resolve({ query: '창업', programs: [supportPrograms[1]] })
     await search
-    expect(store.getState().chat.messages).toHaveLength(2)
+    expect(store.getState().chat.messages).toHaveLength(4)
+    expect(store.getState().chat.messages.at(-1)?.programs?.[0]?.id).toBe('fixture-seoul-ai-business')
   })
 
   it('aborts a pending request and clears pending state on unmount', async () => {

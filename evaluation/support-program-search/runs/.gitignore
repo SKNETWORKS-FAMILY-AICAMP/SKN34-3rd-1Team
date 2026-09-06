@@ -11,6 +11,14 @@
 !support-program-catalog-20260906-v1/pool-config.json
 !support-program-catalog-20260906-v1/run-manifest.md
 
+!support-program-catalog-20260906-v1/stage4-v1/
+!support-program-catalog-20260906-v1/stage4-v1/README.md
+!support-program-catalog-20260906-v1/stage4-v1/retrieval-diagnostic.json
+!support-program-catalog-20260906-v1/stage4-v1/capture.json
+!support-program-catalog-20260906-v1/stage4-v1/api-usage.jsonl
+!support-program-catalog-20260906-v1/stage4-v1/execution-manifest.json
+!support-program-catalog-20260906-v1/stage4-v1/comparison.json
+
 !support-program-catalog-20260906-v1/actual-capture-v1/
 !support-program-catalog-20260906-v1/actual-capture-v1/README.md
 !support-program-catalog-20260906-v1/actual-capture-v1/failed-attempts.json

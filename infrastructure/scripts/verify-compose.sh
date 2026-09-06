@@ -28,9 +28,9 @@ export SUPPORT_PROGRAM_INDEX_ENABLED="true"
 export SUPPORT_PROGRAM_INDEX_INITIAL_DELAY="PT0S"
 export SUPPORT_PROGRAM_INDEX_FIXED_DELAY="PT2S"
 export AI_SEMANTIC_SEARCH_READ_TIMEOUT="30s"
-export LLM_MODEL_TIMEOUT_SECONDS="8.0"
-export LLM_RUN_TIMEOUT_SECONDS="10.0"
-export AI_SERVICE_READ_TIMEOUT="12s"
+export LLM_MODEL_TIMEOUT_SECONDS="25.0"
+export LLM_RUN_TIMEOUT_SECONDS="30.0"
+export AI_SERVICE_READ_TIMEOUT="35s"
 # The verification stack connects to MySQL through the Compose network. Give its
 # host-only port a separate default so a developer's local MySQL on 3306 does
 # not prevent the smoke test from starting.
@@ -82,7 +82,7 @@ wait_for_http() {
         --silent \
         --output "${LAST_RESPONSE_FILE}" \
         --write-out '%{http_code}' \
-        --max-time 35 \
+        --max-time 70 \
         "${url}" || true
     )"
 
@@ -165,7 +165,7 @@ wait_for_ai_failure() {
         --silent \
         --output "${LAST_RESPONSE_FILE}" \
         --write-out '%{http_code}' \
-        --max-time 35 \
+        --max-time 70 \
         "${url}" || true
     )"
 

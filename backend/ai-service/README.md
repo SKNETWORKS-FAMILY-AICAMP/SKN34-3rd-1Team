@@ -287,15 +287,15 @@ OpenAI timeout·거부·SDK 오류·structured output 오류
 
 사용자 질문, 공고 원문, API key와 OpenAI 원문 오류를 실패 응답에 포함하지 않습니다. Core는 다시
 내부 응답의 ID·점수 범위·점수 합계·순서를 검증합니다. 부적합·정보 부족 판정을 `MATCH`로 바꾸거나
-유효하지 않은 AI 출력을 정상 결과로 보정하지 않습니다. 재시도·fallback은 추가하지 않았으며 기본 timeout도 유지합니다.
+유효하지 않은 AI 출력을 정상 결과로 보정하지 않습니다. 재시도·fallback은 추가하지 않습니다.
 
 ## 설정
 
 ```dotenv
 OPENAI_API_KEY=필수
 OPENAI_MODEL=gpt-5.6-luna
-LLM_MODEL_TIMEOUT_SECONDS=8.0
-LLM_RUN_TIMEOUT_SECONDS=10.0
+LLM_MODEL_TIMEOUT_SECONDS=25.0
+LLM_RUN_TIMEOUT_SECONDS=30.0
 QDRANT_URL=http://localhost:6333
 QDRANT_API_KEY=
 QDRANT_TIMEOUT_SECONDS=5
@@ -304,8 +304,11 @@ OPENAI_EMBEDDING_DIMENSIONS=1536
 EMBEDDING_TIMEOUT_SECONDS=15
 ```
 
-기본 전체 Agent 제한 `10s`는 모델 호출 제한 `8s`보다 길고 Core의 기본 읽기 제한 `12s`보다 짧습니다.
+기본 전체 Agent 제한 `30s`는 모델 호출 제한 `25s`보다 길고 Core의 기본 읽기 제한 `35s`보다 짧습니다.
 환경변수를 변경할 때도 이 관계를 유지해야 합니다. 설정 코드가 세 값의 대소 관계를 자동 검증하지는 않습니다.
+AI의 각 timeout 환경변수는 0초 초과·30초 이하만 허용하며 그 밖의 값은 해당 기본값을 사용합니다.
+모델·Agent 제한은 추천 점수화와 원문 근거 답변에 공통 적용됩니다. 기본값은 저장된 실제 추천 호출의
+10.874~19.195초 관측에 맞춰 조정했으며, 기본값 변경 자체가 부하·운영 안정성 검증을 뜻하지는 않습니다.
 색인·의미 검색은 별도 Core 읽기 제한을 사용합니다. AI batch/search 전체 제한은 `25s`, prune은
 `15s`이고 Core 색인·검색 읽기 제한 기본값은 `30s`입니다. 이 구현은 임베딩을 재시도 없이 호출하며
 한 문서 최대 8,191 tokens, 임베딩 API 요청당 최대 32개로 나눕니다. 긴 문서의 뒷부분은 이 단계의 후보
