@@ -1,4 +1,7 @@
+import json
+
 import pytest
+from agents.testing import ScriptedModel, assistant_message
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -6,6 +9,7 @@ from app.support_program_ranking.errors import AgentExecutionError
 from app.support_program_ranking.agent import SupportProgramRecommendationAgent
 from app.support_program_ranking.models import (
     SCORING_VERSION,
+    AssessedSupportProgram,
     ScoredSupportProgram,
     SupportProgramEligibility,
     SupportProgramRankingOutput,
@@ -33,17 +37,14 @@ def score(
     region_eligibility: SupportProgramEligibility = SupportProgramEligibility.MATCH,
     application_status: int = 10,
     support_type: int = 5,
-) -> ScoredSupportProgram:
-    return ScoredSupportProgram(
+) -> AssessedSupportProgram:
+    return AssessedSupportProgram(
         programId=program_id,
         semanticRelevance=semantic,
-        targetFit=target,
-        targetEligibility=target_eligibility,
-        regionFit=region,
-        regionEligibility=region_eligibility,
+        targetAssessment={"eligibility": target_eligibility, "score": target},
+        regionAssessment={"eligibility": region_eligibility, "score": region},
         applicationStatusFit=application_status,
         supportTypeFit=support_type,
-        totalScore=semantic + target + region + application_status + support_type,
         recommendationReasons=["공고 원문 근거"],
     )
 
@@ -123,7 +124,7 @@ class NoEligibleCandidateAgent(SupportProgramRecommendationAgent):
 
 
 class FixedOutputAgent(SupportProgramRecommendationAgent):
-    def __init__(self, rankings: list[ScoredSupportProgram]) -> None:
+    def __init__(self, rankings: list[AssessedSupportProgram]) -> None:
         self._rankings = rankings
 
     async def rank(
@@ -219,7 +220,123 @@ def test_returns_llm_scores_sorted_by_total_score() -> None:
     assert body["rankings"][0]["totalScore"] == 85
     assert body["rankings"][0]["targetEligibility"] == "MATCH"
     assert body["rankings"][0]["regionEligibility"] == "MATCH"
+    assert "targetAssessment" not in body["rankings"][0]
+    assert "regionAssessment" not in body["rankings"][0]
     assert len(agent.requests) == 1
+
+
+def test_computes_the_failed_capture_sum_in_service_and_keeps_http_contract() -> None:
+    # 실제 캡처에서 24 + 25 + 15 + 10 + 7을 80으로 응답했던 회귀 사례.
+    output = SupportProgramRankingOutput(
+        rankings=[
+            score(
+                "BIZINFO:program-low",
+                24,
+                target=25,
+                region=15,
+                application_status=10,
+                support_type=7,
+            ),
+            # 실제 캡처에서 10 + 8 + 15 + 3 + 2를 28로 응답했던 저관련성 사례.
+            score(
+                "BIZINFO:program-high",
+                10,
+                target=8,
+                target_eligibility=SupportProgramEligibility.UNKNOWN,
+                region=15,
+                application_status=3,
+                support_type=2,
+            ),
+        ]
+    )
+    llm_output = json.dumps({
+        "rankings": {
+            assessment.program_id: assessment.model_dump(by_alias=True, exclude={"program_id"})
+            for assessment in output.rankings
+        }
+    }, ensure_ascii=False)
+    assert "totalScore" not in llm_output
+    model = ScriptedModel([[assistant_message(llm_output)]])
+    client = TestClient(
+        create_app(
+            settings=TEST_SETTINGS,
+            support_program_recommendation_agent=SupportProgramRecommendationAgent(
+                model=model,
+                model_timeout_seconds=2.0,
+                run_timeout_seconds=2.5,
+            ),
+        )
+    )
+
+    response = client.post("/internal/v1/support-program-rankings/rank", json=request_body())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "originalQuery": "서울 AI 창업기업 지원",
+        "scoringVersion": SCORING_VERSION,
+        "rankings": [{
+            "programId": "BIZINFO:program-low",
+            "semanticRelevance": 24,
+            "targetFit": 25,
+            "targetEligibility": "MATCH",
+            "regionFit": 15,
+            "regionEligibility": "MATCH",
+            "applicationStatusFit": 10,
+            "supportTypeFit": 7,
+            "totalScore": 81,
+            "recommendationReasons": ["공고 원문 근거"],
+        }],
+    }
+    assert len(model.calls) == 1
+    model.assert_complete()
+
+
+def test_keeps_input_order_for_ties_and_applies_result_limit() -> None:
+    body = request_body()
+    body["resultLimit"] = 1
+    client = TestClient(
+        create_app(
+            settings=TEST_SETTINGS,
+            support_program_recommendation_agent=FixedOutputAgent([
+                score("BIZINFO:program-high", 40),
+                score("BIZINFO:program-low", 40),
+            ]),
+        )
+    )
+
+    response = client.post("/internal/v1/support-program-rankings/rank", json=body)
+
+    assert response.status_code == 200
+    assert [item["programId"] for item in response.json()["rankings"]] == ["BIZINFO:program-low"]
+
+
+@pytest.mark.parametrize("dimension", ["targetAssessment", "regionAssessment"])
+def test_invalid_llm_eligibility_returns_503_without_retry_or_fallback(dimension: str) -> None:
+    output = SupportProgramRankingOutput(rankings=[
+        score("BIZINFO:program-low", 40), score("BIZINFO:program-high", 40),
+    ])
+    payload = {"rankings": {
+        assessment.program_id: assessment.model_dump(by_alias=True, exclude={"program_id"})
+        for assessment in output.rankings
+    }}
+    payload["rankings"]["BIZINFO:program-low"][dimension] = {"eligibility": "INCOMPATIBLE", "score": 4}
+    model = ScriptedModel([[assistant_message(json.dumps(payload, ensure_ascii=False))]])
+    client = TestClient(
+        create_app(
+            settings=TEST_SETTINGS,
+            support_program_recommendation_agent=SupportProgramRecommendationAgent(
+                model=model,
+                model_timeout_seconds=2.0,
+                run_timeout_seconds=2.5,
+            ),
+        )
+    )
+
+    response = client.post("/internal/v1/support-program-rankings/rank", json=request_body())
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Support program ranking is temporarily unavailable."}
+    assert len(model.calls) == 1
 
 
 def test_keeps_candidates_with_the_same_original_id_from_different_sources_distinct() -> None:
@@ -440,6 +557,8 @@ def test_keeps_a_candidate_when_target_and_region_information_are_unknown() -> N
     assert [item["programId"] for item in response.json()["rankings"]] == [
         "BIZINFO:program-unknown"
     ]
+    assert response.json()["rankings"][0]["targetEligibility"] == "UNKNOWN"
+    assert response.json()["rankings"][0]["regionEligibility"] == "UNKNOWN"
 
 
 def test_rejects_an_agent_output_that_omits_a_candidate_without_leaking_details() -> None:
@@ -552,11 +671,15 @@ def test_score_schema_requires_zero_fit_for_explicit_incompatibility(
     message: str,
 ) -> None:
     with pytest.raises(ValidationError, match=message):
-        score(
-            "BIZINFO:program-1",
-            40,
-            target=target,
-            target_eligibility=target_eligibility,
-            region=region,
-            region_eligibility=region_eligibility,
+        ScoredSupportProgram(
+            programId="BIZINFO:program-1",
+            semanticRelevance=40,
+            targetFit=target,
+            targetEligibility=target_eligibility,
+            regionFit=region,
+            regionEligibility=region_eligibility,
+            applicationStatusFit=10,
+            supportTypeFit=5,
+            totalScore=40 + target + region + 10 + 5,
+            recommendationReasons=["공고 원문 근거"],
         )

@@ -24,6 +24,9 @@ def load_module(name, filename):
 RUNNER = load_module("verify_ai_runner", "run-ai-review.py")
 SELECTOR = load_module("verify_selector", "select-review-mode.py")
 RECHECK = load_module("verify_recheck", "recheck-ai-review.py")
+TRANSFER = load_module("verify_transfer", "transfer-ai-review.py")
+LABELS = load_module("verify_labels", "apply-labels.py")
+EVALUATOR = load_module("verify_evaluator", "../evaluate.py")
 
 
 def read(path):
@@ -100,7 +103,112 @@ def _compare_selection(out, saved, mode):
             raise ValueError(f"{mode} {filename} differs")
 
 
-def verify_run(run_dir, with_recheck=False):
+def capture_files(run):
+    final = run / "review-final-v1"
+    additional = final / "additional-ai-v1"
+    return [run / "actual-capture-v3" / "capture.json"] + [
+        final / name for name in (
+            "review-pool.csv", "review-pool-provenance.csv", "review-pool-manifest.json",
+            "fixture-labeled.json", "report-all.json", "report-dev.json", "report-heldout.json",
+        )
+    ] + [additional / name for name in (
+        "transfer-plan.json", "review-pool.csv", "review-pool-manifest.json", "assignments.json",
+        "ai-review.json", *[f"judge-{number}.jsonl" for number in range(1, 6)],
+        "prepared/prepared.json", "prepared/policy.json", "prepared/blind-input.jsonl",
+    )] + [final / "selected-ai-transfer-v1" / name
+          for name in ("selection.json", "reviewed.csv", "review-progress.json")]
+
+
+def _evaluate_report(fixture, capture, split):
+    previous_argv = sys.argv
+    output = io.StringIO()
+    try:
+        sys.argv = [str(EVALUATOR.__file__), "--fixture", str(fixture), "--capture", str(capture), "--split", split]
+        with contextlib.redirect_stdout(output):
+            EVALUATOR.main()
+    finally:
+        sys.argv = previous_argv
+    return json.loads(output.getvalue())
+
+
+def _verify_capture(run, source, temp, model):
+    final = run / "review-final-v1"
+    additional = final / "additional-ai-v1"
+    selected = final / "selected-ai-transfer-v1"
+    capture = run / "actual-capture-v3" / "capture.json"
+    generated_pool = temp / "final-pool"
+    pool_args = argparse.Namespace(
+        fixture=str(source["fixture"]), query_set=str(source["query_set"]), config=str(source["config"]),
+        capture=str(capture), previous_review=None,
+        review_pool=str(generated_pool / "review-pool.csv"),
+        provenance=str(generated_pool / "review-pool-provenance.csv"),
+        pool_manifest=str(generated_pool / "review-pool-manifest.json"),
+    )
+    invoke(RUNNER.PAGE.POOL, pool_args)
+    for name in ("review-pool.csv", "review-pool-provenance.csv", "review-pool-manifest.json"):
+        equal = same_json(generated_pool / name, final / name) if name.endswith(".json") else (
+            (generated_pool / name).read_bytes() == (final / name).read_bytes())
+        if not equal:
+            raise ValueError(f"Final capture pool {name} differs")
+
+    transfer_args = dict(
+        fixture=str(source["fixture"]), query_set=str(source["query_set"]), config=str(source["config"]),
+        capture=str(capture), previous_pool=str(source["review_pool"]),
+        previous_manifest=str(source["pool_manifest"]), review_pool=str(final / "review-pool.csv"),
+        pool_manifest=str(final / "review-pool-manifest.json"), ai_review=str(source["ai_review"]),
+        ai_recheck=str(run / "review-v2" / "codex-ai-recheck-v1" / "ai-recheck.json"),
+    )
+    generated_additional = temp / "additional"
+    with contextlib.redirect_stdout(io.StringIO()):
+        TRANSFER.prepare(argparse.Namespace(**transfer_args, output_dir=str(generated_additional)))
+    for name in ("transfer-plan.json", "review-pool-manifest.json", "prepared/prepared.json", "prepared/policy.json"):
+        if not same_json(generated_additional / name, additional / name):
+            raise ValueError(f"Additional capture preparation {name} differs")
+    if (generated_additional / "review-pool.csv").read_bytes() != (additional / "review-pool.csv").read_bytes():
+        raise ValueError("Additional capture review-pool.csv differs")
+    if RUNNER.read_jsonl(generated_additional / "prepared/blind-input.jsonl") != RUNNER.read_jsonl(additional / "prepared/blind-input.jsonl"):
+        raise ValueError("Additional capture blind-input.jsonl differs")
+
+    collected = temp / "additional-ai-review.json"
+    with contextlib.redirect_stdout(io.StringIO()):
+        RUNNER.collect(argparse.Namespace(
+            fixture=str(source["fixture"]), query_set=str(source["query_set"]),
+            review_pool=str(additional / "review-pool.csv"), pool_manifest=str(additional / "review-pool-manifest.json"),
+            model=model, prepared_dir=str(additional / "prepared"), assignments=str(additional / "assignments.json"),
+            judge_file=[str(additional / f"judge-{number}.jsonl") for number in range(1, 6)], output=str(collected),
+        ))
+    if not same_json(collected, additional / "ai-review.json"):
+        raise ValueError("Recollected additional ai-review.json differs")
+
+    generated_selected = temp / "selected-transfer"
+    with contextlib.redirect_stdout(io.StringIO()):
+        TRANSFER.select(argparse.Namespace(
+            **transfer_args, additional_dir=str(additional), additional_ai_review=str(additional / "ai-review.json"),
+            conversation_judgments=str(source["conversation"]), output_dir=str(generated_selected),
+        ))
+    _compare_selection(generated_selected, selected, "ai-only-transfer")
+    generated_fixture = temp / "fixture-labeled.json"
+    invoke(LABELS, argparse.Namespace(
+        fixture=str(source["fixture"]), query_set=str(source["query_set"]), config=str(source["config"]),
+        capture=str(capture), pool_manifest=str(final / "review-pool-manifest.json"),
+        review_pool=str(selected / "reviewed.csv"), selection=str(selected / "selection.json"),
+        exclude_query=[], output=str(generated_fixture),
+    ))
+    if not same_json(generated_fixture, final / "fixture-labeled.json"):
+        raise ValueError("Capture fixture-labeled.json differs")
+    for split in ("all", "dev", "heldout"):
+        if _evaluate_report(generated_fixture, capture, split) != read(final / f"report-{split}.json"):
+            raise ValueError(f"Capture report-{split}.json differs")
+    selection = read(selected / "selection.json")
+    return {"observations": len(read(capture)["observations"]),
+            "reviewPairCount": read(final / "review-pool-manifest.json")["reviewRowCount"],
+            "additionalJudgments": len(read(additional / "ai-review.json")["judgments"]),
+            "sourceCounts": selection["sourceCounts"], "evaluableQueryCount": selection["evaluableQueryCount"],
+            "splits": ["all", "dev", "heldout"]}
+
+
+def verify_run(run_dir, with_recheck=False, with_capture=False):
+    with_recheck = with_recheck or with_capture
     run = Path(run_dir).resolve()
     review = run / "review-v2"
     ai = review / "codex-ai-v1"
@@ -138,6 +246,8 @@ def verify_run(run_dir, with_recheck=False):
             *[f"judge-{number}.jsonl" for number in range(1, 6)])]
         required += [directory / filename for directory in recheck_selected_dirs.values()
                      for filename in ("selection.json", "reviewed.csv", "review-progress.json")]
+    if with_capture:
+        required += capture_files(run)
     missing = [str(path.relative_to(run)) for path in required if not path.is_file()]
     if missing:
         raise ValueError("missing source: " + ", ".join(missing))
@@ -252,12 +362,18 @@ def verify_run(run_dir, with_recheck=False):
                                "sourceCounts": selected_ai["sourceCounts"],
                                "evaluableQueryCount": selected_ai["evaluableQueryCount"]}
 
+        capture_summary = _verify_capture(run, source, temp, model) if with_capture else None
+
     result = {"status": "ok", "checks": 1 + len(mode_results), "modes": mode_results,
               "judgments": len(read(source["ai_review"])["judgments"]),
               "actualSearchEvaluated": False}
     if with_recheck:
         result["recheck"] = recheck_summary
         result["checks"] += 4  # Recollection, cause audit, and two selected modes.
+    if with_capture:
+        result["capture"] = capture_summary
+        result["actualSearchEvaluated"] = True
+        result["checks"] += 8  # Pool, preparation, recollection, selection, labels, and three reports.
     return result
 
 
@@ -265,9 +381,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--with-recheck", action="store_true")
+    parser.add_argument("--with-capture", action="store_true", help="Replay the real capture pool and metrics, including recheck verification")
     args = parser.parse_args(argv)
     try:
-        result = verify_run(args.run_dir, with_recheck=args.with_recheck)
+        result = verify_run(args.run_dir, with_recheck=args.with_recheck, with_capture=args.with_capture)
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "failed", "error": str(error)}, ensure_ascii=False))
         return 1

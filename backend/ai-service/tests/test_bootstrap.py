@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from agents.testing import ScriptedModel, assistant_message
 from fastapi.testclient import TestClient
@@ -7,9 +9,8 @@ import app.main as main_module
 from app.support_program_ranking.agent import SupportProgramRecommendationAgent
 from app.support_program_ranking.models import (
     SCORING_VERSION,
-    ScoredSupportProgram,
+    AssessedSupportProgram,
     SupportProgramCandidate,
-    SupportProgramEligibility,
     SupportProgramRankingOutput,
     SupportProgramRankingRequest,
 )
@@ -56,22 +57,24 @@ async def test_builds_and_wires_agent_in_the_composition_root(
     client = FakeOpenAIClient()
     expected = SupportProgramRankingOutput(
         rankings=[
-            ScoredSupportProgram(
+            AssessedSupportProgram(
                 programId="BIZINFO:program-1",
                 semanticRelevance=40,
-                targetFit=25,
-                targetEligibility=SupportProgramEligibility.MATCH,
-                regionFit=15,
-                regionEligibility=SupportProgramEligibility.MATCH,
+                targetAssessment={"eligibility": "MATCH", "score": 25},
+                regionAssessment={"eligibility": "MATCH", "score": 15},
                 applicationStatusFit=10,
                 supportTypeFit=10,
-                totalScore=100,
                 recommendationReasons=["질의와 직접 관련"],
             )
         ]
     )
     model = ScriptedModel(
-        [[assistant_message(expected.model_dump_json(by_alias=True))]]
+        [[assistant_message(json.dumps({
+            "rankings": {
+                assessment.program_id: assessment.model_dump(by_alias=True, exclude={"program_id"})
+                for assessment in expected.rankings
+            }
+        }, ensure_ascii=False))]]
     )
 
     def fake_openai_client(**arguments: object) -> FakeOpenAIClient:

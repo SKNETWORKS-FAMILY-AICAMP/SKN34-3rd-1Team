@@ -1,7 +1,10 @@
+from pydantic import ValidationError
+
 from app.support_program_ranking.errors import AgentExecutionError
 
 from .agent import SupportProgramRecommendationAgent
 from .models import (
+    ScoredSupportProgram,
     SupportProgramRankingRequest,
     SupportProgramRankingResponse,
     SupportProgramEligibility,
@@ -34,8 +37,35 @@ class SupportProgramRankingService:
                 "Support program recommendation agent changed the candidate id set"
             )
 
+        try:
+            scored_rankings = [
+                ScoredSupportProgram(
+                    program_id=assessment.program_id,
+                    semantic_relevance=assessment.semantic_relevance,
+                    target_fit=assessment.target_assessment.score,
+                    target_eligibility=assessment.target_assessment.eligibility,
+                    region_fit=assessment.region_assessment.score,
+                    region_eligibility=assessment.region_assessment.eligibility,
+                    application_status_fit=assessment.application_status_fit,
+                    support_type_fit=assessment.support_type_fit,
+                    total_score=(
+                        assessment.semantic_relevance
+                        + assessment.target_assessment.score
+                        + assessment.region_assessment.score
+                        + assessment.application_status_fit
+                        + assessment.support_type_fit
+                    ),
+                    recommendation_reasons=assessment.recommendation_reasons,
+                )
+                for assessment in output.rankings
+            ]
+        except ValidationError as error:
+            raise AgentExecutionError(
+                "Support program recommendation agent produced invalid score dimensions"
+            ) from error
+
         sorted_rankings = sorted(
-            output.rankings,
+            scored_rankings,
             key=lambda ranking: (
                 -ranking.total_score,
                 candidate_order[ranking.program_id],

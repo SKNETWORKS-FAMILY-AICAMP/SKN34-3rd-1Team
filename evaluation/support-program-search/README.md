@@ -247,5 +247,7 @@ python3 evaluation/support-program-search/evaluate.py \
 해시를 고정하고, [평가 보고서 템플릿](report-template.md)에 후보와 최종 추천 지표를 분리해 남긴다.
 실제 공고 fixture·capture·라벨·보고서는 [runs/](runs/README.md)의 실행별 폴더에 보관한다. 협업용 고정 자료는
 허용 목록으로 Git에 포함하며, 새 실행과 생성 화면·엑셀·임시 파일은 기본적으로 제외한다. 현재 공유된
-[공고 1,422건·최초 판정 1,605건·추가 판정 210건의 이어받기 안내](runs/support-program-catalog-20260906-v1/README.md)를 따른다.
-다른 PC에서도 API 호출 없이 자료를 검증할 수 있지만, 실제 검색 품질 점수가 만들어진 것은 아니다.
+[공고 1,422건·실제 캡처·전체 판정의 이어받기 안내](runs/support-program-catalog-20260906-v1/README.md)를 따른다.
+실제 16개 검색 캡처와 AI-only 1차 지표는 [최종 보고서](runs/support-program-catalog-20260906-v1/review-final-v1/report.md)에 있다.
+평가 가능한 질문은 6개(양성 2개)뿐이므로 일반적인 검색 품질 검증 완료로 해석하지 않는다.
+다른 PC에서도 `verify-shared-run.py --with-capture`로 원표·라벨·실제 지표를 API 없이 재현할 수 있다.

@@ -5,17 +5,17 @@ SUPPORT_PROGRAM_RANKING_INSTRUCTIONS = """당신은 대한민국 중소기업 �
 
 각 후보를 다음 고정 기준으로 독립적으로 평가합니다. 총점은 정확히 100점 만점입니다.
 - semanticRelevance 0~40: 사용자 질문과 공고 목적·내용의 의미적 관련성
-- targetFit 0~25: 사용자가 밝힌 기업 유형·업종·업력과 지원대상의 적합성
-- regionFit 0~15: 사용자가 밝힌 지역과 지원지역의 적합성. 지역을 밝히지 않았다면 중립적으로 평가
+- targetAssessment.score 0~25: 사용자가 밝힌 기업 유형·업종·업력과 지원대상의 적합성
+- regionAssessment.score 0~15: 사용자가 밝힌 지역과 지원지역의 적합성. 지역을 밝히지 않았다면 중립적으로 평가
 - applicationStatusFit 0~10: 사용자의 신청 가능 시점 요구와 제공된 status·applicationPeriod의 적합성
 - supportTypeFit 0~10: 자금·기술·수출·교육 등 사용자가 원하는 지원 유형과의 적합성
 
 규칙:
-- 입력 candidates[].id의 제공처 포함 식별자(sourceCode:sourceProgramId)를 각각 한 번씩, 변경하지 않고 출력의 programId로 반환합니다.
-- totalScore는 다섯 세부 점수의 합과 정확히 같아야 합니다.
+- 출력 rankings는 배열이 아니라 입력 candidates[].id의 제공처 포함 식별자(sourceCode:sourceProgramId)를 필수 키로 갖는 객체입니다. 모든 키의 후보를 평가하고 각 값에는 programId를 출력하지 않습니다.
+- totalScore는 출력하지 않습니다. Service가 다섯 세부 점수의 합으로 계산합니다.
 - recommendationReasons는 후보 원문에서 확인 가능한 짧은 한국어 이유 1~3개입니다.
-- targetEligibility와 regionEligibility는 각각 MATCH, INCOMPATIBLE, UNKNOWN 중 하나입니다.
-- INCOMPATIBLE은 사용자가 밝힌 대상 또는 지역 조건과 공고 원문이 명백히 충돌할 때만 사용합니다. 이때 해당 fit 점수는 반드시 0점입니다. 예를 들어 사용자가 서울 소재 기업을 찾는데 공고 지원지역이 부산으로 한정되었거나, 기창업 기업을 찾는데 공고 대상이 예비창업자로 한정된 경우입니다.
+- targetAssessment와 regionAssessment는 각각 eligibility와 score를 함께 반환합니다. eligibility는 MATCH, INCOMPATIBLE, UNKNOWN 중 하나입니다.
+- INCOMPATIBLE은 사용자가 밝힌 대상 또는 지역 조건과 공고 원문이 명백히 충돌할 때만 사용합니다. 이때 같은 assessment의 score는 반드시 0점입니다. 예를 들어 사용자가 서울 소재 기업을 찾는데 공고 지원지역이 부산으로 한정되었거나, 기창업 기업을 찾는데 공고 대상이 예비창업자로 한정된 경우입니다.
 - UNKNOWN은 사용자가 해당 조건을 밝히지 않았거나 공고 원문에 판단할 정보가 부족한 경우입니다. 정보 부족만으로 INCOMPATIBLE로 판단하지 마세요.
 - MATCH는 공고 원문에서 사용자의 해당 조건과 양립함을 확인할 수 있을 때 사용합니다.
 - 입력 순서를 점수 근거로 사용하지 않습니다.

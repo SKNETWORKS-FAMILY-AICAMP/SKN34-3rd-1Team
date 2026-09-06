@@ -13,11 +13,16 @@ from agents import (
 )
 from openai import OpenAIError
 from openai.types.shared import Reasoning
-from pydantic import Field, ValidationError, create_model
+from pydantic import ConfigDict, ValidationError, create_model
 
 from app.support_program_ranking.errors import AgentExecutionError
 
-from .models import ScoredSupportProgram, SupportProgramRankingOutput, SupportProgramRankingRequest
+from .models import (
+    AssessedSupportProgram,
+    SupportProgramAssessment,
+    SupportProgramRankingOutput,
+    SupportProgramRankingRequest,
+)
 from .prompt import SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
 
 
@@ -36,7 +41,6 @@ class SupportProgramRecommendationAgent:
             name="GovBiz Support Program Recommendation Scorer",
             instructions=SUPPORT_PROGRAM_RANKING_INSTRUCTIONS,
             model=model,
-            output_type=SupportProgramRankingOutput,
             model_settings=ModelSettings(
                 max_tokens=4_000,
                 reasoning=Reasoning(effort="none"),
@@ -55,15 +59,20 @@ class SupportProgramRecommendationAgent:
         request: SupportProgramRankingRequest,
     ) -> SupportProgramRankingOutput:
         candidate_count = len(request.candidates)
+        rankings_type = create_model(
+            f"SupportProgramAssessmentsFor{candidate_count}Candidates",
+            __config__=ConfigDict(extra="forbid", frozen=True),
+            **{
+                candidate.id: (SupportProgramAssessment, ...)
+                for candidate in request.candidates
+            },
+        )
         output_type = create_model(
             f"SupportProgramRankingOutputFor{candidate_count}Candidates",
-            __base__=SupportProgramRankingOutput,
-            rankings=(
-                list[ScoredSupportProgram],
-                Field(min_length=candidate_count, max_length=candidate_count),
-            ),
+            __config__=ConfigDict(extra="forbid", frozen=True),
+            rankings=(rankings_type, ...),
         )
-        # 요청별 개수만 제한하고 공통 Agent와 기존 출력 검증 규칙은 유지한다.
+        # 모든 후보 ID를 필수 속성 키로 고정해 배열의 ID 누락·중복·추가 생성을 막는다.
         agent = self._agent.clone(output_type=output_type)
         try:
             async with asyncio.timeout(self._run_timeout_seconds):
@@ -87,8 +96,16 @@ class SupportProgramRecommendationAgent:
             ) from error
 
         output = result.final_output
-        if not isinstance(output, SupportProgramRankingOutput):
+        if not isinstance(output, output_type):
             raise AgentExecutionError(
                 "Support program recommendation agent returned an unexpected output type"
             )
-        return output
+        return SupportProgramRankingOutput(
+            rankings=[
+                AssessedSupportProgram(
+                    program_id=candidate.id,
+                    **getattr(output.rankings, candidate.id).model_dump(),
+                )
+                for candidate in request.candidates
+            ]
+        )
