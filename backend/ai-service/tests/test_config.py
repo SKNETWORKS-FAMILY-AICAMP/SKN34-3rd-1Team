@@ -28,6 +28,30 @@ def test_reads_trimmed_openai_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.llm_run_timeout_seconds == 1.75
 
 
+def test_default_timeouts_allow_measured_ranking_latency(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "LLM_MODEL_TIMEOUT_SECONDS",
+        "LLM_RUN_TIMEOUT_SECONDS",
+        "LLM_TIMEOUT_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = Settings.from_environment()
+
+    assert settings.llm_model_timeout_seconds == 25.0
+    assert settings.llm_run_timeout_seconds == 30.0
+
+
+def test_accepts_the_thirty_second_timeout_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_MODEL_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("LLM_RUN_TIMEOUT_SECONDS", "30")
+
+    settings = Settings.from_environment()
+
+    assert settings.llm_model_timeout_seconds == 30.0
+    assert settings.llm_run_timeout_seconds == 30.0
+
+
 @pytest.mark.parametrize(
     ("environment_name", "field_name", "default"),
     [

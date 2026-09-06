@@ -7,13 +7,17 @@ import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramIndexMatchPay
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramIndexSearchPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramIndexSearchRequest
 import ai.govbiz.core.supportprogram.client.ai.mapper.SupportProgramIndexDocumentMapper
+import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.helper.SupportProgramTestHelper.catalogProgram
+import java.text.Normalizer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.Mock
 import org.mockito.Mockito.doReturn
+import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.junit.jupiter.MockitoExtension
@@ -27,19 +31,100 @@ class AiSupportProgramRetrievalFacadeTest {
     private val request = AiSupportProgramIndexSearchRequest("서울 AI", documents.map { it.reference() }, 20)
 
     @Test
-    fun sendsAllTwentyFiveCurrentVersionsAndReturnsOnlySemanticallySelectedPrograms() {
+    fun sendsAllTwentyFiveCurrentVersionsAndKeepsSemanticOrderWhenNoKeywordsMatch() {
+        val query = "unmatchedquery"
+        val request = AiSupportProgramIndexSearchRequest(query, documents.map { it.reference() }, 20)
         val selectedIndexes = listOf(24, 0) + (1..18)
         val selectedMatches = selectedIndexes.mapIndexed { rank, index -> match(index, 1.0 - rank * 0.01) }
-        doReturn(AiSupportProgramIndexSearchPayload("서울 AI", selectedMatches))
+        doReturn(AiSupportProgramIndexSearchPayload(query, selectedMatches))
             .`when`(client).search(request)
 
-        val result = AiSupportProgramRetrievalFacade(client).retrieve("서울 AI", programs)
+        val result = AiSupportProgramRetrievalFacade(client).retrieve(query, programs)
 
         assertEquals(selectedIndexes.map { "program-${it + 1}" }, result.map { it.program.id })
         verify(client).search(request)
         assertThrows(UnsupportedOperationException::class.java) {
             (result as MutableList).clear()
         }
+    }
+
+    @Test
+    fun restoresAnOlderKeywordCandidateOutsideSemanticTwentyWithAUniqueTwentyCandidateBudget() {
+        val query = "quartz funding"
+        val candidates = (1..25).map { index ->
+            catalogProgram(
+                "program-$index",
+                summary = when (index) {
+                    20 -> "quartz"
+                    25 -> "quartz funding"
+                    else -> "별도 공고"
+                },
+            ).let { if (index == 25) it.copy(sortTimestamp = "2020-01-01") else it }
+        }
+        stubSemantic(query, candidates, candidates.take(20))
+
+        val result = AiSupportProgramRetrievalFacade(client).retrieve(query, candidates)
+        val ids = result.map { it.program.id }
+
+        assertEquals(20, result.size)
+        assertEquals(20, ids.toSet().size)
+        // 두 순위에 포함된 공고가 먼저 오고, 같은 RRF 점수에서는 의미 검색 순위를 우선한다.
+        assertEquals(listOf("program-20", "program-1", "program-25"), ids.take(3))
+        assertTrue(result.all { it in candidates })
+    }
+
+    @Test
+    fun combinesBothRankingsAndUsesSemanticRankForEqualFusionScores() {
+        val first = catalogProgram("first", "quartz").copy(sortTimestamp = "2026-08-01")
+        val second = catalogProgram("second", "quartz").copy(sortTimestamp = "2026-08-02")
+        val candidates = listOf(first, second, catalogProgram("third", "별도 공고"))
+        stubSemantic("quartz", candidates, candidates)
+
+        val result = AiSupportProgramRetrievalFacade(client).retrieve("quartz", candidates)
+
+        // 의미 순위 first/second와 키워드 순위 second/first의 합은 같으므로 first가 먼저다.
+        assertEquals(listOf("first", "second", "third"), result.map { it.program.id })
+    }
+
+    @Test
+    fun keywordRanksUseDistinctNormalizedTokensThenRecencyAndCanonicalIdRegardlessOfInputOrder() {
+        val query = "크롬 QUARTZ funding"
+        val semantic = (1..20).map { catalogProgram("semantic-$it", "별도 공고") }
+        val decomposed = Normalizer.normalize("크롬", Normalizer.Form.NFD)
+        val strongest = catalogProgram("strongest", "$decomposed quartz funding")
+            .copy(sortTimestamp = "2020-01-01")
+        val newest = catalogProgram("newest", "크롬 quartz").copy(sortTimestamp = "2026-08-22")
+        val firstTie = catalogProgram("SHARED", "quartz funding")
+        val secondTie = firstTie.copy(program = firstTie.program.copy(sourceCode = "OTHER"))
+        val repeated = catalogProgram("repeated", "quartz quartz quartz quartz")
+        val candidates = semantic + listOf(repeated, secondTie, strongest, firstTie, newest)
+        val reverse = candidates.reversed()
+        stubSemantic(query, candidates, semantic)
+        stubSemantic(query, reverse, semantic)
+        val facade = AiSupportProgramRetrievalFacade(client)
+
+        val result = facade.retrieve(query, candidates)
+        val reversedResult = facade.retrieve(query, reverse)
+        val lexicalIds = result.filter { it !in semantic }.map { it.program.sourceQualifiedId }
+
+        assertEquals(result, reversedResult)
+        assertEquals(
+            listOf("BIZINFO:strongest", "BIZINFO:newest", "BIZINFO:SHARED", "OTHER:SHARED", "BIZINFO:repeated"),
+            lexicalIds,
+        )
+        assertEquals(20, result.size)
+    }
+
+    @Test
+    fun propagatesSemanticFailureEvenWhenTheCatalogHasKeywordMatches() {
+        doThrow(AiServiceCallException.unavailable(null)).`when`(client).search(request)
+
+        val failure = assertThrows(AiServiceCallException::class.java) {
+            AiSupportProgramRetrievalFacade(client).retrieve("서울 AI", programs)
+        }
+
+        assertEquals(AiServiceFailure.UNAVAILABLE, failure.failure)
+        verify(client).search(request)
     }
 
     @Test
@@ -134,4 +219,18 @@ class AiSupportProgramRetrievalFacadeTest {
     private fun match(index: Int, score: Double) = AiSupportProgramIndexMatchPayload(
         documents[index].id, documents[index].contentHash, score,
     )
+
+    private fun stubSemantic(
+        query: String,
+        candidates: List<CatalogSupportProgram>,
+        selected: List<CatalogSupportProgram>,
+    ) {
+        val documents = candidates.map(SupportProgramIndexDocumentMapper::fromCatalog)
+        val request = AiSupportProgramIndexSearchRequest(query, documents.map { it.reference() }, 20)
+        val matches = selected.mapIndexed { index, candidate ->
+            val document = SupportProgramIndexDocumentMapper.fromCatalog(candidate)
+            AiSupportProgramIndexMatchPayload(document.id, document.contentHash, 1.0 - index * 0.01)
+        }
+        doReturn(AiSupportProgramIndexSearchPayload(query, matches)).`when`(client).search(request)
+    }
 }

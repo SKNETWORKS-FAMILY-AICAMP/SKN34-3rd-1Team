@@ -30,8 +30,8 @@ export const supportProgramChatSuggestions = [
   '제조기업 R&D 사업을 찾아줘',
 ]
 
-/** 브라우저가 응답을 무기한 기다리지 않도록 검색 요청 시간을 제한합니다. */
-export const supportProgramSearchTimeoutMilliseconds = 30_000
+/** 순차 의미 검색(30초)·점수화(35초)에 여유를 두고 검색 요청 시간을 제한합니다. */
+export const supportProgramSearchTimeoutMilliseconds = 70_000
 
 type SupportProgramSearchUseCase = Pick<SearchSupportProgramsUseCase, 'execute'>
 

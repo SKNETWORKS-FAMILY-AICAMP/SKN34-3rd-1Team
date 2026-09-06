@@ -36,6 +36,7 @@ GET /api/v1/support-programs/search
       └→ 검색어 있음:
           AiSupportProgramRetrievalFacade → AiSupportProgramIndexClient
             → AI Service → 질의 임베딩 → Qdrant 후보 최대 20개
+            → Core: 전체 적격 공고의 키워드 상위 20개와 RRF 결합 → 후보 최대 20개
           AiSupportProgramRankingFacade → HttpAiSupportProgramRankingClient
             → AI Service → 단일 Agent → OpenAI 점수화
           Core의 응답 검증 → 최종 추천 0~5개
@@ -47,8 +48,13 @@ GET /api/v1/support-programs/search
    `source_sort_timestamp` 내림차순·제공처 코드·원본 ID 오름차순의 최대 5개를 반환합니다. 이 두 경로는 AI를 호출하지 않습니다.
 3. 비어 있지 않은 질의는 대상 공고 전체의 정확한 ID·내용 해시를 AI Service에 전달합니다.
    최신 공고 20개를 먼저 자르지 않습니다. Qdrant가 반환해야 할 개수는 `min(대상 공고 수, 20)`입니다.
-4. Core는 의미 검색 응답의 질의·ID·해시·중복·유한 점수·내림차순·개수를 검증하고,
-   해당 DB 공고만 점수화 요청의 후보로 전달합니다.
+4. `AiSupportProgramRetrievalFacade`는 의미 검색 응답의 질의·ID·해시·중복·유한 점수·내림차순·개수를
+   검증한 뒤 전체 적격 공고의 동일 색인 본문에서 키워드 상위 20개를 구합니다. 질의와 본문을 NFC로
+   정규화하고 `Locale.ROOT` 소문자 변환 후 `[a-z0-9가-힣]+` 토큰 집합의 교집합 수를 내림차순으로
+   정렬합니다. 일치 토큰이 없는 공고는 제외하고, 동점은 정렬 시각 내림차순·제공처 포함 ID 오름차순입니다.
+   의미 검색과 키워드의 1부터 시작하는 순위를 동일 가중치 RRF `1 / (60 + 순위)`로 합산하고,
+   동점은 의미 검색 순위·제공처 포함 ID 오름차순으로 정렬해 중복 없는 최대 20개를 점수화에 전달합니다.
+   의미 검색 응답이 실패하거나 잘못됐으면 오류를 반환합니다. 키워드 일치가 없으면 의미 검색 순서를 유지합니다.
 5. AI는 모든 후보의 의미·자격·세부 점수를 `SupportProgramAssessment`로 판단하고 총점은 출력하지 않습니다.
    요청별 strict schema의 `rankings`는 후보 ID 자체를 필수 키로 선언한 객체이며 다른 키는 금지합니다.
    Agent는 검증된 키를 ID로 붙여 기존 내부 `AssessedSupportProgram` 목록으로 변환합니다.
@@ -130,7 +136,7 @@ POST /api/v1/support-programs/detail/answers
 검색된 청크의 인용이 하나 이상 있어야 하며 Core는 인용이 전달한 청크 밖을 가리키면 응답을 거부합니다.
 인용 발췌문은 선택한 청크 전체를 반환해 청크 뒤쪽의 답변 근거도 화면에서 확인할 수 있습니다.
 
-첨부파일·PDF·OCR·다른 제공처 원문 수집은 이 흐름에 포함하지 않습니다. 공고 목록 검색의 Qdrant 후보 선정·AI
+첨부파일·PDF·OCR·다른 제공처 원문 수집은 이 흐름에 포함하지 않습니다. 공고 목록 검색의 의미·키워드 후보 선정·AI
 점수화와도 별도 사용 사례이므로, 원문 질문을 하지 않으면 기업마당 상세 HTML을 수집하거나 evidence 컬렉션을
 사용하지 않습니다.
 
@@ -146,7 +152,7 @@ evaluation-fixture-export profile (비웹 실행)
 evaluation-capture profile (비웹 실행)
   → 질문 묶음 JSON 검증
   → 같은 referenceDate로 SupportProgramSearchService.searchWithTrace
-      → MySQL 현재 공고 → 기준 날짜의 적격 공고 → Qdrant 후보 최대 20개 → AI 최종 추천 최대 5개
+      → MySQL 현재 공고 → 기준 날짜의 적격 공고 → 의미·키워드 RRF 후보 최대 20개 → AI 최종 추천 최대 5개
   → 기준 날짜·질문별 후보 ID·최종 ID·카탈로그 지문을 원자적으로 JSON 기록
   → 별도 Python 평가 도구가 사람 라벨 fixture와 대조
 ```
@@ -287,6 +293,10 @@ AI Service는 점수화와 원문 근거 답변에서 각각 `HTTP API → Servi
 `max_turns=1`로 실행합니다. 현재 tool·handoff·multi-agent orchestration은 없습니다. 일반 공고 색인·검색은
 `support_program_index`, 원문 청크 색인·검색은 `support_program_evidence`가 OpenAI 임베딩과 분리된 Qdrant
 컬렉션을 직접 사용합니다.
+
+추천 점수화와 근거 답변의 기본 제한시간은 모델 `25s` → Agent 실행 `30s` → Core 읽기 `35s`입니다.
+AI Health도 Core의 같은 읽기 설정을 사용합니다. 공고 의미 검색 전체는 AI에서 `25s`, Core 읽기는
+`30s`이며, 검색 화면은 의미 검색과 점수화의 순차 호출을 고려해 `70s` 후 요청을 취소합니다.
 
 ## 오류 경계
 

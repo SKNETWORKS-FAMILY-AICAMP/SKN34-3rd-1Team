@@ -60,7 +60,8 @@ fixture와 순서·내용까지 같아야 합니다. 내보내기는 빈 적격 
 사람이 라벨링한 fixture와 같은 질문 묶음을 준비한 뒤에는 공개 API를 반복 호출하지 않고
 `evaluation-capture` 프로필을 실행합니다. 이 프로필은 웹 서버·기업마당 동기화·누락 색인 복구를 끈 뒤,
 질문 묶음의 각 항목을 현재 `SupportProgramSearchService`에 전달합니다. 따라서 MySQL의 적격 공고 선정,
-Qdrant 후보 최대 20개, AI 최종 추천 최대 5개라는 운영 검색 흐름에서 나온 ID를 그대로 JSON 파일에 기록합니다.
+Qdrant·키워드 순위를 결합한 후보 최대 20개, AI 최종 추천 최대 5개라는 운영 검색 흐름에서 나온 ID를
+그대로 JSON 파일에 기록합니다.
 
 질문 파일은 [예시](../../evaluation/support-program-search/query-set.example.json)를 복사해 준비합니다.
 fixture 내보내기는 지정한 기준 날짜의 `OPEN` 공고만 담으므로, 캡처도 기본값인 `acceptingOnly=true`와
@@ -98,8 +99,11 @@ capture의 기준 날짜가 다르면 점수 계산을 거부합니다. 실제 �
 | `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
 
 - 검색: 필수 `query`는 최대 500자이며 빈 문자열을 허용합니다. `acceptingOnly`의 기본값은 `true`이고
-  이때 `OPEN` 공고만 대상으로 삼습니다. 검색어가 있으면 의미 검색 후보 최대 20개를 AI가 점수화하여
-  기준을 통과한 0~5개를 반환합니다. 빈 검색어는 AI를 호출하지 않고 최신순 최대 5개를 반환합니다.
+  이때 `OPEN` 공고만 대상으로 삼습니다. 검색어가 있으면 검증된 의미 검색 상위 20개와 전체 적격 공고의
+  키워드 상위 20개를 같은 가중치의 RRF(`1 / (60 + 순위)`)로 결합하고, 최대 20개를 AI가 점수화하여
+  기준을 통과한 0~5개를 반환합니다. 키워드는 색인 본문의 NFC·소문자 토큰 집합 교집합 수로 정렬하고
+  동점은 최신순·제공처 포함 ID순입니다. RRF 동점은 의미 검색 순위·제공처 포함 ID순입니다.
+  의미 검색 실패는 오류로 반환합니다. 빈 검색어는 AI를 호출하지 않고 최신순 최대 5개를 반환합니다.
 - 검색 준비 상태: `readiness`는 현재 신뢰할 수 있는 공개 스냅샷의 공고 수, 마지막 동기화 성공·실패 시각,
   해당 스냅샷의 전체 색인 준비 여부를 반환합니다. `SEARCHABLE`은 공고 수가 0인 성공 스냅샷도 포함하며,
   `SEARCHABLE_WITH_SYNC_FAILURE`은 이전 스냅샷은 검색 가능하지만 최신 수집·사전 색인 시도가 실패한 경우입니다.
@@ -146,12 +150,16 @@ Compose는 일부 주소·CORS 값을 내부 네트워크에 맞게 덮어씁니
 | `BIZINFO_SYNC_FIXED_DELAY` | `PT6H` | 이전 수집 작업 종료 후 다음 실행까지의 지연 |
 | `AI_SERVICE_BASE_URL` | `http://127.0.0.1:8000` | 내부 AI Service 주소 |
 | `AI_SERVICE_CONNECT_TIMEOUT` | `1s` | AI Service 연결 제한시간 |
-| `AI_SERVICE_READ_TIMEOUT` | `12s` | Health·점수화 응답 제한시간 |
+| `AI_SERVICE_READ_TIMEOUT` | `35s` | AI Health·점수화·원문 근거 답변 응답 제한시간 |
 | `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | 의미 검색·색인 응답 제한시간 |
 | `SUPPORT_PROGRAM_INDEX_ENABLED` | `true` | 이미 공개된 공고의 누락 벡터 자동 복구 여부 |
 | `SUPPORT_PROGRAM_INDEX_INITIAL_DELAY` | `PT0S` | 첫 누락 벡터 복구까지의 지연 |
 | `SUPPORT_PROGRAM_INDEX_FIXED_DELAY` | `PT1M` | 이전 복구 작업 종료 후 다음 실행까지의 지연 |
 | `APP_CORS_ALLOWED_ORIGIN` | `http://localhost:5173` | 허용할 Web origin |
+
+추천 점수화와 원문 근거 답변의 AI 모델·Agent 기본 제한은 각각 `25s`·`30s`이며 Core 읽기 제한
+`35s`보다 짧습니다. 검색은 의미 검색과 점수화를 순서대로 호출하므로 브라우저 검색 제한은 두 Core
+읽기 제한 `30s + 35s`에 여유를 둔 `70s`입니다. 이 값은 요청 제한이며 응답시간 보장은 아닙니다.
 
 `SUPPORT_PROGRAM_INDEX_ENABLED=false`는 별도 복구 스케줄러만 끕니다. 새 카탈로그 공개 전의 필수
 색인은 계속 실행됩니다. 두 스케줄러는 각각 별도의 단일 스레드에서 실행되며 실패를 기록한 뒤
@@ -170,7 +178,7 @@ supportprogram/
 ├── controller            # 공개 HTTP 진입점
 │   └── dto               # 공개 응답 계약
 ├── service/
-│   ├── search             # DB 조회 → 의미 검색 → AI 점수화
+│   ├── search             # DB 조회 → 의미·키워드 순위 결합 → AI 점수화
 │   ├── detail             # 현재 공고 상세 조회
 │   ├── evidence           # 공식 원문 캐시·청킹 → 근거 검색·답변
 │   ├── sync               # 수집·색인 준비·DB 공개와 별도 벡터 복구
