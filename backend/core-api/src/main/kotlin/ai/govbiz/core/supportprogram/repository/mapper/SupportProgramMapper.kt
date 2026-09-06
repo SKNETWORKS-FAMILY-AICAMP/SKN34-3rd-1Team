@@ -19,6 +19,8 @@ interface SupportProgramMapper {
 
     fun findPresent(): List<SupportProgramDbRow>
 
+    fun findSearchablePresent(): List<SupportProgramDbRow>
+
     fun upsertSourceDocument(row: SupportProgramSourceDocumentDbRow): Int
 
     fun findPresentSourceDocument(
@@ -36,6 +38,8 @@ interface SupportProgramMapper {
     ): Int
 
     fun findSyncStatus(@Param("sourceCode") sourceCode: String): SupportProgramSyncStatusDbRow?
+
+    fun findSyncStatuses(): List<SupportProgramSyncStatusDbRow>
 
     fun upsertSyncSuccess(
         @Param("sourceCode") sourceCode: String,

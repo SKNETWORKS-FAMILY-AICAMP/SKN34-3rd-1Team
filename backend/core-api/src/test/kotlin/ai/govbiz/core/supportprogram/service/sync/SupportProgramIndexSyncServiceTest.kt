@@ -15,6 +15,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.Mock
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.doThrow
@@ -105,8 +107,8 @@ class SupportProgramIndexSyncServiceTest {
 
         assertEquals(0, SupportProgramIndexSyncService(repository, client).repair())
         verifyNoInteractions(client)
-        verify(repository, never()).bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(
-            emptyList(),
+        verify(repository, never()).bootstrapLegacySnapshotAfterSuccessfulRepair(
+            "BIZINFO", emptyList(),
         )
     }
 
@@ -117,13 +119,13 @@ class SupportProgramIndexSyncServiceTest {
             snapshot.map(SupportProgramIndexDocumentMapper::fromCatalog),
         )
         doReturn(snapshot).`when`(repository).findPresent()
-        doReturn(null).`when`(repository).findBizInfoSyncStatus()
+        doReturn(emptyList<SupportProgramSyncStatus>()).`when`(repository).findSyncStatuses()
         doReturn(AiSupportProgramIndexBatchPayload(1)).`when`(client).indexBatch(request)
-        doReturn(true).`when`(repository).bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(snapshot)
+        doReturn(true).`when`(repository).bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", snapshot)
 
         assertEquals(1, SupportProgramIndexSyncService(repository, client).repair())
 
-        verify(repository).bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(snapshot)
+        verify(repository).bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", snapshot)
     }
 
     @Test
@@ -133,14 +135,14 @@ class SupportProgramIndexSyncServiceTest {
             snapshot.map(SupportProgramIndexDocumentMapper::fromCatalog),
         )
         doReturn(snapshot).`when`(repository).findPresent()
-        doReturn(null).`when`(repository).findBizInfoSyncStatus()
+        doReturn(emptyList<SupportProgramSyncStatus>()).`when`(repository).findSyncStatuses()
         doThrow(AiServiceCallException.unavailable(null)).`when`(client).indexBatch(request)
 
         assertThrows(AiServiceCallException::class.java) {
             SupportProgramIndexSyncService(repository, client).repair()
         }
 
-        verify(repository, never()).bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(snapshot)
+        verify(repository, never()).bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", snapshot)
     }
 
     @Test
@@ -151,19 +153,20 @@ class SupportProgramIndexSyncServiceTest {
         )
         val fingerprint = SupportProgramCatalogFingerprintHelper.calculate(snapshot)
         doReturn(snapshot).`when`(repository).findPresent()
-        doReturn(status(generation = 31L, fingerprint = fingerprint, programCount = 1))
-            .`when`(repository).findBizInfoSyncStatus()
+        doReturn(listOf(status(generation = 31L, fingerprint = fingerprint, programCount = 1)))
+            .`when`(repository).findSyncStatuses()
         doReturn(AiSupportProgramIndexBatchPayload(1)).`when`(client).indexBatch(request)
 
         assertEquals(1, SupportProgramIndexSyncService(repository, client).repair())
 
-        verify(repository).markBizInfoIndexReadyIfPublishedSnapshotMatches(31L, fingerprint, 1)
-        verify(repository, never()).markBizInfoIndexNotReadyIfPublishedSnapshotMatches(
+        verify(repository).markIndexReadyIfPublishedSnapshotMatches("BIZINFO", 31L, fingerprint, 1)
+        verify(repository, never()).markIndexNotReadyIfPublishedSnapshotMatches(
+            org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyInt(),
         )
-        verify(repository, never()).bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(snapshot)
+        verify(repository, never()).bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", snapshot)
     }
 
     @Test
@@ -175,10 +178,10 @@ class SupportProgramIndexSyncServiceTest {
         val fingerprint = SupportProgramCatalogFingerprintHelper.calculate(snapshot)
         val failure = AiServiceCallException.unavailable(null)
         doReturn(snapshot).`when`(repository).findPresent()
-        doReturn(status(generation = 32L, fingerprint = fingerprint, programCount = 1))
-            .`when`(repository).findBizInfoSyncStatus()
+        doReturn(listOf(status(generation = 32L, fingerprint = fingerprint, programCount = 1)))
+            .`when`(repository).findSyncStatuses()
         doThrow(failure).`when`(client).indexBatch(request)
-        doReturn(false).`when`(repository).markBizInfoIndexNotReadyIfPublishedSnapshotMatches(32L, fingerprint, 1)
+        doReturn(false).`when`(repository).markIndexNotReadyIfPublishedSnapshotMatches("BIZINFO", 32L, fingerprint, 1)
 
         assertEquals(
             failure,
@@ -187,13 +190,14 @@ class SupportProgramIndexSyncServiceTest {
             },
         )
 
-        verify(repository).markBizInfoIndexNotReadyIfPublishedSnapshotMatches(32L, fingerprint, 1)
-        verify(repository, never()).markBizInfoIndexReadyIfPublishedSnapshotMatches(
+        verify(repository).markIndexNotReadyIfPublishedSnapshotMatches("BIZINFO", 32L, fingerprint, 1)
+        verify(repository, never()).markIndexReadyIfPublishedSnapshotMatches(
+            org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyInt(),
         )
-        verify(repository, never()).bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(snapshot)
+        verify(repository, never()).bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", snapshot)
     }
 
     @Test
@@ -203,31 +207,186 @@ class SupportProgramIndexSyncServiceTest {
             snapshot.map(SupportProgramIndexDocumentMapper::fromCatalog),
         )
         doReturn(snapshot).`when`(repository).findPresent()
-        doReturn(status(generation = 33L, fingerprint = "f".repeat(64), programCount = 1))
-            .`when`(repository).findBizInfoSyncStatus()
+        doReturn(listOf(status(generation = 33L, fingerprint = "f".repeat(64), programCount = 1)))
+            .`when`(repository).findSyncStatuses()
         doReturn(AiSupportProgramIndexBatchPayload(1)).`when`(client).indexBatch(request)
 
         assertEquals(1, SupportProgramIndexSyncService(repository, client).repair())
 
-        verify(repository, never()).markBizInfoIndexReadyIfPublishedSnapshotMatches(
+        verify(repository, never()).markIndexReadyIfPublishedSnapshotMatches(
+            org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyInt(),
         )
-        verify(repository, never()).markBizInfoIndexNotReadyIfPublishedSnapshotMatches(
+        verify(repository, never()).markIndexNotReadyIfPublishedSnapshotMatches(
+            org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyInt(),
         )
-        verify(repository, never()).bootstrapBizInfoLegacySnapshotAfterSuccessfulRepair(snapshot)
+        verify(repository, never()).bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", snapshot)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["BIZINFO", "OTHER"])
+    fun failedSourceDoesNotBlockAnotherSourceWithTheSameRawProgramId(failedSource: String) {
+        val successfulSource = if (failedSource == "BIZINFO") "OTHER" else "BIZINFO"
+        val failedPrograms = listOf(programForSource("SHARED", failedSource))
+        val successfulPrograms = listOf(programForSource("SHARED", successfulSource))
+        val failedFingerprint = SupportProgramCatalogFingerprintHelper.calculate(failedPrograms)
+        val successfulFingerprint = SupportProgramCatalogFingerprintHelper.calculate(successfulPrograms)
+        val failedRequest = AiSupportProgramIndexBatchRequest(
+            failedPrograms.map(SupportProgramIndexDocumentMapper::fromCatalog),
+        )
+        val successfulRequest = AiSupportProgramIndexBatchRequest(
+            successfulPrograms.map(SupportProgramIndexDocumentMapper::fromCatalog),
+        )
+        val failure = AiServiceCallException.unavailable(null)
+        val statusFailure = IllegalStateException("cannot record the failed source status")
+        doReturn(failedPrograms + successfulPrograms).`when`(repository).findPresent()
+        doReturn(
+            listOf(
+                status(41L, failedFingerprint, 1, failedSource),
+                status(42L, successfulFingerprint, 1, successfulSource),
+            ),
+        ).`when`(repository).findSyncStatuses()
+        doThrow(failure).`when`(client).indexBatch(failedRequest)
+        doThrow(statusFailure).`when`(repository)
+            .markIndexNotReadyIfPublishedSnapshotMatches(failedSource, 41L, failedFingerprint, 1)
+        doReturn(AiSupportProgramIndexBatchPayload(1)).`when`(client).indexBatch(successfulRequest)
+
+        val thrown = assertThrows(AiServiceCallException::class.java) {
+            SupportProgramIndexSyncService(repository, client).repair()
+        }
+
+        assertEquals(failure, thrown)
+        assertEquals(listOf(statusFailure), thrown.suppressed.toList())
+        val order = inOrder(repository, client)
+        order.verify(client).indexBatch(failedRequest)
+        order.verify(repository).markIndexNotReadyIfPublishedSnapshotMatches(failedSource, 41L, failedFingerprint, 1)
+        order.verify(client).indexBatch(successfulRequest)
+        order.verify(repository)
+            .markIndexReadyIfPublishedSnapshotMatches(successfulSource, 42L, successfulFingerprint, 1)
+        verify(repository, never()).markIndexReadyIfPublishedSnapshotMatches(failedSource, 41L, failedFingerprint, 1)
+        verify(repository, never())
+            .markIndexNotReadyIfPublishedSnapshotMatches(successfulSource, 42L, successfulFingerprint, 1)
+    }
+
+    @Test
+    fun reportsAllSourceFailuresAfterAttemptingEverySource() {
+        val bizInfoPrograms = listOf(catalogProgram("SHARED"))
+        val otherPrograms = listOf(programForSource("SHARED", "OTHER"))
+        val bizInfoFingerprint = SupportProgramCatalogFingerprintHelper.calculate(bizInfoPrograms)
+        val otherFingerprint = SupportProgramCatalogFingerprintHelper.calculate(otherPrograms)
+        val bizInfoFailure = AiServiceCallException.unavailable(null)
+        val otherFailure = AiServiceCallException.invalidResponse("incomplete acknowledgement", null)
+        doReturn(bizInfoPrograms + otherPrograms).`when`(repository).findPresent()
+        doReturn(
+            listOf(status(51L, bizInfoFingerprint, 1), status(52L, otherFingerprint, 1, "OTHER")),
+        ).`when`(repository).findSyncStatuses()
+        doThrow(bizInfoFailure).`when`(client).indexBatch(
+            AiSupportProgramIndexBatchRequest(bizInfoPrograms.map(SupportProgramIndexDocumentMapper::fromCatalog)),
+        )
+        doThrow(otherFailure).`when`(client).indexBatch(
+            AiSupportProgramIndexBatchRequest(otherPrograms.map(SupportProgramIndexDocumentMapper::fromCatalog)),
+        )
+
+        val thrown = assertThrows(AiServiceCallException::class.java) {
+            SupportProgramIndexSyncService(repository, client).repair()
+        }
+
+        assertEquals(bizInfoFailure, thrown)
+        assertEquals(listOf(otherFailure), thrown.suppressed.toList())
+        verify(repository).markIndexNotReadyIfPublishedSnapshotMatches("BIZINFO", 51L, bizInfoFingerprint, 1)
+        verify(repository).markIndexNotReadyIfPublishedSnapshotMatches("OTHER", 52L, otherFingerprint, 1)
+    }
+
+    @Test
+    fun bootstrapsEachLegacySourceWithOnlyItsOwnSnapshot() {
+        val bizInfoPrograms = listOf(catalogProgram("SHARED"))
+        val otherPrograms = listOf(programForSource("SHARED", "OTHER"))
+        val bizInfoRequest = AiSupportProgramIndexBatchRequest(
+            bizInfoPrograms.map(SupportProgramIndexDocumentMapper::fromCatalog),
+        )
+        val otherRequest = AiSupportProgramIndexBatchRequest(
+            otherPrograms.map(SupportProgramIndexDocumentMapper::fromCatalog),
+        )
+        doReturn(bizInfoPrograms + otherPrograms).`when`(repository).findPresent()
+        doReturn(AiSupportProgramIndexBatchPayload(1)).`when`(client).indexBatch(bizInfoRequest)
+        doReturn(AiSupportProgramIndexBatchPayload(1)).`when`(client).indexBatch(otherRequest)
+
+        assertEquals(2, SupportProgramIndexSyncService(repository, client).repair())
+
+        val order = inOrder(repository, client)
+        order.verify(client).indexBatch(bizInfoRequest)
+        order.verify(repository).bootstrapLegacySnapshotAfterSuccessfulRepair("BIZINFO", bizInfoPrograms)
+        order.verify(client).indexBatch(otherRequest)
+        order.verify(repository).bootstrapLegacySnapshotAfterSuccessfulRepair("OTHER", otherPrograms)
+    }
+
+    @Test
+    fun marksEmptyPublishedSnapshotsReadyWithoutEmbeddingCalls() {
+        val fingerprint = SupportProgramCatalogFingerprintHelper.calculate(emptyList())
+        doReturn(emptyList<CatalogSupportProgram>()).`when`(repository).findPresent()
+        doReturn(
+            listOf(status(61L, fingerprint, 0), status(62L, fingerprint, 0, "OTHER")),
+        ).`when`(repository).findSyncStatuses()
+
+        assertEquals(0, SupportProgramIndexSyncService(repository, client).repair())
+
+        verifyNoInteractions(client)
+        verify(repository).markIndexReadyIfPublishedSnapshotMatches("BIZINFO", 61L, fingerprint, 0)
+        verify(repository).markIndexReadyIfPublishedSnapshotMatches("OTHER", 62L, fingerprint, 0)
+    }
+
+    @Test
+    fun stillRepairsAnEmptyPublishedSourceWhenAnotherSourcesIndexingFails() {
+        val snapshot = listOf(catalogProgram("failed-program"))
+        val fingerprint = SupportProgramCatalogFingerprintHelper.calculate(snapshot)
+        val emptyFingerprint = SupportProgramCatalogFingerprintHelper.calculate(emptyList())
+        doReturn(snapshot).`when`(repository).findPresent()
+        doReturn(
+            listOf(status(71L, fingerprint, 1), status(72L, emptyFingerprint, 0, "OTHER")),
+        ).`when`(repository).findSyncStatuses()
+        doThrow(AiServiceCallException.unavailable(null)).`when`(client).indexBatch(
+            AiSupportProgramIndexBatchRequest(snapshot.map(SupportProgramIndexDocumentMapper::fromCatalog)),
+        )
+
+        assertThrows(AiServiceCallException::class.java) {
+            SupportProgramIndexSyncService(repository, client).repair()
+        }
+
+        verify(repository).markIndexNotReadyIfPublishedSnapshotMatches("BIZINFO", 71L, fingerprint, 1)
+        verify(repository).markIndexReadyIfPublishedSnapshotMatches("OTHER", 72L, emptyFingerprint, 0)
+    }
+
+    @Test
+    fun keepsTheGlobalCatalogLimitWhenProgramsAreSplitAcrossSources() {
+        val snapshot = (0..SupportProgramIndexDocumentMapper.MAX_DOCUMENTS).map { index ->
+            programForSource("program-$index", if (index % 2 == 0) "BIZINFO" else "OTHER")
+        }
+        doReturn(snapshot).`when`(repository).findPresent()
+
+        assertThrows(IllegalStateException::class.java) {
+            SupportProgramIndexSyncService(repository, client).repair()
+        }
+
+        verifyNoInteractions(client)
+    }
+
+    private fun programForSource(id: String, sourceCode: String): CatalogSupportProgram {
+        val catalog = catalogProgram(id)
+        return catalog.copy(program = catalog.program.copy(sourceCode = sourceCode, sourceName = sourceCode))
     }
 
     private fun status(
         generation: Long,
         fingerprint: String,
         programCount: Int,
+        sourceCode: String = "BIZINFO",
     ) = SupportProgramSyncStatus(
-        sourceCode = "BIZINFO",
+        sourceCode = sourceCode,
         publishedGeneration = generation,
         publishedCatalogFingerprint = fingerprint,
         publishedProgramCount = programCount,

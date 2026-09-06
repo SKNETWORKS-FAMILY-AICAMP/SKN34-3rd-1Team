@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { supportPrograms } from '../../fixtures/supportPrograms'
 import { SupportProgramRepositoryImpl } from '../../repositories/SupportProgramRepositoryImpl'
 import {
+  supportProgramSearchReadinessDtoSchema,
+  toSupportProgramSearchReadiness,
+} from '../../models/SupportProgramSearchReadinessDto'
+import {
   answerSupportProgramEvidenceQuestionApi,
   getSupportProgramDetailApi,
   getSupportProgramSearchReadinessApi,
@@ -75,6 +79,8 @@ describe('searchSupportProgramsApi', () => {
 
   it.each([
     ['BIZINFO', 'https://www.bizinfo.go.kr/programs/official'],
+    ['KSTARTUP', 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do'],
+    ['KSTARTUP', 'https://k-startup.go.kr/web/contents/bizpbanc-ongoing.do'],
   ])('accepts an allowlisted official URL for %s', async (sourceCode, sourceUrl) => {
     const program = { ...supportPrograms[3], sourceCode, sourceUrl }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
@@ -97,6 +103,12 @@ describe('searchSupportProgramsApi', () => {
     ['UNKNOWN', 'https://www.bizinfo.go.kr/program'],
     ['BIZINFO', 'https://attacker@www.bizinfo.go.kr/program'],
     ['BIZINFO', 'https://www.bizinfo.go.kr:444/program'],
+    ['KSTARTUP', 'https://k-startup.go.kr.attacker.example/program'],
+    ['KSTARTUP', 'https://www.bizinfo.go.kr/program'],
+    ['BIZINFO', 'https://www.k-startup.go.kr/program'],
+    ['KSTARTUP', 'https://attacker@www.k-startup.go.kr/program'],
+    ['KSTARTUP', 'https://www.k-startup.go.kr:444/program'],
+    ['KSTARTUP', 'javascript:alert(document.cookie)'],
   ])('rejects a non-official or unsafe source URL for %s: %s', async (sourceCode, sourceUrl) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
       query: '수출',
@@ -111,6 +123,31 @@ describe('searchSupportProgramsApi', () => {
 
     await expect(searchSupportProgramsApi({ query: '수출' }))
       .rejects.toBeInstanceOf(SupportProgramApiError)
+  })
+
+  it('accepts mixed official providers without losing their source identity', async () => {
+    const programs = [supportPrograms[0], {
+      ...supportPrograms[1],
+      id: supportPrograms[0].id,
+      sourceCode: 'KSTARTUP',
+      sourceName: 'K-Startup',
+      sourceUrl: 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do',
+    }]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ query: '창업', programs })))
+
+    await expect(new SupportProgramRepositoryImpl().search({ query: '창업' })).resolves.toEqual(programs)
+  })
+
+  it.each([
+    ['KSTARTUP', 'https://k-startup.go.kr.attacker.example/program'],
+    ['UNKNOWN', 'https://www.k-startup.go.kr/program'],
+  ])('rejects the whole mixed response if one %s program has an untrusted URL', async (sourceCode, sourceUrl) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      query: '창업',
+      programs: [supportPrograms[0], { ...supportPrograms[1], sourceCode, sourceUrl }],
+    })))
+
+    await expect(new SupportProgramRepositoryImpl().search({ query: '창업' })).rejects.toThrow()
   })
 
   it('propagates request cancellation to the caller', async () => {
@@ -138,6 +175,15 @@ describe('getSupportProgramSearchReadinessApi', () => {
       indexReady: true,
       lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
       lastFailedSyncAt: '2026-09-05T10:00:00+09:00',
+      sources: [{
+        sourceCode: 'BIZINFO',
+        sourceName: '기업마당',
+        searchState: 'SEARCHABLE_WITH_SYNC_FAILURE',
+        programCount: 42,
+        indexReady: true,
+        lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
+        lastFailedSyncAt: '2026-09-05T10:00:00+09:00',
+      }],
     }
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(readiness)))
     vi.stubGlobal('fetch', fetchMock)
@@ -151,6 +197,31 @@ describe('getSupportProgramSearchReadinessApi', () => {
     await expect(new SupportProgramRepositoryImpl().getSearchReadiness()).resolves.toEqual(readiness)
   })
 
+  it('accepts partial search readiness and copies each source into the domain model', () => {
+    const source = {
+      sourceCode: 'BIZINFO', sourceName: '기업마당', searchState: 'SEARCHABLE',
+      programCount: 42, indexReady: true,
+      lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00', lastFailedSyncAt: null,
+    }
+    const dto = supportProgramSearchReadinessDtoSchema.parse({
+      ...source,
+      searchState: 'SEARCHABLE_WITH_PARTIAL_SOURCES',
+      sources: [source, {
+        ...source, sourceCode: 'KSTARTUP', sourceName: 'K-Startup', searchState: 'PREPARING',
+        programCount: 0, indexReady: false, lastSuccessfulSyncAt: null,
+      }],
+    })
+    const model = toSupportProgramSearchReadiness(dto)
+
+    expect(model).toEqual(dto)
+    expect(model.sources).not.toBe(dto.sources)
+    expect(model.sources[0]).not.toBe(dto.sources[0])
+    expect(supportProgramSearchReadinessDtoSchema.safeParse({ ...dto, sources: undefined }).success).toBe(false)
+    expect(supportProgramSearchReadinessDtoSchema.safeParse({
+      ...dto, sources: [{ ...source, searchState: 'SEARCHABLE_WITH_PARTIAL_SOURCES' }],
+    }).success).toBe(false)
+  })
+
   it('rejects malformed readiness payloads and HTTP failures at the data boundary', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(jsonResponse({
@@ -159,6 +230,10 @@ describe('getSupportProgramSearchReadinessApi', () => {
         indexReady: true,
         lastSuccessfulSyncAt: null,
         lastFailedSyncAt: null,
+        sources: [{
+          sourceCode: 'BIZINFO', sourceName: '기업마당', searchState: 'SEARCHABLE',
+          programCount: 0, indexReady: true, lastSuccessfulSyncAt: null, lastFailedSyncAt: null,
+        }],
       }))
       .mockResolvedValueOnce(new Response('', { status: 503 })))
 

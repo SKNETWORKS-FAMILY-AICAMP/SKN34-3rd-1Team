@@ -9,6 +9,7 @@ import App from './App'
 import { appContainer } from './app/appContainer'
 import { createAppStore } from './app/store'
 import { supportPrograms } from './data/fixtures/supportPrograms'
+import type { SupportProgramSearchReadiness } from './domain/entities/SupportProgramSearchReadiness'
 
 vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => ({
   CoreApiConnectionStatus: () => null,
@@ -220,6 +221,26 @@ describe('App navigation', () => {
       .toBe(evidenceAnswer.citations[0].excerpt)
   })
 
+  it('K-Startup 상세에서는 원문 링크를 유지하고 질문 입력이나 근거 답변 HTTP 요청을 만들지 않는다', async () => {
+    const detail = {
+      ...supportPrograms[0], sourceCode: 'KSTARTUP', sourceName: 'K-Startup',
+      sourceUrl: 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do',
+      matchedReasons: [], recommendationScore: null,
+    }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(detail))
+    vi.stubGlobal('fetch', fetchMock)
+    renderApp(createAppStore(), `/support-programs/detail?sourceCode=KSTARTUP&sourceProgramId=${detail.id}`)
+
+    await screen.findByRole('heading', { name: detail.title })
+    expect(screen.getByText('이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 원문 공고에서 확인해 주세요.'))
+      .toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '공고 원문에 질문하기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '질문하고 근거 받기' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'K-Startup 원문 보기 ↗' }).getAttribute('href')).toBe(detail.sourceUrl)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toBe('/api/v1/support-programs/detail')
+  })
+
   it.each([
     [{
       answer: '원문 근거가 부족합니다.',
@@ -347,6 +368,9 @@ describe('App navigation', () => {
       sourceCode: otherProgram.sourceCode,
       sourceProgramId: sharedProgramId,
     }, expect.any(AbortSignal))
+    expect(screen.queryByRole('textbox', { name: '공고 원문에 질문하기' })).toBeNull()
+    expect(screen.getByText('이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 원문 공고에서 확인해 주세요.'))
+      .toBeTruthy()
   })
 
   it('한글 조합 중 Enter는 검색을 전송하지 않고 조합이 끝난 뒤 전송한다', async () => {
@@ -533,6 +557,55 @@ describe('App navigation', () => {
       .toBe(true)
     fireEvent.click(screen.getByRole('button', { name: '상태 다시 확인' }))
     expect(refetch).toHaveBeenCalledOnce()
+  })
+
+  it('일부 제공처만 준비되어도 검색을 허용하고 제공처별 상태와 검색 범위를 보여 준다', async () => {
+    const refetch = vi.fn()
+    readinessViewModelMock.useSupportProgramSearchReadinessViewModel.mockReturnValue(
+      createReadinessViewModel({
+        data: {
+          searchState: 'SEARCHABLE_WITH_PARTIAL_SOURCES', programCount: 12, indexReady: true,
+          lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
+          lastFailedSyncAt: '2026-09-05T10:00:00+09:00',
+          sources: [{
+            sourceCode: 'BIZINFO', sourceName: '기업마당', searchState: 'SEARCHABLE_WITH_SYNC_FAILURE',
+            programCount: 12, indexReady: true,
+            lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
+            lastFailedSyncAt: '2026-09-05T10:00:00+09:00',
+          }, {
+            sourceCode: 'KSTARTUP', sourceName: 'K-Startup', searchState: 'PREPARING',
+            programCount: 7, indexReady: false, lastSuccessfulSyncAt: null, lastFailedSyncAt: null,
+          }],
+        },
+        refetch,
+      }),
+    )
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ query: '창업', programs: [supportPrograms[0]] }))
+    vi.stubGlobal('fetch', fetchMock)
+    renderApp(createAppStore())
+
+    expect(screen.getByText('일부 제공처의 공고를 검색할 수 있습니다.')).toBeTruthy()
+    expect(screen.getByText('현재 검색 범위: 기업마당. 나머지 제공처는 준비가 완료되면 검색에 포함됩니다.')).toBeTruthy()
+    const sources = within(screen.getByRole('list', { name: '제공처별 공고 준비 상태' })).getAllByRole('listitem')
+    expect(sources).toHaveLength(2)
+    expect(within(sources[0]).getByText('기업마당')).toBeTruthy()
+    expect(within(sources[0]).getByText('이전 공고 검색 가능 · 최신 동기화 실패')).toBeTruthy()
+    expect(within(sources[0]).getByText('12건')).toBeTruthy()
+    expect(within(sources[0]).getByText('2026. 9. 5. 오전 9:00')).toBeTruthy()
+    expect(within(sources[0]).getByText('2026. 9. 5. 오전 10:00')).toBeTruthy()
+    expect(within(sources[1]).getByText('K-Startup')).toBeTruthy()
+    expect(within(sources[1]).getByText('초기 준비 중')).toBeTruthy()
+    expect(within(sources[1]).getByText('7건')).toBeTruthy()
+    expect(within(sources[1]).getAllByText('기록 없음')).toHaveLength(2)
+    fireEvent.click(screen.getByRole('button', { name: '상태 다시 확인' }))
+    expect(refetch).toHaveBeenCalledOnce()
+
+    const searchInput = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    expect((searchInput as HTMLTextAreaElement).disabled).toBe(false)
+    fireEvent.change(searchInput, { target: { value: '창업' } })
+    fireEvent.submit(searchInput.closest('form')!)
+    await screen.findByRole('heading', { name: supportPrograms[0].title, level: 2 })
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
   it('검색 실패 뒤 공고 상태가 검색 불가로 바뀌면 다시 검색 버튼을 숨긴다', async () => {
@@ -805,21 +878,37 @@ function getProgramCard(title: string): HTMLElement {
   return card
 }
 
-function createReadinessViewModel(overrides: Record<string, unknown> = {}) {
+function createReadinessViewModel(overrides: {
+  data?: Omit<SupportProgramSearchReadiness, 'sources'> & { sources?: SupportProgramSearchReadiness['sources'] }
+  isError?: boolean
+  isInitialLoading?: boolean
+  isRefreshing?: boolean
+  canSearch?: boolean
+  refetch?: () => unknown
+} = {}) {
+  const data = 'data' in overrides ? overrides.data : {
+    searchState: 'SEARCHABLE' as const,
+    programCount: 12,
+    indexReady: true,
+    lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
+    lastFailedSyncAt: null,
+  }
   return {
-    data: {
-      searchState: 'SEARCHABLE' as const,
-      programCount: 12,
-      indexReady: true,
-      lastSuccessfulSyncAt: '2026-09-05T09:00:00+09:00',
-      lastFailedSyncAt: null,
-    },
     isError: false,
     isInitialLoading: false,
     isRefreshing: false,
     canSearch: true,
     refetch: vi.fn(),
     ...overrides,
+    data: data ? {
+      ...data,
+      sources: data.sources ?? [{
+        sourceCode: 'BIZINFO', sourceName: '기업마당',
+        searchState: data.searchState === 'SEARCHABLE_WITH_PARTIAL_SOURCES' ? 'SEARCHABLE' : data.searchState,
+        programCount: data.programCount, indexReady: data.indexReady,
+        lastSuccessfulSyncAt: data.lastSuccessfulSyncAt, lastFailedSyncAt: data.lastFailedSyncAt,
+      }],
+    } : undefined,
   }
 }
 

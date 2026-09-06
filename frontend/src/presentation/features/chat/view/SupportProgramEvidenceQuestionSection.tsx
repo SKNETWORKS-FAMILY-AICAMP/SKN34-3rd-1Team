@@ -17,6 +17,7 @@ export function SupportProgramEvidenceQuestionSection({
     canSubmit,
     cancelQuestion,
     isAnswering,
+    isSupported,
     question,
     questionLength,
     state,
@@ -28,6 +29,19 @@ export function SupportProgramEvidenceQuestionSection({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     void submitQuestion()
+  }
+
+  if (!isSupported) {
+    return (
+      <section className={supportProgramDetailStyles.evidenceSection} aria-labelledby="evidence-question-title">
+        <h2 id="evidence-question-title" className={supportProgramDetailStyles.sectionTitle}>
+          공고 원문 기반 질문
+        </h2>
+        <p className={supportProgramDetailStyles.evidenceDescription}>
+          이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 원문 공고에서 확인해 주세요.
+        </p>
+      </section>
+    )
   }
 
   return (

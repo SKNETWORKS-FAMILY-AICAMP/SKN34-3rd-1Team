@@ -9,11 +9,24 @@ data class SupportProgramSearchReadinessResult(
     val indexReady: Boolean,
     val lastSuccessfulSyncAt: OffsetDateTime?,
     val lastFailedSyncAt: OffsetDateTime?,
+    val sources: List<SupportProgramSourceReadinessResult>,
+)
+
+/** 한 제공처의 공개 공고 수와 준비·동기화 결과입니다. */
+data class SupportProgramSourceReadinessResult(
+    val sourceCode: String,
+    val sourceName: String,
+    val searchState: SupportProgramSearchState,
+    val programCount: Int,
+    val indexReady: Boolean,
+    val lastSuccessfulSyncAt: OffsetDateTime?,
+    val lastFailedSyncAt: OffsetDateTime?,
 )
 
 enum class SupportProgramSearchState {
     PREPARING,
     SEARCHABLE,
     SEARCHABLE_WITH_SYNC_FAILURE,
+    SEARCHABLE_WITH_PARTIAL_SOURCES,
     UNAVAILABLE,
 }

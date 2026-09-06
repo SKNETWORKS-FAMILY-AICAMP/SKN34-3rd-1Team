@@ -58,7 +58,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
             )
         doReturn(listOf(laterCanonicalId, closed, earlierCanonicalId, upcoming))
             .`when`(supportProgramRepository)
-            .findPresent()
+            .findSearchablePresent()
 
         val output = directory.resolve("fixture.json")
         Files.writeString(output, "previous-fixture", UTF_8)
@@ -95,7 +95,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
             assertEquals(expectedDocument.text, document.get("text").stringValue())
             assertEquals(program.sortTimestamp, document.get("sortTimestamp").stringValue())
         }
-        verify(supportProgramRepository).findPresent()
+        verify(supportProgramRepository).findSearchablePresent()
     }
 
     @Test
@@ -108,7 +108,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
                 sourceUrl = "https://other.example/program/SHARED",
             ),
         )
-        doReturn(listOf(other, bizInfo)).`when`(supportProgramRepository).findPresent()
+        doReturn(listOf(other, bizInfo)).`when`(supportProgramRepository).findSearchablePresent()
         val output = directory.resolve("fixture.json")
 
         runner("support-program-catalog-v1", output).run()
@@ -145,7 +145,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
                     status = SupportProgramStatus.UPCOMING,
                 ),
             )
-        doReturn(listOf(closed, upcoming)).`when`(supportProgramRepository).findPresent()
+        doReturn(listOf(closed, upcoming)).`when`(supportProgramRepository).findSearchablePresent()
         val output = directory.resolve("fixture.json")
         Files.writeString(output, "previous-fixture", UTF_8)
 
@@ -155,7 +155,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
 
         assertTrue(exception.message.orEmpty().contains("eligible"))
         assertEquals("previous-fixture", Files.readString(output, UTF_8))
-        verify(supportProgramRepository).findPresent()
+        verify(supportProgramRepository).findSearchablePresent()
     }
 
     @Test
@@ -180,7 +180,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
             )
         doReturn(listOf(openOnReferenceDate, closedOnReferenceDate))
             .`when`(supportProgramRepository)
-            .findPresent()
+            .findSearchablePresent()
 
         val output = directory.resolve("fixture.json")
         runner("bizinfo-20260905-v1", output).run()
@@ -196,7 +196,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
         Files.writeString(output, "previous-fixture", UTF_8)
         doThrow(IllegalStateException("database unavailable"))
             .`when`(supportProgramRepository)
-            .findPresent()
+            .findSearchablePresent()
 
         val exception = assertThrows(IllegalStateException::class.java) {
             runner("bizinfo-20260905-v1", output).run()
@@ -204,14 +204,14 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
 
         assertEquals("database unavailable", exception.message)
         assertEquals("previous-fixture", Files.readString(output, UTF_8))
-        verify(supportProgramRepository).findPresent()
+        verify(supportProgramRepository).findSearchablePresent()
     }
 
     @Test
     fun keepsThePreviousFixtureWhenAnEligibleProgramHasNoStableSortTimestamp() {
         val withoutSortTimestamp = catalogProgram("PBLN_OPEN")
             .copy(sortTimestamp = "")
-        doReturn(listOf(withoutSortTimestamp)).`when`(supportProgramRepository).findPresent()
+        doReturn(listOf(withoutSortTimestamp)).`when`(supportProgramRepository).findSearchablePresent()
         val output = directory.resolve("fixture.json")
         Files.writeString(output, "previous-fixture", UTF_8)
 
@@ -221,7 +221,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunnerTest {
 
         assertTrue(exception.message.orEmpty().contains("sortTimestamp"))
         assertEquals("previous-fixture", Files.readString(output, UTF_8))
-        verify(supportProgramRepository).findPresent()
+        verify(supportProgramRepository).findSearchablePresent()
     }
 
     @Test

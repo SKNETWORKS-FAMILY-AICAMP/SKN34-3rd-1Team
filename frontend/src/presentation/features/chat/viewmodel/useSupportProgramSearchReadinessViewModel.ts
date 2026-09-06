@@ -4,7 +4,7 @@ import { appContainer } from '../../../../app/appContainer'
 import type { SupportProgramSearchReadiness } from '../../../../domain/entities/SupportProgramSearchReadiness'
 import type { GetSupportProgramSearchReadinessUseCase } from '../../../../domain/usecases/GetSupportProgramSearchReadinessUseCase'
 
-/** 초기 동기화 중일 때만 새로고침 없이 검색 가능 상태가 되도록 다시 확인하는 간격입니다. */
+/** 제공처의 초기 동기화 중 새로고침 없이 준비 완료를 반영하는 간격입니다. */
 export const supportProgramReadinessPollingMilliseconds = 5_000
 
 type SupportProgramSearchReadinessUseCase = Pick<
@@ -87,7 +87,9 @@ export function useSupportProgramSearchReadinessViewModel(
   }, [refetch])
 
   useEffect(() => {
-    if (state.data?.searchState !== 'PREPARING' || state.isRefreshing) return
+    const isPreparing = state.data?.searchState === 'PREPARING'
+      || state.data?.sources.some((source) => source.searchState === 'PREPARING')
+    if (!isPreparing || state.isRefreshing) return
 
     const pollingTimeout = setTimeout(() => {
       void refetch()
@@ -98,6 +100,7 @@ export function useSupportProgramSearchReadinessViewModel(
   const canSearch = !state.isError && (
     state.data?.searchState === 'SEARCHABLE'
     || state.data?.searchState === 'SEARCHABLE_WITH_SYNC_FAILURE'
+    || state.data?.searchState === 'SEARCHABLE_WITH_PARTIAL_SOURCES'
   )
 
   return {

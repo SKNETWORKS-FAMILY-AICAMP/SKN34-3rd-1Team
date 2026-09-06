@@ -21,6 +21,7 @@ import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerSta
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceCitationResult
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchReadinessResult
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchState
+import ai.govbiz.core.supportprogram.service.dto.SupportProgramSourceReadinessResult
 import java.time.OffsetDateTime
 import java.util.stream.Stream
 import org.hamcrest.Matchers.containsString
@@ -91,7 +92,7 @@ class SupportProgramControllerTest {
             .retrieve("서울 AI", listOf(catalogProgram()))
         Mockito.doReturn(listOf(catalogProgram()))
             .`when`(supportProgramRepository)
-            .findPresent()
+            .findSearchablePresent()
         ranking.response = { candidates ->
             listOf(
                 candidates.single().program.copy(
@@ -124,7 +125,7 @@ class SupportProgramControllerTest {
     fun returnsAnEmptyListWhenTheCurrentCatalogIsEmpty() {
         Mockito.doReturn(emptyList<CatalogSupportProgram>())
             .`when`(supportProgramRepository)
-            .findPresent()
+            .findSearchablePresent()
 
         mockMvc.perform(get(PATH).queryParam("query", "서울"))
             .andExpect(status().isOk())
@@ -141,6 +142,17 @@ class SupportProgramControllerTest {
                 indexReady = true,
                 lastSuccessfulSyncAt = OffsetDateTime.parse("2026-09-05T09:00:00+09:00"),
                 lastFailedSyncAt = OffsetDateTime.parse("2026-09-05T10:00:00+09:00"),
+                sources = listOf(
+                    SupportProgramSourceReadinessResult(
+                        sourceCode = "BIZINFO",
+                        sourceName = "기업마당",
+                        searchState = SupportProgramSearchState.SEARCHABLE_WITH_SYNC_FAILURE,
+                        programCount = 17,
+                        indexReady = true,
+                        lastSuccessfulSyncAt = OffsetDateTime.parse("2026-09-05T09:00:00+09:00"),
+                        lastFailedSyncAt = OffsetDateTime.parse("2026-09-05T10:00:00+09:00"),
+                    ),
+                ),
             ),
         ).`when`(readinessService).get()
 
@@ -148,6 +160,11 @@ class SupportProgramControllerTest {
             .andExpect(status().isOk())
             .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
             .andExpect(jsonPath("$.searchState").value("SEARCHABLE_WITH_SYNC_FAILURE"))
+            .andExpect(jsonPath("$.sources[0].sourceCode").value("BIZINFO"))
+            .andExpect(jsonPath("$.sources[0].sourceName").value("기업마당"))
+            .andExpect(jsonPath("$.sources[0].searchState").value("SEARCHABLE_WITH_SYNC_FAILURE"))
+            .andExpect(jsonPath("$.sources[0].programCount").value(17))
+            .andExpect(jsonPath("$.sources[0].lastFailedSyncAt").value("2026-09-05T10:00:00+09:00"))
             .andExpect(jsonPath("$.programCount").value(17))
             .andExpect(jsonPath("$.indexReady").value(true))
             .andExpect(jsonPath("$.lastSuccessfulSyncAt").value("2026-09-05T09:00:00+09:00"))
@@ -390,7 +407,7 @@ class SupportProgramControllerTest {
             .retrieve("서울", listOf(catalogProgram()))
         Mockito.doReturn(listOf(catalogProgram()))
             .`when`(supportProgramRepository)
-            .findPresent()
+            .findSearchablePresent()
         ranking.failure = problemCase.exception
 
         assertProblem(
@@ -407,7 +424,7 @@ class SupportProgramControllerTest {
 
     @Test
     fun mapsIncompleteSemanticIndexToServiceUnavailable() {
-        Mockito.doReturn(listOf(catalogProgram())).`when`(supportProgramRepository).findPresent()
+        Mockito.doReturn(listOf(catalogProgram())).`when`(supportProgramRepository).findSearchablePresent()
         Mockito.doThrow(AiServiceCallException.unavailable(null)).`when`(retrieval)
             .retrieve("서울", listOf(catalogProgram()))
 

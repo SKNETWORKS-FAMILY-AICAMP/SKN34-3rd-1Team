@@ -6,6 +6,7 @@ const isoLocalDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 const sourceCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)
 const officialSourceHostsByCode: Record<string, readonly string[]> = {
   BIZINFO: ['bizinfo.go.kr'],
+  KSTARTUP: ['k-startup.go.kr'],
 }
 
 export function isOfficialSupportProgramSourceUrl(sourceCode: string, value: string): boolean {

@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.boot.CommandLineRunner
 import tools.jackson.databind.ObjectMapper
 
-/** 현재 MySQL 적격 공고 전체를 사람이 라벨링할 수 있는 검색 평가 fixture 초안으로 기록합니다. */
+/** 검색과 같은 준비된 제공처의 MySQL 적격 공고를 검색 평가 fixture 초안으로 기록합니다. */
 class SupportProgramSearchEvaluationFixtureExportCommandLineRunner(
     private val properties: SupportProgramSearchEvaluationFixtureExportProperties,
     private val supportProgramRepository: SupportProgramRepository,
@@ -21,7 +21,7 @@ class SupportProgramSearchEvaluationFixtureExportCommandLineRunner(
 ) : CommandLineRunner {
 
     override fun run(vararg args: String) {
-        val presentPrograms = supportProgramRepository.findPresent()
+        val presentPrograms = supportProgramRepository.findSearchablePresent()
         val eligiblePrograms = presentPrograms.filter { it.isOpenAt(properties.referenceDate) }
         require(eligiblePrograms.isNotEmpty()) { "cannot export an empty eligible support program catalog" }
 

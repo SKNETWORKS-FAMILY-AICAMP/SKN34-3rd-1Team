@@ -26,7 +26,7 @@ class SupportProgramSearchReadinessServiceTest {
 
     @Test
     fun reportsPreparingBeforeAnyCatalogSyncOutcomeExists() {
-        doReturn(null).`when`(repository).findBizInfoSyncStatus()
+        stubStatuses()
 
         val result = service().get()
 
@@ -35,11 +35,12 @@ class SupportProgramSearchReadinessServiceTest {
         assertFalse(result.indexReady)
         assertNull(result.lastSuccessfulSyncAt)
         assertNull(result.lastFailedSyncAt)
+        assertEquals(listOf("BIZINFO"), result.sources.map { it.sourceCode })
     }
 
     @Test
     fun reportsSearchableForASuccessfullyPublishedEmptySnapshot() {
-        doReturn(
+        stubStatuses(
             status(
                 publishedGeneration = 4,
                 programCount = 0,
@@ -47,7 +48,7 @@ class SupportProgramSearchReadinessServiceTest {
                 outcome = SupportProgramSyncOutcome.SUCCESS,
                 lastSuccessfulSyncAt = LocalDateTime.of(2026, 9, 5, 9, 30),
             ),
-        ).`when`(repository).findBizInfoSyncStatus()
+        )
 
         val result = service().get()
 
@@ -60,7 +61,7 @@ class SupportProgramSearchReadinessServiceTest {
 
     @Test
     fun reportsSearchableForALegacySnapshotAdoptedAfterFullRepair() {
-        doReturn(
+        stubStatuses(
             status(
                 publishedGeneration = 0,
                 programCount = 12,
@@ -68,7 +69,7 @@ class SupportProgramSearchReadinessServiceTest {
                 outcome = SupportProgramSyncOutcome.NONE,
                 lastSuccessfulSyncAt = null,
             ),
-        ).`when`(repository).findBizInfoSyncStatus()
+        )
 
         val result = service().get()
 
@@ -81,7 +82,7 @@ class SupportProgramSearchReadinessServiceTest {
 
     @Test
     fun keepsThePreviousReadySnapshotSearchableWhenTheLatestCatalogSyncFailed() {
-        doReturn(
+        stubStatuses(
             status(
                 publishedGeneration = 4,
                 programCount = 12,
@@ -90,7 +91,7 @@ class SupportProgramSearchReadinessServiceTest {
                 lastSuccessfulSyncAt = LocalDateTime.of(2026, 9, 5, 9, 0),
                 lastFailedSyncAt = LocalDateTime.of(2026, 9, 5, 10, 0),
             ),
-        ).`when`(repository).findBizInfoSyncStatus()
+        )
 
         val result = service().get()
 
@@ -102,7 +103,7 @@ class SupportProgramSearchReadinessServiceTest {
 
     @Test
     fun reportsUnavailableWhenThePublishedSnapshotIsNotIndexReady() {
-        doReturn(
+        stubStatuses(
             status(
                 publishedGeneration = 4,
                 programCount = 12,
@@ -111,13 +112,120 @@ class SupportProgramSearchReadinessServiceTest {
                 lastSuccessfulSyncAt = LocalDateTime.of(2026, 9, 5, 9, 0),
                 lastFailedSyncAt = LocalDateTime.of(2026, 9, 5, 10, 0),
             ),
-        ).`when`(repository).findBizInfoSyncStatus()
+        )
 
         val result = service().get()
 
         assertEquals(SupportProgramSearchState.UNAVAILABLE, result.searchState)
         assertFalse(result.indexReady)
+        assertEquals(0, result.programCount)
+        assertEquals(12, result.sources.single().programCount)
     }
+
+    @Test
+    fun searchesTheOtherProviderEvenBeforeBizInfoHasStarted() {
+        stubStatuses(readyStatus("KSTARTUP", 8))
+
+        val result = service().get()
+
+        assertEquals(SupportProgramSearchState.SEARCHABLE_WITH_PARTIAL_SOURCES, result.searchState)
+        assertTrue(result.indexReady)
+        assertEquals(8, result.programCount)
+        assertEquals(listOf("기업마당", "K-Startup"), result.sources.map { it.sourceName })
+        assertEquals(SupportProgramSearchState.PREPARING, result.sources.first().searchState)
+        assertEquals(SupportProgramSearchState.SEARCHABLE, result.sources.last().searchState)
+    }
+
+    @Test
+    fun countsOnlyReadyProviderProgramsAndPreservesEachFailure() {
+        val failedAt = LocalDateTime.of(2026, 9, 5, 11, 0)
+        stubStatuses(
+            readyStatus("BIZINFO", 12).copy(
+                indexReady = false,
+                lastSyncOutcome = SupportProgramSyncOutcome.FAILURE,
+                lastFailedSyncAt = failedAt,
+            ),
+            readyStatus("KSTARTUP", 8),
+        )
+
+        val result = service().get()
+
+        assertEquals(SupportProgramSearchState.SEARCHABLE_WITH_PARTIAL_SOURCES, result.searchState)
+        assertEquals(8, result.programCount)
+        assertEquals(12, result.sources.first().programCount)
+        assertEquals("2026-09-05T11:00+09:00", result.lastFailedSyncAt.toString())
+        assertEquals(result.lastFailedSyncAt, result.sources.first().lastFailedSyncAt)
+        assertNull(result.sources.last().lastFailedSyncAt)
+    }
+
+    @Test
+    fun keepsAllReadySourcesSearchableDespiteANewCollectionFailure() {
+        stubStatuses(
+            readyStatus("BIZINFO", 12),
+            readyStatus("KSTARTUP", 8).copy(lastSyncOutcome = SupportProgramSyncOutcome.FAILURE),
+        )
+
+        val result = service().get()
+
+        assertEquals(SupportProgramSearchState.SEARCHABLE_WITH_SYNC_FAILURE, result.searchState)
+        assertEquals(20, result.programCount)
+        assertTrue(result.sources.all { it.indexReady })
+    }
+
+    @Test
+    fun pendingNewProviderDoesNotBlockAnExistingReadyProvider() {
+        stubStatuses(
+            readyStatus("BIZINFO", 12),
+            readyStatus("KSTARTUP", 0).copy(
+                indexReady = false,
+                publishedGeneration = null,
+                publishedCatalogFingerprint = null,
+                lastSyncOutcome = SupportProgramSyncOutcome.NONE,
+                lastSuccessfulSyncAt = null,
+            ),
+        )
+
+        val result = service().get()
+
+        assertEquals(SupportProgramSearchState.SEARCHABLE_WITH_PARTIAL_SOURCES, result.searchState)
+        assertEquals(SupportProgramSearchState.PREPARING, result.sources.last().searchState)
+        assertEquals(12, result.programCount)
+    }
+
+    private fun stubStatuses(vararg statuses: SupportProgramSyncStatus) {
+        doReturn(statuses.toList()).`when`(repository).findSyncStatuses()
+    }
+
+    @Test
+    fun includesUnverifiedLegacySourceAsUnavailableInsteadOfClaimingAllSourcesAreReady() {
+        stubStatuses(
+            readyStatus("BIZINFO", 12),
+            readyStatus("OTHER", 3).copy(
+                indexReady = false,
+                publishedGeneration = null,
+                publishedCatalogFingerprint = null,
+                lastSyncOutcome = SupportProgramSyncOutcome.NONE,
+                lastSuccessfulSyncAt = null,
+            ),
+        )
+
+        val result = service().get()
+
+        assertEquals(SupportProgramSearchState.SEARCHABLE_WITH_PARTIAL_SOURCES, result.searchState)
+        assertEquals(12, result.programCount)
+        assertEquals(SupportProgramSearchState.UNAVAILABLE, result.sources.last().searchState)
+        assertEquals(3, result.sources.last().programCount)
+        assertNull(result.sources.last().lastSuccessfulSyncAt)
+        assertNull(result.sources.last().lastFailedSyncAt)
+    }
+
+    private fun readyStatus(sourceCode: String, count: Int) = status(
+        publishedGeneration = 1,
+        programCount = count,
+        indexReady = true,
+        outcome = SupportProgramSyncOutcome.SUCCESS,
+        lastSuccessfulSyncAt = LocalDateTime.of(2026, 9, 5, 9, 0),
+    ).copy(sourceCode = sourceCode)
 
     private fun service() = SupportProgramSearchReadinessService(repository, SEOUL_CLOCK)
 
