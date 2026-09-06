@@ -93,6 +93,16 @@ def test_prompt_declares_the_recommendation_minimum_without_omitting_candidates(
     assert "programId를 출력하지 않습니다" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
 
 
+def test_prompt_distinguishes_requested_support_from_topic_similarity_without_requiring_every_term() -> None:
+    assert "서비스·비용·결과가 원문에 없으면 semanticRelevance는 20점 미만" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "일부를 직접 제공함" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "모든 질문 단어의 일치를 요구하지 않습니다" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "부대 지원을 독립적인 서비스나 비용 지원으로 확대하지 않습니다" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "현재 단계와 원하는 활동을 구분" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "최대 개수이지 채워야 할 개수가 아닙니다" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+    assert "UNKNOWN 규칙은 유지" in SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
+
+
 @pytest.mark.anyio
 async def test_runs_typed_ranking_agent_through_the_real_runner() -> None:
     expected = valid_output()

@@ -19,6 +19,21 @@
 !support-program-catalog-20260906-v1/stage4-v1/execution-manifest.json
 !support-program-catalog-20260906-v1/stage4-v1/comparison.json
 
+!support-program-catalog-20260906-v1/stage4-v2/
+!support-program-catalog-20260906-v1/stage4-v2/README.md
+!support-program-catalog-20260906-v1/stage4-v2/plan.md
+!support-program-catalog-20260906-v1/stage4-v2/before-prompt.txt
+!support-program-catalog-20260906-v1/stage4-v2/after-prompt.txt
+!support-program-catalog-20260906-v1/stage4-v2/requests.json
+!support-program-catalog-20260906-v1/stage4-v2/metadata.json
+!support-program-catalog-20260906-v1/stage4-v2/RankingRequestExport.java
+!support-program-catalog-20260906-v1/stage4-v2/runner-at-execution.py
+!support-program-catalog-20260906-v1/stage4-v2/diagnostic.json
+!support-program-catalog-20260906-v1/stage4-v2/replay/
+!support-program-catalog-20260906-v1/stage4-v2/replay/results.jsonl
+!support-program-catalog-20260906-v1/stage4-v2/replay/api-usage.jsonl
+!support-program-catalog-20260906-v1/stage4-v2/replay/execution-manifest.json
+
 !support-program-catalog-20260906-v1/actual-capture-v1/
 !support-program-catalog-20260906-v1/actual-capture-v1/README.md
 !support-program-catalog-20260906-v1/actual-capture-v1/failed-attempts.json
