@@ -1,3 +1,5 @@
+import { z } from 'zod'
+
 import type {
   SupportProgramEvidenceQuestion,
   SupportProgramIdentity,
@@ -31,6 +33,32 @@ export class SupportProgramApiError extends Error {
   }
 }
 
+const requestRejectionProblemSchema = z.object({
+  type: z.string().min(1),
+  title: z.string().min(1),
+  status: z.union([z.literal(429), z.literal(503)]),
+  detail: z.string(),
+  instance: z.string(),
+  code: z.enum(['SUPPORT_PROGRAM_RATE_LIMITED', 'SUPPORT_PROGRAM_BUSY']),
+  retryAfterSeconds: z.unknown().optional(),
+})
+
+/** 검증한 요청 제한 계약만 보관하며 서버의 원문 오류 문구는 상위 계층에 전달하지 않습니다. */
+export class SupportProgramRequestApiError extends SupportProgramApiError {
+  readonly code: 'SUPPORT_PROGRAM_RATE_LIMITED' | 'SUPPORT_PROGRAM_BUSY'
+  readonly retryAfterSeconds: number | null
+
+  constructor(
+    code: 'SUPPORT_PROGRAM_RATE_LIMITED' | 'SUPPORT_PROGRAM_BUSY',
+    retryAfterSeconds: number | null,
+  ) {
+    super('Core API could not admit the support program request.')
+    this.name = 'SupportProgramRequestApiError'
+    this.code = code
+    this.retryAfterSeconds = retryAfterSeconds
+  }
+}
+
 /** 원문 근거 답변 endpoint의 HTTP 상태를 Repository가 업무 결과로 변환할 수 있게 합니다. */
 export class SupportProgramEvidenceApiError extends Error {
   readonly status: number
@@ -60,6 +88,8 @@ export async function searchSupportProgramsApi(
   )
 
   if (!response.ok) {
+    const requestRejection = await readRequestRejection(response)
+    if (requestRejection) throw requestRejection
     throw new SupportProgramApiError(
       `Core API returned HTTP ${response.status} for the support program search request.`,
     )
@@ -150,6 +180,8 @@ export async function answerSupportProgramEvidenceQuestionApi(
   )
 
   if (!response.ok) {
+    const requestRejection = await readRequestRejection(response)
+    if (requestRejection) throw requestRejection
     throw new SupportProgramEvidenceApiError(response.status)
   }
 
@@ -157,4 +189,27 @@ export async function answerSupportProgramEvidenceQuestionApi(
     await response.json(),
     command.sourceCode,
   )
+}
+
+async function readRequestRejection(response: Response): Promise<SupportProgramRequestApiError | null> {
+  if (response.status !== 429 && response.status !== 503) return null
+  if (response.headers.get('Content-Type')?.split(';')[0]?.trim().toLowerCase() !== 'application/problem+json') {
+    return null
+  }
+
+  const parsed = requestRejectionProblemSchema.safeParse(await response.json().catch(() => null))
+  if (!parsed.success || parsed.data.status !== response.status) return null
+  const problem = parsed.data
+  if ((response.status === 429 && problem.code !== 'SUPPORT_PROGRAM_RATE_LIMITED')
+    || (response.status === 503 && problem.code !== 'SUPPORT_PROGRAM_BUSY')) return null
+
+  const retrySeconds = z.number().int().min(1).max(60).safeParse(problem.retryAfterSeconds)
+  const retryHeader = response.headers.get('Retry-After')
+  const retryAfterSeconds = retrySeconds.success
+    && retryHeader !== null
+    && /^[1-9]\d?$/.test(retryHeader)
+    && Number(retryHeader) === retrySeconds.data
+    ? retrySeconds.data
+    : null
+  return new SupportProgramRequestApiError(problem.code, retryAfterSeconds)
 }

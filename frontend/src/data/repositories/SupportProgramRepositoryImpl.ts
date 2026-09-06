@@ -4,11 +4,13 @@ import {
   getSupportProgramSearchReadinessApi,
   searchSupportProgramsApi,
   SupportProgramEvidenceApiError,
+  SupportProgramRequestApiError,
 } from '../api/supportProgramApi'
 import { toSupportProgram } from '../models/SupportProgramDto'
 import { toSupportProgramEvidenceAnswer } from '../models/SupportProgramEvidenceAnswerDto'
 import { toSupportProgramSearchReadiness } from '../models/SupportProgramSearchReadinessDto'
 import type { SupportProgram } from '../../domain/entities/SupportProgram'
+import { SupportProgramRequestError } from '../../domain/errors/SupportProgramRequestError'
 import type { SupportProgramSearchReadiness } from '../../domain/entities/SupportProgramSearchReadiness'
 import type {
   SupportProgramRepository,
@@ -24,8 +26,12 @@ export class SupportProgramRepositoryImpl implements SupportProgramRepository {
     command: SupportProgramSearch,
     signal?: AbortSignal,
   ): Promise<SupportProgram[]> {
-    const response = await searchSupportProgramsApi(command, signal)
-    return response.programs.map(toSupportProgram)
+    try {
+      const response = await searchSupportProgramsApi(command, signal)
+      return response.programs.map(toSupportProgram)
+    } catch (error) {
+      throw toRequestError(error)
+    }
   }
 
   async getSearchReadiness(signal?: AbortSignal): Promise<SupportProgramSearchReadiness> {
@@ -54,7 +60,16 @@ export class SupportProgramRepositoryImpl implements SupportProgramRepository {
         if (error.status === 422) return { outcome: 'not-supported' }
         if (error.status === 503) return { outcome: 'unavailable' }
       }
-      throw error
+      throw toRequestError(error)
     }
   }
+}
+
+function toRequestError(error: unknown): unknown {
+  return error instanceof SupportProgramRequestApiError
+    ? new SupportProgramRequestError(
+      error.code === 'SUPPORT_PROGRAM_RATE_LIMITED' ? 'rate-limited' : 'busy',
+      error.retryAfterSeconds,
+    )
+    : error
 }

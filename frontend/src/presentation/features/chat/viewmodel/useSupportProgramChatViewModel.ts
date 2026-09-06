@@ -4,6 +4,8 @@ import { appContainer } from '../../../../app/appContainer'
 import { useAppDispatch, useAppSelector } from '../../../../app/hooks'
 import type { AppDispatch, RootState } from '../../../../app/store'
 import type { SearchSupportProgramsUseCase } from '../../../../domain/usecases/SearchSupportProgramsUseCase'
+import { SupportProgramRequestError } from '../../../../domain/errors/SupportProgramRequestError'
+import { supportProgramRequestFailureMessage } from './supportProgramRequestFailureMessage'
 import {
   conversationReset,
   draftChanged,
@@ -145,10 +147,16 @@ export function useSupportProgramChatViewModel(
           requestId,
         })
         dispatchAction(searchSucceededAction)
-      } catch {
+      } catch (error) {
         if (requestController.signal.aborted) return
 
-        const searchFailedAction = searchFailed({ query: searchQuery, requestId })
+        const searchFailedAction = searchFailed({
+          query: searchQuery,
+          requestId,
+          message: error instanceof SupportProgramRequestError
+            ? supportProgramRequestFailureMessage(error)
+            : undefined,
+        })
         dispatchAction(searchFailedAction)
       } finally {
         const currentRequest = activeSearchRequest.current

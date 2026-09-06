@@ -50,13 +50,13 @@ const chatSlice = createSlice({
       state.searchError = null
       state.searchStatus = 'idle'
     },
-    searchFailed(state, action: PayloadAction<{ query: string; requestId: string }>) {
+    searchFailed(state, action: PayloadAction<{ query: string; requestId: string; message?: string }>) {
       if (state.activeRequestId !== action.payload.requestId) return
       state.activeRequestId = null
       if (state.draft.trim().length === 0) {
         state.draft = action.payload.query
       }
-      state.searchError = '지원사업을 검색하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+      state.searchError = action.payload.message ?? '지원사업을 검색하지 못했습니다. 잠시 후 다시 시도해 주세요.'
       state.searchStatus = 'failed'
     },
     searchTimedOut(state, action: PayloadAction<{ query: string; requestId: string }>) {

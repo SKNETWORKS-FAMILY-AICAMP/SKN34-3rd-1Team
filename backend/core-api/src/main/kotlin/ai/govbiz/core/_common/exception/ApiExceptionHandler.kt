@@ -3,9 +3,11 @@ package ai.govbiz.core._common.exception
 import ai.govbiz.core.supportprogram.service.detail.exception.SupportProgramNotFoundException
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceUnavailableException
+import ai.govbiz.core.supportprogram.service.admission.exception.SupportProgramRequestRejectedException
 import jakarta.servlet.http.HttpServletRequest
 import java.net.URI
 import org.springframework.http.HttpStatus
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatusCode
 import org.springframework.http.MediaType
 import org.springframework.http.ProblemDetail
@@ -21,6 +23,33 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 
 @RestControllerAdvice
 class ApiExceptionHandler {
+
+    @ExceptionHandler(SupportProgramRequestRejectedException::class)
+    fun handleSupportProgramRequestRejectedException(
+        exception: SupportProgramRequestRejectedException,
+        request: HttpServletRequest,
+    ): ResponseEntity<ProblemDetail> {
+        val rateLimited = exception.reason == SupportProgramRequestRejectedException.Reason.RATE_LIMITED
+        val status = if (rateLimited) HttpStatus.TOO_MANY_REQUESTS else HttpStatus.SERVICE_UNAVAILABLE
+        val problem = ProblemDetail.forStatusAndDetail(
+            status,
+            if (rateLimited) "Too many support program requests. Please retry later."
+            else "Support program request capacity is currently full. Please retry later.",
+        )
+        problem.type = URI.create(
+            if (rateLimited) "urn:govbiz:problem:support-program-rate-limited"
+            else "urn:govbiz:problem:support-program-busy",
+        )
+        problem.title = if (rateLimited) "Support Program Rate Limited" else "Support Program Busy"
+        problem.instance = URI.create(request.requestURI)
+        problem.setProperty("code", if (rateLimited) "SUPPORT_PROGRAM_RATE_LIMITED" else "SUPPORT_PROGRAM_BUSY")
+        problem.setProperty("retryAfterSeconds", exception.retryAfterSeconds)
+        return ResponseEntity.status(status)
+            .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+            .header(HttpHeaders.RETRY_AFTER, exception.retryAfterSeconds.toString())
+            .header(HttpHeaders.CACHE_CONTROL, "no-store")
+            .body(problem)
+    }
 
     @ExceptionHandler(SupportProgramNotFoundException::class)
     fun handleSupportProgramNotFoundException(

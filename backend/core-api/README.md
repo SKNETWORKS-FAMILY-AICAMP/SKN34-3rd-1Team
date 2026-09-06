@@ -88,6 +88,15 @@ capture의 기준 날짜가 다르면 점수 계산을 거부합니다. 실제 �
 
 ## 공개 API
 
+검색과 공고별 근거 답변은 한 Core 프로세스에서 요청량·동시 실행 한도를 공유합니다.
+기본값은 접속 주소별 최근 60초 6건, 전체 60건, 동시 4건이며, 초과 시 DB·AI 호출 전에
+`429 SUPPORT_PROGRAM_RATE_LIMITED` 또는 `503 SUPPORT_PROGRAM_BUSY`로 거절합니다.
+`Retry-After`·`retryAfterSeconds`를 반환하고 실제 작업 종료 시 동시 슬롯을 해제합니다.
+Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 입장을 담당하고
+기존 Search/Evidence Service의 업무 흐름은 유지합니다. 구현은 `supportprogram/service/admission`,
+설정은 그 아래 `config`, 거절 예외는 `exception`에 둡니다.
+설정·프록시/NAT 공유·비웹 평가 제외·다중 서버 한계는 [요청 제한 안내](../../docs/support-program-request-limits.md)에 있습니다.
+
 | 메서드·경로 | 용도 |
 |---|---|
 | `GET /api/v1/health` | Core API 자체 생존 상태 |
@@ -138,6 +147,9 @@ Compose는 일부 주소·CORS 값을 내부 네트워크에 맞게 덮어씁니
 | `SPRING_DATASOURCE_URL` | `jdbc:mysql://127.0.0.1:3306/govbiz` | MySQL JDBC 주소 |
 | `SPRING_DATASOURCE_USERNAME` | `govbiz` | MySQL 사용자 |
 | `SPRING_DATASOURCE_PASSWORD` | `govbiz-local` | 로컬 개발용 MySQL 비밀번호 |
+| `SUPPORT_PROGRAM_REQUEST_PER_CLIENT_PER_MINUTE` | `6` | 검색·근거 답변의 접속 주소별 최근 60초 한도 |
+| `SUPPORT_PROGRAM_REQUEST_GLOBAL_PER_MINUTE` | `60` | 한 Core 프로세스의 검색·근거 답변 최근 60초 한도 |
+| `SUPPORT_PROGRAM_REQUEST_MAX_CONCURRENT` | `4` | 검색·근거 답변 동시 처리 한도 |
 | `DATA_GO_KR_SERVICE_KEY` | 빈 값 | 기업마당 수집용 공공데이터포털 키 |
 | `BIZINFO_API_BASE_URL` | `https://apis.data.go.kr` | 기업마당 API 주소 |
 | `BIZINFO_API_CONNECT_TIMEOUT` | `2s` | 기업마당 연결 제한시간 |

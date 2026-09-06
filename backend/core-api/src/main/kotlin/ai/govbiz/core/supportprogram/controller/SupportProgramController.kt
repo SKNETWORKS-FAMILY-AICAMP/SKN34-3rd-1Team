@@ -10,6 +10,8 @@ import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceService
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
 import ai.govbiz.core.supportprogram.service.readiness.SupportProgramSearchReadinessService
+import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
+import jakarta.servlet.http.HttpServletRequest
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
@@ -27,14 +29,17 @@ class SupportProgramController(
     private val readinessService: SupportProgramSearchReadinessService,
     private val detailService: SupportProgramDetailService,
     private val evidenceService: SupportProgramEvidenceService,
+    private val requestAdmissionService: SupportProgramRequestAdmissionService,
 ) {
 
     @GetMapping("/search")
     fun search(
         @RequestParam @Size(max = 500) query: String,
         @RequestParam(defaultValue = "true") acceptingOnly: Boolean,
-    ): SupportProgramSearchResponse =
+        httpRequest: HttpServletRequest,
+    ): SupportProgramSearchResponse = requestAdmissionService.execute(httpRequest.remoteAddr) {
         SupportProgramSearchResponse.from(searchService.search(query, acceptingOnly))
+    }
 
     @GetMapping("/readiness")
     fun readiness(): SupportProgramSearchReadinessResponse =
@@ -58,7 +63,8 @@ class SupportProgramController(
     @PostMapping("/detail/answers")
     fun answerFromOfficialSource(
         @RequestBody @jakarta.validation.Valid request: SupportProgramEvidenceQuestionRequest,
-    ): SupportProgramEvidenceAnswerResponse =
+        httpRequest: HttpServletRequest,
+    ): SupportProgramEvidenceAnswerResponse = requestAdmissionService.execute(httpRequest.remoteAddr) {
         SupportProgramEvidenceAnswerResponse.from(
             evidenceService.answer(
                 sourceCode = request.sourceCode,
@@ -66,4 +72,5 @@ class SupportProgramController(
                 question = request.question,
             ),
         )
+    }
 }

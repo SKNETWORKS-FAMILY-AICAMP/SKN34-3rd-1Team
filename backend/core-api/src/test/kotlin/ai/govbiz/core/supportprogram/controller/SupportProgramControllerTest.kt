@@ -13,6 +13,8 @@ import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceServ
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceUnavailableException
 import ai.govbiz.core.supportprogram.service.search.SupportProgramSearchService
+import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
+import ai.govbiz.core.supportprogram.service.admission.config.SupportProgramRequestAdmissionProperties
 import ai.govbiz.core.supportprogram.service.readiness.SupportProgramSearchReadinessService
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerResult
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerStatus
@@ -76,6 +78,7 @@ class SupportProgramControllerTest {
                     readinessService = readinessService,
                     detailService = SupportProgramDetailService(supportProgramRepository),
                     evidenceService = evidenceService,
+                    requestAdmissionService = SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties()),
                 ),
             )
             .setControllerAdvice(ApiExceptionHandler())

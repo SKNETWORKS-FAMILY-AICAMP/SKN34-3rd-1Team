@@ -16,5 +16,6 @@ class WebCorsConfig(
             .allowedOrigins(allowedOrigin)
             .allowedMethods("GET", "POST")
             .allowedHeaders("*")
+            .exposedHeaders("Retry-After")
     }
 }
