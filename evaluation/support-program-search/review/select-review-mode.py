@@ -245,6 +245,9 @@ def validate_selection(selection, rows, manifest):
     """Validate selection/CSV linkage; caller also compares the actual CSV file hash."""
     if not isinstance(selection, dict):
         raise ValueError("Review selection must be an object")
+    if selection.get("schemaVersion") == "support-program-review-selection-transfer-v1":
+        transfer = load_module("selection_ai_transfer", "transfer-ai-review.py")
+        return transfer.validate_selection(selection, rows, manifest)
     schema = selection.get("schemaVersion")
     required_fields = SELECTION_FIELDS | ({"aiRecheckSha256", "aiRecheckTargetPairs"} if schema == SCHEMA_RECHECK else set())
     PAGE.require_keys(selection, required_fields, "Review selection")

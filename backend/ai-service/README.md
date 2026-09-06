@@ -171,6 +171,10 @@ HTTP 계약을 검증하지만, 지역·카테고리 단어 사전으로 별도 
 ### 추천 반환 최소 기준
 
 Agent는 후보를 빠짐없이 점수화하고 각 후보의 `targetEligibility`·`regionEligibility`를 반드시 반환합니다.
+Agent에 전달하는 strict output schema의 `rankings` 개수는 매 요청의 후보 수와 정확히 같게 제한합니다.
+예를 들어 후보 20개이면 `minItems=maxItems=20`이며, 적합하지 않은 후보도 점수화한 뒤 Service에서
+제외합니다. 요청별 Agent 복사본에만 이 제약을 적용하므로 서로 다른 후보 수의 요청이 공통 설정을
+바꾸지 않습니다. 개수가 같아도 ID 누락·추가·중복은 가능하므로 기존 ID 집합 검증도 유지합니다.
 두 값은 `MATCH`(제공된 정보와 일치), `INCOMPATIBLE`(명백한 조건 불일치), `UNKNOWN`(정보 부족) 중 하나입니다.
 `UNKNOWN`은 자동 탈락이나 자격 충족 확정을 뜻하지 않습니다. Service는 아래 조건을 모두 충족한 공고만 추천으로
 반환합니다.

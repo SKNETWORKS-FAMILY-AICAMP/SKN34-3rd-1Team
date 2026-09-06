@@ -11,6 +11,13 @@
 !support-program-catalog-20260906-v1/pool-config.json
 !support-program-catalog-20260906-v1/run-manifest.md
 
+!support-program-catalog-20260906-v1/actual-capture-v1/
+!support-program-catalog-20260906-v1/actual-capture-v1/README.md
+!support-program-catalog-20260906-v1/actual-capture-v1/failed-attempts.json
+!support-program-catalog-20260906-v1/actual-capture-v1/fixed-count-usage.jsonl
+!support-program-catalog-20260906-v1/actual-capture-v1/diagnostic-output-19.json
+!support-program-catalog-20260906-v1/actual-capture-v1/fixed-count-output-20.json
+
 !support-program-catalog-20260906-v1/review-v2/
 !support-program-catalog-20260906-v1/review-v2/review-pool.csv
 !support-program-catalog-20260906-v1/review-v2/review-pool-provenance.csv

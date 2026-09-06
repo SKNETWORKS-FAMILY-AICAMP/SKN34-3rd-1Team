@@ -131,6 +131,94 @@ AI-only 점수는 AI 합의 참조 기준과의 일치도이며 독립적인 사
 검색 품질에 영향을 주는 변경 때 기존 정답으로 전후를 비교한다. 질문/공고가 바뀌면 영향을 받는 판정은
 다시 검토하며 기존 버전을 덮어쓰지 않는다. 최신 공고 전체의 정확성을 한 번의 소규모 평가로 보장하지 않는다.
 
+### 실제 캡처로 풀이 늘어날 때 기존 AI 판정 이어받기
+
+`transfer-ai-review.py`는 기존 321개 질문/공고 쌍과 최초 1,605표·재검토 210표를 보존하고,
+실제 검색에서 새로 추가된 쌍만 판정하도록 준비한다. 현재 이전 경로는 **AI-only 전용**이다.
+혼합/사람 모드는 앞의 `select-review-mode.py` 절차를 사용하며 이전 결과를 사람 확인으로 표시하지 않는다.
+
+아래는 **전체 질문의 실제 capture가 성공하고 검증된 뒤** 실행하는 절차다. 중간에 실패한 호출이나
+진단 파일을 완성된 capture로 사용하지 않는다. 이 도구의 구현·테스트 완료는 실제 검색 측정 완료가 아니다.
+`CAPTURE`는 실제 완료 파일 경로로 바꾸고, 출력 디렉터리는 모두 새 경로를 사용한다.
+
+```bash
+RUN=evaluation/support-program-search/runs/support-program-catalog-20260906-v1
+PREVIOUS="$RUN/review-v2"
+CAPTURE="$RUN/capture.json"
+FINAL="$RUN/review-final-v1"
+ADDITIONAL="$FINAL/additional-ai-v1"
+SELECTED="$FINAL/selected-ai-transfer-v1"
+
+python3 -B evaluation/support-program-search/review/build-review-pool.py \
+  --fixture "$RUN/fixture-unlabeled.json" --query-set "$RUN/query-set.json" \
+  --config "$RUN/pool-config.json" --capture "$CAPTURE" \
+  --review-pool "$FINAL/review-pool.csv" --provenance "$FINAL/review-pool-provenance.csv" \
+  --pool-manifest "$FINAL/review-pool-manifest.json"
+
+python3 -B evaluation/support-program-search/review/transfer-ai-review.py prepare \
+  --fixture "$RUN/fixture-unlabeled.json" --query-set "$RUN/query-set.json" \
+  --config "$RUN/pool-config.json" --capture "$CAPTURE" \
+  --previous-pool "$PREVIOUS/review-pool.csv" --previous-manifest "$PREVIOUS/review-pool-manifest.json" \
+  --review-pool "$FINAL/review-pool.csv" --pool-manifest "$FINAL/review-pool-manifest.json" \
+  --ai-review "$PREVIOUS/codex-ai-v1/ai-review.json" \
+  --ai-recheck "$PREVIOUS/codex-ai-recheck-v1/ai-recheck.json" --output-dir "$ADDITIONAL"
+```
+
+최종 풀은 빈 판정으로 생성한다. `--previous-review`로 AI CSV의 세 판정 열만 옮기면 원표 출처가
+이어지지 않으므로 사용하지 않는다. `prepare`는 snapshot·질문·설정·공통 행의 불변 내용과 실제 후보
+집합을 검증하고 `transfer-plan.json`에 원본 파일 hash와 추가 쌍을 고정한다.
+
+- `additionalPairCount`가 **0**이면 새 모델 판정과 아래 `collect`를 생략한다. 이후 `select`에서도
+  `--additional-ai-review` 줄을 뺀다.
+- **1 이상**이면 `prepared/blind-input.jsonl`과 `prepared/policy.json`을 새 독립 에이전트 5개에 전달한다.
+  기존 원표·재검토·사람 판정·검색 순위는 전달하지 않는다. 실제 작업 ID로 `assignments.json`과
+  `judge-1.jsonl`~`judge-5.jsonl`을 `$ADDITIONAL`에 저장하고 아래처럼 회수한다.
+
+```bash
+python3 -B evaluation/support-program-search/review/run-ai-review.py collect \
+  --fixture "$RUN/fixture-unlabeled.json" --query-set "$RUN/query-set.json" \
+  --review-pool "$ADDITIONAL/review-pool.csv" --pool-manifest "$ADDITIONAL/review-pool-manifest.json" \
+  --model gpt-5.6-luna --prepared-dir "$ADDITIONAL/prepared" --assignments "$ADDITIONAL/assignments.json" \
+  --judge-file "$ADDITIONAL/judge-1.jsonl" --judge-file "$ADDITIONAL/judge-2.jsonl" \
+  --judge-file "$ADDITIONAL/judge-3.jsonl" --judge-file "$ADDITIONAL/judge-4.jsonl" \
+  --judge-file "$ADDITIONAL/judge-5.jsonl" --output "$ADDITIONAL/ai-review.json"
+
+python3 -B evaluation/support-program-search/review/transfer-ai-review.py select \
+  --fixture "$RUN/fixture-unlabeled.json" --query-set "$RUN/query-set.json" \
+  --config "$RUN/pool-config.json" --capture "$CAPTURE" \
+  --previous-pool "$PREVIOUS/review-pool.csv" --previous-manifest "$PREVIOUS/review-pool-manifest.json" \
+  --review-pool "$FINAL/review-pool.csv" --pool-manifest "$FINAL/review-pool-manifest.json" \
+  --ai-review "$PREVIOUS/codex-ai-v1/ai-review.json" \
+  --ai-recheck "$PREVIOUS/codex-ai-recheck-v1/ai-recheck.json" \
+  --additional-dir "$ADDITIONAL" \
+  --additional-ai-review "$ADDITIONAL/ai-review.json" \
+  --conversation-judgments "$PREVIOUS/conversation-judgments.json" --output-dir "$SELECTED"
+```
+
+추가 풀은 `captureIncluded: false`인 부분집합이므로 직접 최종 평가에 사용하지 않는다. `select`는
+원본과 추가 판정을 각각 원래 풀의 validator로 확인하며, 기존 AI·재검토 작업 ID를 추가 판정에
+재사용하면 거부한다. 기존 미확정 18건은 그대로 남고 새 미확정까지 합쳐 질문 전체의 제외 여부를
+다시 계산한다. 추가 표가 미완료면 `incomplete-ai`이며 최종 라벨을 만들 수 없다.
+대화 판정 2건은 사람 진행 파일에만 보존하고 AI-only 정답에는 넣지 않는다.
+
+`selection.json`의 상태가 `ready`일 때 다음 명령으로 전체 최종 풀에 라벨을 적용한다. 아래 측정
+절차에서는 `--fixture "$FINAL/fixture-labeled.json" --capture "$CAPTURE"`를 사용한다.
+`ready`는 라벨 선택 상태이며 검색 품질 검증 결과가 아니다.
+
+```bash
+python3 -B evaluation/support-program-search/review/apply-labels.py \
+  --fixture "$RUN/fixture-unlabeled.json" --query-set "$RUN/query-set.json" \
+  --config "$RUN/pool-config.json" --capture "$CAPTURE" \
+  --pool-manifest "$FINAL/review-pool-manifest.json" \
+  --review-pool "$SELECTED/reviewed.csv" --selection "$SELECTED/selection.json" \
+  --output "$FINAL/fixture-labeled.json"
+```
+
+이전 selection에는 각 원본 풀과 선택 기록이 남고, `aiReviewSha256`, `aiRecheckSha256`,
+추가 판정이 있을 때의 `additionalAiReviewSha256`, `transferPlanSha256`는 최종 fixture의
+`labelReview.sourceHashes`와 평가 보고서까지 전달된다. 원본·추가 판정·이전 계획을 함께 보관한다.
+기존 identity/hash 검사를 완화하거나 원본 JSON의 pool hash·agent ID를 바꾸어 이전하지 않는다.
+
 ## 엑셀 없이 혼자 검토하기
 
 로컬 검토 화면은 HTML 파일 하나로 실행한다. Chrome 등 브라우저로 열면 되고, 계정·엑셀·DB·API 서버는
