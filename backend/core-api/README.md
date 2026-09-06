@@ -3,9 +3,10 @@
 브라우저에 공개하는 Spring Boot API입니다. 기업마당 공고를 수집해 벡터 색인을 준비한 뒤 MySQL에
 공개하고, 저장된 공고의 검색·상세 조회와 기업마당 공식 원문 근거 질문을 담당합니다.
 
-프로젝트 전체 설명은 [메인 README](../../README.md), 기술 선택과 구현 범위는
+프로젝트 전체 설명은 [메인 README](../../README.md), 계층·Facade·DI 설계는
+[아키텍처 README](../../docs/architecture/README.md#core-api-업무-흐름과-외부-경계), 기술 선택과 구현 범위는
 [기술 구성](../../docs/technology.md)과 [구현 현황](../../docs/implementation-status.md),
-실제 호출·데이터 흐름은 [아키텍처](../../docs/architecture.md)를 참고하세요.
+실제 실행 순서는 [호출·데이터 흐름](../../docs/architecture.md)을 참고하세요.
 
 ## 실행
 
@@ -50,14 +51,15 @@ APP_SUPPORT_PROGRAM_SEARCH_FIXTURE_EXPORT_OUTPUT_PATH=/absolute/path/support-pro
 java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ```
 
-생성 파일의 `cases`는 빈 배열(`[]`)입니다. 사람이 각 질문의 `id`·`query`·`split`·`relevantIds`를 라벨링한
-뒤에만 질문 묶음과 캡처·평가를 진행할 수 있습니다. 질문 묶음의 `name`과 각 `cases`의 `id`·`query`·`split`은
+생성 파일의 `cases`는 빈 배열(`[]`)입니다. 질문의 `id`·`query`·`split`을 고정하고, 평가 전에 선택한
+AI-only·혼합·사람 검토 방식으로 `relevantIds`와 판정 출처를 확정합니다. 미확정 항목을 무관으로
+바꾸지 않으며 현재 공유 실행은 AI-only 기준입니다. 질문 묶음의 `name`과 각 `cases`의 `id`·`query`·`split`은
 fixture와 순서·내용까지 같아야 합니다. 내보내기는 빈 적격 카탈로그, 누락된 정렬 시각, 중복 검색 문서 ID 등
 검증에 실패하면 기존 출력 파일을 바꾸지 않으며, 모든 검증이 끝난 결과만 원자적으로 교체합니다.
 
 ### 실제 검색 흐름 캡처
 
-사람이 라벨링한 fixture와 같은 질문 묶음을 준비한 뒤에는 공개 API를 반복 호출하지 않고
+fixture와 같은 질문 묶음을 준비한 뒤에는 공개 API를 반복 호출하지 않고
 `evaluation-capture` 프로필을 실행합니다. 이 프로필은 웹 서버·기업마당 동기화·누락 색인 복구를 끈 뒤,
 질문 묶음의 각 항목을 현재 `SupportProgramSearchService`에 전달합니다. 따라서 MySQL의 적격 공고 선정,
 Qdrant·키워드 순위를 결합한 후보 최대 20개, AI 최종 추천 최대 5개라는 운영 검색 흐름에서 나온 ID를
@@ -82,8 +84,9 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 질문은 최대 100개이며, 하나라도 실패하거나 실행 중 카탈로그가 바뀌면 결과 파일을 쓰지 않습니다.
 성공한 v2 캡처에는 기준 날짜·공고 수·카탈로그 지문·후보 ID·최종 추천 ID가 포함됩니다. 평가기는 fixture와
 capture의 기준 날짜가 다르면 점수 계산을 거부합니다. 실제 공고의 검색 문서가 들어갈 수 있는 파일은
-[평가 실행 보관 폴더](../../evaluation/support-program-search/runs/README.md)에 로컬로 보관하며 Git에는 올리지
-않습니다. 사람이 검토한 정답 fixture와 비교해 실제 지표를 계산하는 방법은
+[평가 실행 보관 폴더](../../evaluation/support-program-search/runs/README.md)에서 관리합니다.
+비밀정보를 제외한 고정 공유 실행의 스냅샷·판정·캡처·보고서는 Git에 포함하며, 새 실행과 임시 출력은
+기본적으로 제외합니다. 선택한 판정 출처의 fixture와 비교해 지표를 계산하는 방법은
 [검색 평가 자료](../../evaluation/support-program-search/README.md)를 참고하세요.
 
 ## 공개 API

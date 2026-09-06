@@ -3,7 +3,8 @@
 지원사업 검색 결과를 채팅 형태로 보여 주고 공고의 상세 조건과 원문을 연결하는 웹 화면입니다.
 React·TypeScript·Vite·Tailwind CSS를 사용합니다. 전체 기술 구성은
 [프로젝트 기술 문서](../docs/technology.md), 기능별 완료·미구현 범위는
-[구현 현황](../docs/implementation-status.md)을 참고하세요.
+[구현 현황](../docs/implementation-status.md)을 참고하세요. 계층·DI·MVVM·Redux의 역할은
+[아키텍처 README](../docs/architecture/README.md#frontend-화면과-데이터-처리-분리)에 정리했습니다.
 
 ## 실행
 

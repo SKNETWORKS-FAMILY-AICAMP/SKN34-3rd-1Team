@@ -1,6 +1,9 @@
-# GovBiz 아키텍처
+# GovBiz 서비스 호출·데이터 흐름
 
-현재 production 코드의 서비스 경계와 실행 흐름을 설명합니다. 기술·버전은 [기술 구성](technology.md),
+[문서 목록](README.md) · [아키텍처 README](architecture/README.md)
+
+현재 production 코드의 서비스 경계와 실행 흐름을 설명합니다. 계층·DI·디자인 패턴은
+[아키텍처 README](architecture/README.md), 기술·버전은 [기술 구성](technology.md),
 완료 기능과 남은 제약은 [구현 현황](implementation-status.md), 환경 설정은
 [인프라 README](../infrastructure/README.md)를 참고하세요.
 
@@ -155,23 +158,23 @@ evaluation-fixture-export profile (비웹 실행)
   → MySQL의 현재 공개 공고 전체 조회 → 지정한 referenceDate 기준 OPEN 공고만 선정
   → SupportProgramIndexDocumentMapper와 같은 ID·내용 해시·검색 문서 생성
   → 기준 날짜·전체 적격 카탈로그와 cases: []인 미라벨 fixture 초안을 원자적으로 JSON 기록
-  → 사람이 질문·관련 공고를 라벨링
+  → 질문을 고정하고 선택한 AI-only·혼합·사람 검토 방식으로 참조 라벨 확정
 
 evaluation-capture profile (비웹 실행)
   → 질문 묶음 JSON 검증
   → 같은 referenceDate로 SupportProgramSearchService.searchWithTrace
       → MySQL 현재 공고 → 기준 날짜의 적격 공고 → 의미·키워드 RRF 후보 최대 20개 → AI 최종 추천 최대 5개
   → 기준 날짜·질문별 후보 ID·최종 ID·카탈로그 지문을 원자적으로 JSON 기록
-  → 별도 Python 평가 도구가 사람 라벨 fixture와 대조
+  → 별도 Python 평가 도구가 선택한 판정 출처의 fixture와 대조
 ```
 
 두 경로 모두 공개 Controller나 디버그 HTTP endpoint가 아닙니다. `evaluation-fixture-export`는 자신의 웹 서버와
 두 동기화 스케줄러를 끄고 공고 데이터는 MySQL에서만 조회합니다. 따라서 Qdrant·AI Service·OpenAI를 호출하지
 않으며, 전체 카탈로그 검증이 끝난 뒤에만 출력 파일을 원자적으로 교체합니다. `referenceDate`는 실행 시각의
 오늘이 아니라 신청 시작·종료일로 접수 상태를 다시 계산하는 평가 기준이며 생성 fixture에 함께 기록됩니다.
-생성된 `cases: []`에는 사람이
-`id`·`query`·`split`·`relevantIds`를 채워야 합니다. 그 뒤 질문 묶음의 `name`과 각 `id`·`query`·`split`을
-fixture의 `cases`와 같은 순서·내용으로 맞춥니다.
+생성된 `cases: []`에는 고정 질문의 `id`·`query`·`split`과 선택한 판정 방식의 `relevantIds`를 채웁니다.
+현재 공유 실행은 AI-only이며 사람 검토 정답으로 표시하지 않습니다. 질문 묶음의 `name`과 각
+`id`·`query`·`split`은 fixture의 `cases`와 같은 순서·내용으로 맞춥니다.
 
 `evaluation-capture` profile도 자신의 웹 서버와 두 동기화 스케줄러를 끄며, 모든 질문이 성공하고 캡처 중
 카탈로그 지문이 같을 때만 출력 파일을 교체합니다. capture는 fixture와 같은 `referenceDate`를 명시해 같은
@@ -317,6 +320,8 @@ Core의 Health는 프로세스 상태, AI Health는 AI Service의 정해진 Heal
 이들이 성공했다고 MySQL·Qdrant·OpenAI를 포함한 실제 검색 전체가 준비됐음을 보장하지 않습니다.
 전체 연결 동작은 [Compose 검증 절차](../infrastructure/README.md)로 확인합니다.
 
-현재 제품은 공고 요약의 의미 검색·구조화된 추천과, 기업마당 공식 HTML 한 종류의 공고별 근거 답변을 제공합니다.
-실제 검색 후보·최종 추천을 캡처해 평가하는 도구는 있으나, 실제 공고 정답 데이터와 사람이 검토한 품질 보고서는
-아직 없습니다. 근거 답변도 실제 공고 질문에 대한 인용 정확도 평가와 PDF·첨부·다른 제공처 확장은 후속 범위입니다.
+현재 제품은 공고 요약의 의미·키워드 결합 검색·구조화된 추천과, 기업마당 공식 HTML 한 종류의 공고별 근거 답변을 제공합니다.
+실제 검색 후보·최종 추천의 캡처, AI-only 참조 판정과 변경 전후 보고서는
+[공유 평가 자료](../evaluation/support-program-search/runs/support-program-catalog-20260906-v1/README.md)에 있습니다.
+평가 가능한 질문은 6개, 그중 양성 질문은 2개뿐이며 독립적인 사람 검토 품질 증거는 아닙니다.
+근거 답변의 실제 공고 질문에 대한 인용 정확도 평가와 PDF·첨부·다른 제공처 확장은 후속 범위입니다.

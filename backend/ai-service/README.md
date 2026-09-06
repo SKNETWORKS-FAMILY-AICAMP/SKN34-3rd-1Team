@@ -5,6 +5,7 @@ FastAPI, OpenAI 임베딩, Qdrant로 전체 공고에서 관련 후보를 찾고
 
 프로젝트 전체 기술 구성은 [기술 문서](../../docs/technology.md), 기능별 완료 범위와 남은 작업은
 [구현 현황](../../docs/implementation-status.md)을 참고하세요. 이 문서는 AI Service 실행·설정·내부 처리 규칙을 다룹니다.
+모듈의 책임과 객체 조립은 [아키텍처 README](../../docs/architecture/README.md#ai-service-기능별-모듈과-객체-조립)에 정리했습니다.
 
 ## 책임
 
