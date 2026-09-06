@@ -18,6 +18,12 @@ CATALOG_METADATA_FIELDS = {
     "eligibleCatalogFingerprint",
 }
 SOURCE_CODE_PATTERN = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+REVIEW_DATA_TYPES = {
+    "ai-only": "real_catalog_snapshot_labeled_pooled_ai_consensus",
+    "hybrid": "real_catalog_snapshot_labeled_pooled_hybrid",
+    "human": "real_catalog_snapshot_labeled_pooled_human",
+    "legacy_unspecified": "real_catalog_snapshot_labeled_pooled_legacy_unspecified",
+}
 
 
 def _validate_fixture_identity(fixture, require_data_type=False):
@@ -54,7 +60,113 @@ def load_fixture(path):
                 raise ValueError(f"relevantIds must be an ID list or null for {case['id']}")
             if len(set(labels)) != len(labels) or not set(labels) <= known_docs:
                 raise ValueError(f"Duplicate or unknown relevant document for {case['id']}")
+    label_reference_report(fixture, cases)
     return fixture
+
+
+def label_reference_report(fixture, selected_cases):
+    """Expose label provenance without equating AI agreement or human review with truth."""
+    review = fixture.get("labelReview")
+    if review is not None and not isinstance(review, dict):
+        raise ValueError("Fixture labelReview must be an object")
+    review = review or {}
+    schema = review.get("schemaVersion")
+    if schema is not None and schema != "support-program-label-review-v1":
+        raise ValueError("Unsupported fixture labelReview schema")
+    mode = review.get("mode", "legacy_unspecified")
+    if not isinstance(mode, str) or mode not in REVIEW_DATA_TYPES:
+        raise ValueError("Unknown fixture labelReview mode")
+    if schema is None and ("mode" in review or fixture.get("dataType") in REVIEW_DATA_TYPES.values()):
+        raise ValueError("Explicit review provenance requires a labelReview schema")
+    if schema is not None:
+        if fixture.get("dataType") != REVIEW_DATA_TYPES[mode]:
+            raise ValueError("Fixture dataType does not match its labelReview mode")
+        source_hashes = review.get("sourceHashes")
+        if not isinstance(source_hashes, dict) or not source_hashes:
+            raise ValueError("Fixture labelReview requires source hashes")
+        for value in source_hashes.values():
+            if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+                raise ValueError("Fixture labelReview source hashes must be lowercase SHA-256 strings")
+        if mode != "legacy_unspecified" and "selectionSha256" not in source_hashes:
+            raise ValueError("Selected labelReview requires a selection source hash")
+        counts = review.get("counts")
+        _require_exact_keys(counts, {"reviewRowCount", "labeledQueryCount", "excludedQueryCount"}, "Label review counts")
+        if any(not _is_integer(value) or value < 0 for value in counts.values()):
+            raise ValueError("Label review counts must be nonnegative integers")
+        cases = fixture["cases"]
+        excluded_ids = {case["id"] for case in cases if case["relevantIds"] is None}
+        if counts["labeledQueryCount"] != len(cases) - len(excluded_ids) or counts["excludedQueryCount"] != len(excluded_ids):
+            raise ValueError("Label review query counts do not match fixture cases")
+        exclusions = review.get("excludedQueries")
+        if not isinstance(exclusions, list):
+            raise ValueError("Label review excludedQueries must be a list")
+        seen_excluded = set()
+        for exclusion in exclusions:
+            _require_exact_keys(exclusion, {"id", "reason"}, "Label review exclusion")
+            _require_trimmed_nonempty_string(exclusion["id"], "Excluded query id")
+            _require_trimmed_nonempty_string(exclusion["reason"], "Excluded query reason")
+            if exclusion["id"] in seen_excluded:
+                raise ValueError("Duplicate label review exclusion")
+            seen_excluded.add(exclusion["id"])
+        if seen_excluded != excluded_ids:
+            raise ValueError("Label review exclusions do not match fixture cases")
+        if mode != "legacy_unspecified":
+            source_counts = review.get("sourceCounts")
+            _require_exact_keys(source_counts, {"ai", "human", "unresolved"}, "Label source counts")
+            if any(not _is_integer(value) or value < 0 for value in source_counts.values()):
+                raise ValueError("Label source counts must be nonnegative integers")
+            if sum(source_counts.values()) != counts["reviewRowCount"]:
+                raise ValueError("Label source counts do not match reviewRowCount")
+            required = review.get("requiredHumanReviewCount")
+            pending = review.get("pendingHumanReviewCount")
+            if not _is_integer(required) or not 0 <= required <= counts["reviewRowCount"]:
+                raise ValueError("Invalid requiredHumanReviewCount")
+            if not _is_integer(pending) or pending != 0:
+                raise ValueError("Evaluation labels cannot contain pending required human review")
+            if required > source_counts["human"]:
+                raise ValueError("Required human checks exceed recorded completed human labels")
+            if mode == "ai-only" and (source_counts["human"] != 0 or required != 0):
+                raise ValueError("AI-only labels cannot claim human review")
+            if mode == "human" and (source_counts["ai"] != 0 or source_counts["unresolved"] != 0):
+                raise ValueError("Human-only labels must all have human provenance")
+            if mode == "human" and required != counts["reviewRowCount"]:
+                raise ValueError("Human-only mode requires human checks for all review rows")
+            if mode == "hybrid" and source_counts["unresolved"] != 0:
+                raise ValueError("Hybrid labels cannot contain unresolved human checks")
+            if mode in {"ai-only", "hybrid"} and "aiReviewSha256" not in source_hashes:
+                raise ValueError("AI-assisted labels require an AI review source hash")
+            if source_counts["human"] and not any(field in source_hashes for field in ("humanReviewSha256", "conversationJudgmentsSha256")):
+                raise ValueError("Human labels require a human review or conversation source hash")
+
+    interpretations = {
+        "ai-only": "Recall and MRR measure agreement with an AI-consensus reference, not independently human-validated relevance.",
+        "hybrid": "Recall and MRR use AI labels with selected human checks; unreviewed AI labels are not human-validated.",
+        "human": "Recall and MRR use human review labels; this alone does not establish expert or independently replicated judgments.",
+        "legacy_unspecified": "Label provenance is unspecified; these metrics must not be described as human-validated.",
+    }
+    limitations = [interpretations[mode]]
+    if schema is not None or "pooled" in (fixture.get("dataType") or ""):
+        limitations.append("Labels cover a review pool, not an exhaustive relevance check of the entire catalog; Recall is pooled-reference Recall.")
+    if mode in {"ai-only", "hybrid"}:
+        limitations.append("AI judges can share errors with each other and the ranking model. Vote agreement is not a calibrated correctness probability.")
+    if any(case["relevantIds"] is None for case in fixture["cases"]):
+        limitations.append("Excluded queries reduce coverage and may bias aggregate scores; inspect exclusions and evaluated query counts.")
+    return {
+        "mode": mode,
+        "metricInterpretation": interpretations[mode],
+        "sourceHashes": review.get("sourceHashes", {}),
+        "sourceCounts": review.get("sourceCounts"),
+        "requiredHumanReviewCount": review.get("requiredHumanReviewCount"),
+        "pendingHumanReviewCount": review.get("pendingHumanReviewCount"),
+        "poolCounts": review.get("counts"),
+        "selectedQueryCounts": {
+            "total": len(selected_cases),
+            "evaluated": sum(case["relevantIds"] is not None for case in selected_cases),
+            "excluded": sum(case["relevantIds"] is None for case in selected_cases),
+        },
+        "excludedQueries": review.get("excludedQueries", []),
+        "limitations": limitations,
+    }
 
 
 def query_set_sha256(cases):
@@ -440,6 +552,7 @@ def evaluate_capture(capture, fixture, selected_cases, candidate_k):
         "acceptingOnly": capture["acceptingOnly"],
         "catalog": capture["catalog"],
         "search": capture["search"],
+        "labelReference": label_reference_report(fixture, selected_cases),
         "candidate": evaluate_results(selected_cases, stages["candidate"], candidate_k),
         "final": evaluate_final_results(selected_cases, stages["final"]),
     }
@@ -469,6 +582,7 @@ def main():
             "split": args.split,
             "documentCount": len(fixture["docs"]),
             "queryCount": len(cases),
+            "labelReference": label_reference_report(fixture, cases),
             "latest": evaluate_results(cases, latest, args.k),
             "keyword": evaluate_results(cases, keyword, args.k),
             "semantic": None,

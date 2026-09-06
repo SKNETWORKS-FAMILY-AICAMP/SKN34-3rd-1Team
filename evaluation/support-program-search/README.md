@@ -4,6 +4,11 @@
 
 ## 실행
 
+실제 공고의 검토표 생성과 AI-only·혼합·사람 판정 선택 절차는 [검토 도구 안내](review/README.md)를 참고한다.
+기본 AI-only는 프로젝트 API 키 없이 Codex 하위 에이전트의 독립 판정을 수집한다. 실제 검색 캡처와는 별개이며,
+AI 합의 참조 기준을 사람 검증 정답으로 표시하지 않는다. 보고서의 `labelReference`에서 모드·출처·제외 범위를 확인한다.
+이 페이지의 기본 fixture는 아래 설명과 같이 가상 데이터이며 실데이터 평가 완료를 뜻하지 않는다.
+
 프로젝트 루트에서 Python 표준 라이브러리만으로 실행한다. 외부 API 호출, 유료 모델 호출, DB 쓰기를 하지 않는다.
 
 ```bash
@@ -105,8 +110,10 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 이 실행은 연결된 AI Service를 통해 실제 OpenAI 임베딩·점수화를 호출할 수 있어 비용이 발생할 수 있다.
 CI나 기본 Compose 검증에서는 실행하지 않는다.
 
-질문 묶음은 [query-set.example.json](query-set.example.json)과 같은 구조를 사용한다. 먼저 내보낸 fixture의
-빈 `cases`에 사람이 `id`·`query`·`split`·`relevantIds`를 라벨링한다. 그 다음 질문 묶음의 `name`을 fixture의
+질문 묶음은 [query-set.example.json](query-set.example.json)과 같은 구조를 사용한다. 질문과 `split`은 측정 전에
+고정한다. 사람 검토 도구를 사용하면 먼저 후보를 캡처하고 검토표에서 정답을 확정한 뒤 fixture의 `cases`로
+변환할 수 있다. 직접 라벨링할 때는 빈 `cases`에 `id`·`query`·`split`·`relevantIds`를 넣는다.
+질문 묶음의 `name`을 fixture의
 `name`과 같게 하고, 모든 `id`·`query`·`split`을 fixture의 `cases`와 같은 순서·내용으로 넣는다. 이 세 값과
 fixture의 `name`에는 앞뒤 공백을 넣지 않는다. 공백이 있으면 실행한 검색어와 평가 fixture의 식별자가 달라질
 수 있어 오류로 처리한다.
@@ -143,12 +150,13 @@ java -jar build/libs/govbiz-core-api-0.0.1-SNAPSHOT.jar
 ## 실제 데이터 라벨·캡처·평가
 
 가상 자료의 통과를 제품 정확도 개선으로 보고하지 않는다. 실제 평가에는 특정 시점의 공고를 고정하고,
-대표 사용자 질문에 사람이 관련·제외 공고를 라벨링한 fixture가 필요하다. 캡처 호환 fixture는 후보·최종
+대표 사용자 질문에 선택한 검토 방식으로 관련·제외 공고를 라벨링한 fixture가 필요하다. AI 판정인지 사람 판정인지
+출처를 함께 기록해야 한다. 캡처 호환 fixture는 후보·최종
 ID만 일부 담는 파일이 아니라 **캡처 시점의 전체 적격 공고 카탈로그**를 담아야 한다. 그래야 같은 ID가
 다른 내용으로 갱신된 경우에도 평가를 거부할 수 있다.
 
 실행 순서는 다음과 같다. (1) 평가 기준 날짜를 정하고 `evaluation-fixture-export`로 해당 날짜의 카탈로그 초안을 만든다. (2) `cases: []`에
-질문과 정답을 사람이 라벨링한다. (3) 같은 `name`·`id`·`query`·`split`의 질문 묶음을 만든다. (4) 기본
+질문과 정답을 선택한 검토 방식으로 라벨링한다. (3) 같은 `name`·`id`·`query`·`split`의 질문 묶음을 만든다. (4) 기본
 `acceptingOnly=true`와 **같은 `referenceDate`**의 `evaluation-capture`로 실제 후보·최종 추천을 기록한다. (5) fixture와 capture를
 `evaluate.py --fixture ... --capture ...`에 전달한다. `relevantIds: null`은 미라벨이므로 점수 계산에서 제외한다.
 
@@ -205,7 +213,7 @@ ID만 일부 담는 파일이 아니라 **캡처 시점의 전체 적격 공고 
 }
 ```
 
-사람이 라벨링한 fixture와 캡처 결과가 준비되면 다음처럼 후보·최종 추천을 분리해 평가한다.
+선택한 검토 방식과 출처가 기록된 fixture와 캡처 결과가 준비되면 다음처럼 후보·최종 추천을 분리해 평가한다.
 
 ```bash
 python3 evaluation/support-program-search/evaluate.py \
@@ -237,5 +245,7 @@ python3 evaluation/support-program-search/evaluate.py \
 
 실제 실행마다 [실행 기록 템플릿](run-manifest.example.md)을 복사해 모델·임베딩·컬렉션·커밋·기준 날짜·파일
 해시를 고정하고, [평가 보고서 템플릿](report-template.md)에 후보와 최종 추천 지표를 분리해 남긴다.
-실제 공고 fixture·capture·라벨·보고서는 [runs/](runs/README.md)의 실행별 폴더에 보관한다. 이 폴더의 실제
-산출물은 Git에서 제외되므로, 팀의 승인된 저장소나 백업 위치에도 별도로 보관해야 한다.
+실제 공고 fixture·capture·라벨·보고서는 [runs/](runs/README.md)의 실행별 폴더에 보관한다. 협업용 고정 자료는
+허용 목록으로 Git에 포함하며, 새 실행과 생성 화면·엑셀·임시 파일은 기본적으로 제외한다. 현재 공유된
+[공고 1,422건·AI 판정 1,605건의 이어받기 안내](runs/support-program-catalog-20260906-v1/README.md)를 따른다.
+다른 PC에서도 API 호출 없이 자료를 검증할 수 있지만, 실제 검색 품질 점수가 만들어진 것은 아니다.

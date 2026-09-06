@@ -93,15 +93,18 @@
 | AI Service | Agent 출력·점수·자격 필터·일반·원문 근거 벡터 API 테스트, CI의 Qdrant 연동 검증 | 내부 계약과 검색·근거 청크 색인 동작 확인 |
 | Compose smoke | 실제 MySQL·Qdrant와 로컬 기업마당·OpenAI 스텁 | 전체 연결, 오래된 관련 공고 경로, 장애 격리와 재시작 복구 |
 | 가상 공고 평가 | 공고 40개·질문 30개, 최신순·키워드 비교, 외부 의미 검색 결과 파일 입력 | 후보 검색 회귀 평가 도구; 실제 추천 정확도 증거 아님 |
-| 실데이터 fixture 초안 내보내기 | `evaluation-fixture-export` profile이 지정한 기준 날짜의 현재 모든 제공처 `OPEN` 공고를 운영 색인 Mapper와 같은 ID·내용 해시·검색 문서로 JSON 기록 | 웹·동기화·Qdrant·AI·OpenAI 호출 없음; `cases: []`은 사람이 라벨링해야 함 |
+| 실데이터 fixture 초안 내보내기 | `evaluation-fixture-export` profile이 지정한 기준 날짜의 현재 모든 제공처 `OPEN` 공고를 운영 색인 Mapper와 같은 ID·내용 해시·검색 문서로 JSON 기록 | 웹·동기화·Qdrant·AI·OpenAI 호출 없음; `cases: []`은 선택한 방식으로 판정해야 함 |
 | 실제 검색 흐름 캡처 | `evaluation-capture` profile이 같은 기준 날짜로 내부 Search Service의 Qdrant 후보·AI 최종 추천 ID와 카탈로그 지문을 v2 JSON으로 기록 | fixture와 기준 날짜가 다르면 평가 거부; 공개 endpoint·자동 실행 없음, 실제 MySQL·AI Service 연결과 명시적 실행 필요 |
-| 실데이터 검색 품질 | 고정 공고·사람이 검토한 정답·실제 모델 비교 보고서 없음 | fixture 초안·캡처·후보/최종 Top-5 분리 측정 도구는 준비됐고 사람이 검토한 라벨 데이터와 보고서가 후속 필요 |
+| 실데이터 판정 공유 | 고정 공고 1,422건·질문 16개·321개 조합의 AI 판정 1,605건, AI-only/혼합/사람 모드와 오프라인 재현 검증 | Git으로 이어받기 가능. AI-only 합의 279건·미확정 42건이며 독립적인 사람 검증 정답이 아님 |
+| 실데이터 검색 품질 | 실제 검색 캡처·실제 모델 비교 점수 없음 | 현재 제외 규칙상 질문 4개만 평가 가능하고 관련 공고가 있는 질문은 하나라 최소 평가 완료 기준 미충족 |
 
 평가 도구는 후보 단계의 `macroRecallAtK`·무결과 오추천율과 최종 단계의 `macroRecallAt5`·`MRR@5`·무결과
 오추천율을 분리해 계산합니다. `evaluation-fixture-export`는 현재 MySQL 카탈로그에서 미라벨 fixture 초안을
-만들고, 사람 라벨 후 `evaluation-capture`는 실제 Search Service를 다시 구현하지 않고 같은 기준 날짜의 호출 흐름에서 나온
-후보·최종 ID를 기록합니다. 실제 snapshot·capture는 Git 제외 `evaluation/support-program-search/runs/`에 보관합니다.
-사람이 검토한 실데이터 fixture가 없으면 점수는 주장하지 않으며, 의미 검색 결과
+만들고, `evaluation-capture`는 실제 Search Service를 다시 구현하지 않고 같은 기준 날짜의 호출 흐름에서 나온
+후보·최종 ID를 기록합니다. 실제 snapshot·capture는 `evaluation/support-program-search/runs/`에 보관합니다.
+현재 고정 스냅샷·AI 판정·모드 선택 결과는 Git 포함 대상이고 새 실행·임시 출력은 기본적으로 제외합니다.
+[공유 자료 검증과 이어받기](../evaluation/support-program-search/runs/support-program-catalog-20260906-v1/README.md)를 따릅니다.
+선택한 판정 출처와 실제 캡처 없이 검색 품질 점수를 주장하지 않으며, 의미 검색 결과
 파일이나 캡처 파일을 제공하지 않으면 각각 출력의 `semantic`·`capture`는 `null`입니다.
 [평가 자료와 실행법](../evaluation/support-program-search/README.md)을 참고하세요.
 
@@ -114,7 +117,7 @@
 
 | 우선순위 | 작업 | 완료를 판단할 기준 |
 |---|---|---|
-| 1 | 실데이터 검색 품질 평가 | 같은 시점의 실제 공고·대표 질문·사람이 검토한 정답 fixture를 만들고, 준비된 capture로 후보 20개와 최종 Top-5를 별도로 비교 |
+| 1 | 실데이터 검색 품질 평가 | 공유된 미확정 42건의 원인을 검토해 평가 가능한 질문 범위를 보완하고, 같은 스냅샷의 실제 capture로 후보 20개와 최종 Top-5를 별도 비교. AI-only와 사람 검토 출처를 구분 |
 | 2 | 관측 정보와 성능 기준 확보 | 동기화 성공·실패와 색인 준비 상태는 구현됨. 검색 지연·실패율·모델 사용량을 기록하고 기준을 정해야 함 |
 | 3 | 원문 근거 답변의 품질·범위 검증 | 실제 공고 질문·사람 검토 기준으로 인용 정확도를 평가하고, PDF·첨부 확장 필요성을 별도로 결정 |
 | 4 | 데이터·사용자 기능 확장 | 두 번째 제공처나 기업 프로필·북마크를 선택하고 해당 API·저장·화면까지 연결 |
