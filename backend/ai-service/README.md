@@ -15,7 +15,7 @@ AI Service가 하는 일:
 - 현재 MySQL 공고 ID·내용 해시 목록 안에서 의미가 가까운 후보를 최대 20개 검색
 - 버전된 100점 평가 기준으로 모든 후보를 점수화
 - 지원대상·지역의 명백한 자격 불일치를 제외하고 의미 관련성·총점 최소 기준을 통과한 공고만 0~5개로 반환
-- 반환 공고의 자격 판정·세부 점수·총점·추천 이유를 strict structured output으로 제공
+- AI가 자격 판정·세부 점수·추천 이유를 strict structured output으로 생성하고 Service가 총점을 합산해 반환
 - Core가 준비한 공고 상세 원문 청크를 별도 Qdrant collection에 색인하고, 지정된 현재 청크 안에서 근거를 최대 5개 검색
 - 검색된 공고 상세 근거만 사용해 한국어 답변과 인용 청크 ID를 strict structured output으로 반환
 
@@ -164,23 +164,31 @@ payload 불일치, 검증 실패는 `EVIDENCE_UNAVAILABLE`입니다. 부분 검�
 | 원하는 지원 유형 적합성 | 10 |
 
 LLM에 전달할 평가 지시는 [prompt.py](app/support_program_ranking/prompt.py)에 둡니다.
-[models.py](app/support_program_ranking/models.py)는 점수 범위·합계·자격 판정을 검증하고,
-[service.py](app/support_program_ranking/service.py)는 최소 추천 기준을 적용합니다. Core도 같은
-HTTP 계약을 검증하지만, 지역·카테고리 단어 사전으로 별도 추천 점수를 계산하지 않습니다.
+[models.py](app/support_program_ranking/models.py)는 AI 출력 값 `SupportProgramAssessment`, Agent가 검증된 ID를 붙인
+내부 항목 `AssessedSupportProgram`, 검증된 HTTP 응답 `ScoredSupportProgram`을 구분합니다.
+AI는 의미·자격·항목별 점수를 판단하되 `totalScore`와 값 안의 `programId`는 출력하지 않습니다.
+[service.py](app/support_program_ranking/service.py)가 다섯 점수를 합산하고 기존 HTTP 응답으로 변환·검증한 뒤
+최소 추천 기준을 적용합니다. 지역·업종별 조건을 코드에 나열하거나 AI의 자격 판단을 바꾸는 방식이 아닙니다.
+Core도 같은 HTTP 계약을 재검증합니다. HTTP 필드·배점·추천 임계치·`scoringVersion`은 기존 v3와 같습니다.
 
 ### 추천 반환 최소 기준
 
-Agent는 후보를 빠짐없이 점수화하고 각 후보의 `targetEligibility`·`regionEligibility`를 반드시 반환합니다.
-Agent에 전달하는 strict output schema의 `rankings` 개수는 매 요청의 후보 수와 정확히 같게 제한합니다.
-예를 들어 후보 20개이면 `minItems=maxItems=20`이며, 적합하지 않은 후보도 점수화한 뒤 Service에서
-제외합니다. 요청별 Agent 복사본에만 이 제약을 적용하므로 서로 다른 후보 수의 요청이 공통 설정을
-바꾸지 않습니다. 개수가 같아도 ID 누락·추가·중복은 가능하므로 기존 ID 집합 검증도 유지합니다.
-두 값은 `MATCH`(제공된 정보와 일치), `INCOMPATIBLE`(명백한 조건 불일치), `UNKNOWN`(정보 부족) 중 하나입니다.
+Agent는 후보를 빠짐없이 점수화하고 각 후보의 `targetAssessment`·`regionAssessment`에 `eligibility`와
+`score`를 함께 반환합니다. 두 항목의 nested `anyOf` 스키마는 `MATCH`·`UNKNOWN`이면 각각 0~25점·0~15점,
+`INCOMPATIBLE`이면 0점만 허용해 부적합 판정과 양수 점수의 모순을 차단합니다.
+Service는 이를 기존 HTTP의 `targetEligibility`·`targetFit`, `regionEligibility`·`regionFit`으로 옮깁니다.
+Agent에 전달하는 strict output schema의 `rankings`는 배열이 아닌 객체입니다. 요청 후보의 ID 20개가 있다면
+그 ID 20개 자체를 모두 `required` 속성 키로 선언하고 `additionalProperties=false`로 다른 키를 금지합니다.
+배열 길이만 맞추고 특정 공고를 중복 평가하는 실패를 막기 위한 구조이며, 적합하지 않은 후보도 평가한 뒤
+Service에서 제외합니다. Agent가 검증된 키를 `programId`로 붙여 입력 후보 순서의 내부 목록으로 변환합니다.
+요청별 Agent 복사본에만 이 스키마를 적용하므로 서로 다른 후보의 요청이 공통 설정을 바꾸지 않습니다.
+내부 목록 중복 검증과 Service의 후보 ID 집합 검증도 유지합니다.
+자격 값은 `MATCH`(제공된 정보와 일치), `INCOMPATIBLE`(명백한 조건 불일치), `UNKNOWN`(정보 부족) 중 하나입니다.
 `UNKNOWN`은 자동 탈락이나 자격 충족 확정을 뜻하지 않습니다. Service는 아래 조건을 모두 충족한 공고만 추천으로
 반환합니다.
 
 후보의 `id`와 응답의 `programId`는 `sourceCode:sourceProgramId` 형태의 같은 정규 식별자입니다. 제공처가
-다르면 원본 공고 ID가 같아도 서로 다른 후보로 취급하며, Agent는 입력값을 변경하지 않고 그대로 반환해야 합니다.
+다르면 원본 공고 ID가 같아도 서로 다른 후보로 취급하며, 키에서 내부 항목으로 옮길 때 입력값을 그대로 유지합니다.
 
 - `targetEligibility`와 `regionEligibility` 어느 쪽도 `INCOMPATIBLE`이 아님
 - `semanticRelevance >= 20`: 40점인 핵심 관련성 항목에서 절반 이상
@@ -204,8 +212,10 @@ Core API
 → OpenAI Agents SDK Runner.run(max_turns=1)
    ├→ prompt.py의 평가 기준 사용
    ├→ 후보 문장을 지시가 아닌 데이터로 취급
-   └→ SupportProgramRankingOutput strict schema로 모든 후보 점수화·지원대상·지역 자격 판정
+   └→ 요청별 필수 ID 키 rankings 객체의 SupportProgramAssessment 값으로 세부 점수·자격 판정 (총점 없음)
+→ Agent가 검증된 ID 키를 붙여 SupportProgramRankingOutput의 AssessedSupportProgram 목록으로 변환
 → Service가 입력 후보 ID exact set을 재검증
+→ Service가 다섯 점수 합산 → 기존 HTTP 항목 ScoredSupportProgram으로 변환·검증
 → 총점 내림차순 정렬
 → 자격 INCOMPATIBLE 제외 + semanticRelevance 20점·totalScore 60점 기준 필터
 → 적격 공고를 resultLimit까지 선택(0개 가능)
@@ -244,7 +254,7 @@ app/
     ├── models.py                   # 요청·출력·응답 Pydantic 계약
     ├── prompt.py                   # 버전된 100점 평가 기준
     ├── agent.py                    # Runner와 OpenAI 실행
-    ├── service.py                  # 후보 ID 검증·정렬·최소 기준 필터
+    ├── service.py                  # 후보 ID 검증·총점 합산·HTTP 변환·정렬·최소 기준 필터
     └── errors.py                   # 안전한 기능 실패
 ```
 
@@ -276,7 +286,8 @@ OpenAI timeout·거부·SDK 오류·structured output 오류
 ```
 
 사용자 질문, 공고 원문, API key와 OpenAI 원문 오류를 실패 응답에 포함하지 않습니다. Core는 다시
-내부 응답의 ID·점수 범위·점수 합계·순서를 검증합니다.
+내부 응답의 ID·점수 범위·점수 합계·순서를 검증합니다. 부적합·정보 부족 판정을 `MATCH`로 바꾸거나
+유효하지 않은 AI 출력을 정상 결과로 보정하지 않습니다. 재시도·fallback은 추가하지 않았으며 기본 timeout도 유지합니다.
 
 ## 설정
 
@@ -338,5 +349,10 @@ prune 차단, 다른 제공처 보존, 비정상 임베딩 거부를 검증합�
 공고 간 청크 ID 재사용 거부, 현재 내용 해시 필터, 입력 밖 Agent 인용 거부, 근거 부족 상태를 검증합니다.
 테스트 임베딩은 HTTP mock으로 고정한 벡터이므로 실제 한국어 검색 정확도나 답변 품질을 측정한 결과로
 해석하면 안 됩니다.
+
+총점 합산·자격·필수 ID 키 출력 계약 수정 후 전체 테스트 185개가 통과했습니다. 실제 실패 산식의 합산,
+부적합 양수 점수 거부, 20개 중 15개 ID만 고유했던 실패 패턴, 요청별 필수 ID 키·누락·추가 거부,
+실제 SDK 요청의 strict schema, `UNKNOWN` 보존과
+오류의 503 변환을 포함합니다. 이는 코드 회귀 검증이며 실제 검색 품질 평가 완료를 뜻하지 않습니다.
 
 Agent 확장 원칙은 [AI Agent 모듈 구조](docs/agent-structure.md)를 참고하세요.

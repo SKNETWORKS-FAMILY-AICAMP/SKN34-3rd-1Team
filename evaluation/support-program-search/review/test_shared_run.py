@@ -16,10 +16,12 @@ RUN = ROOT / "runs" / "support-program-catalog-20260906-v1"
 
 
 class SharedRunVerificationTest(unittest.TestCase):
-    def run_cli(self, path, with_recheck=False):
+    def run_cli(self, path, with_recheck=False, with_capture=False):
         command = [sys.executable, "-B", str(SCRIPT), "--run-dir", str(path)]
         if with_recheck:
             command.append("--with-recheck")
+        if with_capture:
+            command.append("--with-capture")
         return subprocess.run(
             command,
             capture_output=True, text=True, check=False,
@@ -89,6 +91,93 @@ class SharedRunVerificationTest(unittest.TestCase):
             for name in ("selection.json", "reviewed.csv", "review-progress.json"):
                 shutil.copyfile(source_dir / name, destination / name)
         return copy
+
+    def capture_verifier(self):
+        spec = importlib.util.spec_from_file_location("shared_capture_test", SCRIPT)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+        return verifier
+
+    def copied_capture_run(self, directory):
+        copy = self.copied_recheck_run(directory)
+        for source in self.capture_verifier().capture_files(RUN):
+            target = copy / source.relative_to(RUN)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+        return copy
+
+    def test_capture_requires_every_frozen_artifact_and_does_not_claim_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            copy = self.copied_recheck_run(directory)
+            result = self.run_cli(copy, with_capture=True)
+            self.assertNotEqual(result.returncode, 0)
+            value = json.loads(result.stdout)
+            self.assertEqual(value["status"], "failed")
+            self.assertIn("actual-capture-v3/capture.json", value["error"])
+            self.assertIn("report-heldout.json", value["error"])
+            self.assertNotIn("actualSearchEvaluated", value)
+
+    def test_capture_replays_pool_judgments_labels_and_all_splits_offline_without_source_writes(self):
+        verifier = self.capture_verifier()
+        paths = verifier.capture_files(RUN)
+        before = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+        with patch("socket.socket.connect", side_effect=AssertionError("Network use is forbidden")):
+            value = verifier.verify_run(RUN, with_capture=True)
+        self.assertEqual(value["status"], "ok")
+        self.assertTrue(value["actualSearchEvaluated"])
+        self.assertEqual(value["recheck"]["judgments"], 210)
+        self.assertEqual(value["capture"]["observations"], 16)
+        self.assertEqual(value["capture"]["reviewPairCount"], 570)
+        self.assertEqual(value["capture"]["additionalJudgments"], 1245)
+        self.assertEqual(value["capture"]["sourceCounts"]["human"], 0)
+        self.assertEqual(value["capture"]["splits"], ["all", "dev", "heldout"])
+        self.assertEqual(before, {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths})
+
+    def test_capture_candidate_and_additional_judge_tampering_are_rejected(self):
+        for kind in ("capture", "judge"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                copy = self.copied_capture_run(directory)
+                if kind == "capture":
+                    path = copy / "actual-capture-v3/capture.json"
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                    value["observations"][0]["candidateIds"].pop()
+                    path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+                else:
+                    path = copy / "review-final-v1/additional-ai-v1/judge-1.jsonl"
+                    lines = path.read_text(encoding="utf-8").splitlines()
+                    value = json.loads(lines[1])
+                    value["reason"] += " 변조"
+                    lines[1] = json.dumps(value, ensure_ascii=False)
+                    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                result = self.run_cli(copy, with_capture=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(result.stdout)["status"], "failed")
+
+    def test_capture_selection_and_metric_report_tampering_are_rejected(self):
+        for kind in ("selection", "all", "dev", "heldout"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                copy = self.copied_capture_run(directory)
+                if kind == "selection":
+                    path = copy / "review-final-v1/selected-ai-transfer-v1/selection.json"
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                    value["evaluableQueryCount"] += 1
+                else:
+                    path = copy / "review-final-v1" / f"report-{kind}.json"
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                    value["capture"]["final"]["mrrAt5"] = "forged"
+                path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+                result = self.run_cli(copy, with_capture=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(result.stdout)["status"], "failed")
+
+    def test_capture_missing_additional_judge_and_labeled_fixture_fail_cleanly(self):
+        for relative in ("additional-ai-v1/judge-5.jsonl", "fixture-labeled.json"):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as directory:
+                copy = self.copied_capture_run(directory)
+                (copy / "review-final-v1" / relative).unlink()
+                result = self.run_cli(copy, with_capture=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(result.stdout)["status"], "failed")
 
     def test_recheck_missing_artifact_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as directory:

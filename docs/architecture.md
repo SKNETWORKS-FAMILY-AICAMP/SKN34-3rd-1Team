@@ -49,7 +49,11 @@ GET /api/v1/support-programs/search
    최신 공고 20개를 먼저 자르지 않습니다. Qdrant가 반환해야 할 개수는 `min(대상 공고 수, 20)`입니다.
 4. Core는 의미 검색 응답의 질의·ID·해시·중복·유한 점수·내림차순·개수를 검증하고,
    해당 DB 공고만 점수화 요청의 후보로 전달합니다.
-5. AI Service는 모든 후보의 구조화된 점수화 결과를 검증한 후 총점순으로 정렬하고 추천 기준을 적용합니다.
+5. AI는 모든 후보의 의미·자격·세부 점수를 `SupportProgramAssessment`로 판단하고 총점은 출력하지 않습니다.
+   요청별 strict schema의 `rankings`는 후보 ID 자체를 필수 키로 선언한 객체이며 다른 키는 금지합니다.
+   Agent는 검증된 키를 ID로 붙여 기존 내부 `AssessedSupportProgram` 목록으로 변환합니다.
+   AI Service가 다섯 점수를 합산해 기존 HTTP 항목 `ScoredSupportProgram`으로 변환·검증한 후
+   총점순으로 정렬하고 추천 기준을 적용합니다.
    Core도 최종 응답의 후보 ID·질의·계약 버전·점수·순서·추천 이유를 재검증해 공개 응답으로 변환합니다.
 
 ```text
@@ -67,6 +71,10 @@ GET /api/v1/support-programs/readiness
 
 점수화 계약은 `govbiz-support-program-ranking-v3`입니다. 의미 관련성 20/40점 이상과 총점 60/100점 이상을
 충족해야 하며, `targetEligibility` 또는 `regionEligibility`가 `INCOMPATIBLE`이면 추천에서 제외합니다.
+LLM 출력은 `targetAssessment`·`regionAssessment` 안에 `eligibility`와 `score`를 함께 묶습니다.
+nested `anyOf` 스키마가 `INCOMPATIBLE`의 점수를 0으로 제한하고, `MATCH`·`UNKNOWN`에는 기존 항목별
+범위(대상 0~25점·지역 0~15점)를 적용합니다. Service는 판단을 바꾸지 않고 기존 HTTP 필드로 옮깁니다.
+총점 합산은 지역·업종별 판단 규칙을 코드에 추가하는 것이 아니며 배점·추천 정책·HTTP 계약·버전은 유지합니다.
 `UNKNOWN`은 정보 부족을 뜻해 자동 제외하지 않지만 신청 자격을 확인했다는 의미도 아닙니다.
 AI Service가 부적격 항목을 최종 응답에 넣으면 Core는 이를 응답 계약 위반으로 거부합니다.
 결과가 0개인 것은 정상일 수 있으며 관련 없는 공고로 5개를 채우지 않습니다.

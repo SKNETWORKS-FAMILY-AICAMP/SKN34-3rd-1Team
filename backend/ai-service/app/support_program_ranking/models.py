@@ -14,6 +14,21 @@ MAX_CANDIDATES = 20
 MAX_CANONICAL_PROGRAM_ID_LENGTH = MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH
 
 
+def _normalize_recommendation_reasons(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        reason = value.strip()
+        if not reason or len(reason) > 120:
+            raise ValueError("recommendation reasons must contain 1 to 120 characters")
+        if reason not in seen:
+            seen.add(reason)
+            normalized.append(reason)
+    if not normalized:
+        raise ValueError("at least one recommendation reason is required")
+    return normalized
+
+
 class SupportProgramStatus(StrEnum):
     OPEN = "OPEN"
     UPCOMING = "UPCOMING"
@@ -116,7 +131,7 @@ class SupportProgramRankingRequest(BaseModel):
 
 
 class ScoredSupportProgram(BaseModel):
-    """LLM이 평가 기준별 점수와 근거를 반환하는 strict output 항목."""
+    """Service가 합산·검증해 Core에 반환하는 추천 항목."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
@@ -147,18 +162,7 @@ class ScoredSupportProgram(BaseModel):
     @field_validator("recommendation_reasons")
     @classmethod
     def normalize_reasons(cls, values: list[str]) -> list[str]:
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            reason = value.strip()
-            if not reason or len(reason) > 120:
-                raise ValueError("recommendation reasons must contain 1 to 120 characters")
-            if reason not in seen:
-                seen.add(reason)
-                normalized.append(reason)
-        if not normalized:
-            raise ValueError("at least one recommendation reason is required")
-        return normalized
+        return _normalize_recommendation_reasons(values)
 
     @model_validator(mode="after")
     def require_exact_total(self) -> "ScoredSupportProgram":
@@ -184,12 +188,80 @@ class ScoredSupportProgram(BaseModel):
         return self
 
 
-class SupportProgramRankingOutput(BaseModel):
-    """Agent가 모든 입력 후보를 한 번씩 점수화한 structured output."""
+class TargetEligibilityAssessment(BaseModel):
+    """명백한 대상 부적합이 아닌 경우 AI가 판단하는 대상 점수."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    rankings: list[ScoredSupportProgram] = Field(
+    eligibility: Literal[SupportProgramEligibility.MATCH, SupportProgramEligibility.UNKNOWN]
+    score: int = Field(ge=0, le=25)
+
+
+class RegionEligibilityAssessment(BaseModel):
+    """명백한 지역 부적합이 아닌 경우 AI가 판단하는 지역 점수."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    eligibility: Literal[SupportProgramEligibility.MATCH, SupportProgramEligibility.UNKNOWN]
+    score: int = Field(ge=0, le=15)
+
+
+class IncompatibleEligibilityAssessment(BaseModel):
+    """대상·지역 부적합 판정과 양수 점수의 모순을 출력 스키마에서 차단한다."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    eligibility: Literal[SupportProgramEligibility.INCOMPATIBLE]
+    score: Literal[0]
+
+
+class SupportProgramAssessment(BaseModel):
+    """AI가 판단하는 세부 점수·자격·근거이며 ID와 계산 가능한 총점은 받지 않는다."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    semantic_relevance: int = Field(alias="semanticRelevance", ge=0, le=40)
+    target_assessment: TargetEligibilityAssessment | IncompatibleEligibilityAssessment = Field(
+        alias="targetAssessment",
+    )
+    region_assessment: RegionEligibilityAssessment | IncompatibleEligibilityAssessment = Field(
+        alias="regionAssessment",
+    )
+    application_status_fit: int = Field(alias="applicationStatusFit", ge=0, le=10)
+    support_type_fit: int = Field(alias="supportTypeFit", ge=0, le=10)
+    recommendation_reasons: list[str] = Field(
+        alias="recommendationReasons",
+        min_length=1,
+        max_length=3,
+    )
+
+    @field_validator("recommendation_reasons")
+    @classmethod
+    def normalize_reasons(cls, values: list[str]) -> list[str]:
+        return _normalize_recommendation_reasons(values)
+
+
+class AssessedSupportProgram(SupportProgramAssessment):
+    """Agent가 요청별 필수 키로 검증한 공고 ID를 붙여 Service에 전달하는 평가 항목."""
+
+    program_id: str = Field(
+        alias="programId",
+        min_length=3,
+        max_length=MAX_CANONICAL_PROGRAM_ID_LENGTH,
+    )
+
+    @field_validator("program_id", mode="before")
+    @classmethod
+    def require_canonical_program_id(cls, value: object) -> object:
+        return require_canonical_source_program_id(value)
+
+
+class SupportProgramRankingOutput(BaseModel):
+    """Agent가 키 기반 structured output을 검증한 뒤 Service에 전달하는 후보 평가 목록."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rankings: list[AssessedSupportProgram] = Field(
         min_length=1,
         max_length=MAX_CANDIDATES,
     )
