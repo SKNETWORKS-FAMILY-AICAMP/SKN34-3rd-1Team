@@ -60,6 +60,19 @@ python3 -m unittest discover -s evaluation/support-program-search -p 'test_*.py'
 검토 CSV의 연결 해시를 확인하며 missing/blank/unclear를 무관으로 처리하지 않는다.
 출력 덮어쓰기는 금지한다. [실데이터 전후 비교와 실행 명령](runs/support-program-catalog-20260906-v1/stage4-v1/README.md)을 참고한다.
 
+최종 추천 프롬프트만 비교할 때는 `replay-ranking.py`와 `evaluate-ranking-replay.py`를 사용한다.
+기존 캡처의 후보 20개와 전체 요청을 고정하고 전후를 각각 호출한 뒤, 동일 후보 분모로 기존 판정의
+관련 공고 유지율·무관 공고 선택률을 따로 계산한다. 미판정·unclear와 기존 공식 제외 질문을 유지한다.
+실행기는 기본 dry-run(API 0회)이며 `--execute`에서만 실제 API를 최대 32회 호출한다.
+저장된 보고서 재계산에는 API 키·DB가 필요 없다.
+[4단계 2차 자료와 재현 명령](runs/support-program-catalog-20260906-v1/stage4-v2/README.md)을 참고한다.
+실행기의 모의 HTTP·실패 처리 테스트까지 실행하려면 AI Service 개발 환경의 Python을 사용한다.
+
+```bash
+backend/ai-service/.venv/bin/python -B -m unittest discover \
+  -s evaluation/support-program-search -p 'test_*.py'
+```
+
 가상 공고만 평가할 때는 이 공고 40개만 넣은 **평가 전용 Qdrant 컬렉션/환경**에서 질문을 실행한다.
 운영 공고 색인에 `SYNTH_*` 공고를 넣거나 운영 공고와 섞어 비교하지 않는다.
 
