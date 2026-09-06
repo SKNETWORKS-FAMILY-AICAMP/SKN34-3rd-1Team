@@ -1,6 +1,7 @@
 import re
 from enum import StrEnum
 from hashlib import sha256
+from typing import Annotated
 from unicodedata import category
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -157,7 +158,7 @@ class SupportProgramEvidenceAnswerStatus(StrEnum):
 
 
 class SupportProgramEvidenceAnswerOutput(BaseModel):
-    """근거 외 지식을 쓰지 않는 상세 공고 답변 Agent의 strict output."""
+    """Agent가 선택 결과를 검증하고 원래 청크 ID로 복원한 내부 답변."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
@@ -193,6 +194,36 @@ class SupportProgramEvidenceAnswerOutput(BaseModel):
 
 class SupportProgramEvidenceAnswerResponse(SupportProgramEvidenceAnswerOutput):
     """Core에 반환하는 검증 완료 상세 공고 근거 답변."""
+
+
+class SupportProgramEvidenceAnswerSelection(BaseModel):
+    """LLM은 요청 배열의 짧은 위치만 선택하고, 실제 청크 ID는 Agent가 복원한다."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    answer: str = Field(min_length=1, max_length=MAX_ANSWER_LENGTH)
+    answer_status: SupportProgramEvidenceAnswerStatus = Field(alias="answerStatus")
+    citation_chunk_indexes: list[Annotated[int, Field(strict=True, ge=0, le=4)]] = Field(
+        alias="citationChunkIndexes", max_length=5,
+    )
+
+    @field_validator("answer", mode="before")
+    @classmethod
+    def strip_answer(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def require_status_consistent_citations(self) -> "SupportProgramEvidenceAnswerSelection":
+        if len(self.citation_chunk_indexes) != len(set(self.citation_chunk_indexes)):
+            raise ValueError("citation chunk indexes must be unique")
+        if self.answer_status is SupportProgramEvidenceAnswerStatus.ANSWERED and not self.citation_chunk_indexes:
+            raise ValueError("ANSWERED requires at least one citation")
+        if (
+            self.answer_status is SupportProgramEvidenceAnswerStatus.INSUFFICIENT_EVIDENCE
+            and self.citation_chunk_indexes
+        ):
+            raise ValueError("INSUFFICIENT_EVIDENCE must not include citations")
+        return self
 
 
 def _require_unique_chunk_ids(chunks: list[EvidenceChunkLocator]) -> None:

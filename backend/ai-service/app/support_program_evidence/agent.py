@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from agents import (
     Agent,
@@ -19,6 +20,7 @@ from app.support_program_evidence.errors import SupportProgramEvidenceError
 from app.support_program_evidence.models import (
     SupportProgramEvidenceAnswerOutput,
     SupportProgramEvidenceAnswerRequest,
+    SupportProgramEvidenceAnswerSelection,
 )
 from app.support_program_evidence.prompt import (
     SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS,
@@ -40,7 +42,7 @@ class SupportProgramEvidenceAnswerAgent:
             name="GovBiz Support Program Evidence Answerer",
             instructions=SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS,
             model=model,
-            output_type=SupportProgramEvidenceAnswerOutput,
+            output_type=SupportProgramEvidenceAnswerSelection,
             model_settings=ModelSettings(
                 max_tokens=2_000,
                 reasoning=Reasoning(effort="none"),
@@ -58,14 +60,32 @@ class SupportProgramEvidenceAnswerAgent:
         self,
         request: SupportProgramEvidenceAnswerRequest,
     ) -> SupportProgramEvidenceAnswerOutput:
+        payload = {
+            "question": request.question,
+            "chunks": [
+                {"index": index, **chunk.model_dump(by_alias=True, exclude={"id"})}
+                for index, chunk in enumerate(request.chunks)
+            ],
+        }
         try:
             async with asyncio.timeout(self._run_timeout_seconds):
                 result = await Runner.run(
                     self._agent,
-                    request.model_dump_json(by_alias=True),
+                    json.dumps(payload, ensure_ascii=False),
                     max_turns=1,
                     run_config=self._run_config,
                 )
+            output = result.final_output
+            if not isinstance(output, SupportProgramEvidenceAnswerSelection):
+                raise SupportProgramEvidenceError()
+            selection = SupportProgramEvidenceAnswerSelection.model_validate(output.model_dump(by_alias=True))
+            if any(index >= len(request.chunks) for index in selection.citation_chunk_indexes):
+                raise SupportProgramEvidenceError()
+            return SupportProgramEvidenceAnswerOutput(
+                answer=selection.answer,
+                answerStatus=selection.answer_status,
+                citationChunkIds=[request.chunks[index].id for index in selection.citation_chunk_indexes],
+            )
         except (
             MaxTurnsExceeded,
             ModelBehaviorError,
@@ -76,8 +96,3 @@ class SupportProgramEvidenceAnswerAgent:
             ValidationError,
         ) as error:
             raise SupportProgramEvidenceError() from error
-
-        output = result.final_output
-        if not isinstance(output, SupportProgramEvidenceAnswerOutput):
-            raise SupportProgramEvidenceError()
-        return output

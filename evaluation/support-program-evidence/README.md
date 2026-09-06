@@ -2,24 +2,28 @@
 
 [문서 목록](../../docs/README.md) · [구현 현황](../../docs/implementation-status.md)
 
-## 현재 상태: 5단계 진행 중
+## 현재 검증 범위
 
-2026-09-06 기준, 기존 RAG 코드 검수·회귀 테스트 보강과 **고정 근거 답변 단계의 부분 평가**를 진행했습니다.
-승인된 실제 OpenAI 12회 호출에서 유효 답변 11개를 얻었습니다. 초기 검증 실패 1건과 미실행 E12가 남아 있습니다.
-[실제 실행·AI 의미 검토 기록](runs/README.md)에 실패와 표본 한계를 함께 보존합니다.
-새 RAG를 만들거나 기존 production 구조·프롬프트를 변경한 작업은 아닙니다.
+기존 기업마당 HTML RAG를 검수하고, 고정 근거 답변 평가와 실제 공개 공고의 전체 경로 검증을 분리합니다.
+[이전 부분 평가](runs/README.md)와 [2026-09-07 후속 검증](runs/official-flow-20260907-v1/README.md)에
+실행 원본·실패·AI 의미 검토·표본 한계를 보존합니다. 첨부파일·PDF/OCR은 이번 범위가 아닙니다.
+
+E12 추가 실행에서 모델이 64자리 인용 ID를 63자리로 복사한 오류를 확인했습니다. 이제 모델은 전달받은
+청크의 짧은 배열 번호만 선택하고, Agent가 원래 ID를 복원합니다. 공개 API의 `citationChunkIds` 계약은
+변경하지 않았으며 잘못된 번호·중복·근거 부족 상태의 인용은 계속 거부합니다.
 
 | 구분 | 확인한 내용 | 아직 확인하지 않은 내용 |
 |---|---|---|
 | 기존 코드 검수 | 공식 URL·공고 식별자·리다이렉트·HTML 추출, 캐시·본문 해시, 현재 청크만 검색/인용, UI 오류·취소 처리 | 모든 실제 기업마당 HTML 변형에서의 수집 성공 |
 | Core 회귀 테스트 | 원문 갱신 실패 시 후속 호출 차단, 잘못된 검색·인용 응답 거부, 검색된 최대 5개만 답변에 전달 | 모델 답변의 의미 정확성 |
 | AI 기존 테스트 | 출력 계약, Agent 요청 설정·시간 제한, 근거 청크 검색/색인 | 다양한 실데이터에서의 모델 품질 |
-| 새 평가 도구·실제 답변 | 고정 질문·근거·기대 상태/인용, 실행 기록 재계산, API 호출 안전장치와 가상 자료 일부 실제 답변 | 실제 원문 수집 → 청킹 → Qdrant 검색을 포함한 전체 RAG 품질 |
+| 고정 근거 답변 평가 | 질문·근거·기대 상태/인용 고정, 기록 재계산, 호출 안전장치, 계약 실패 진단 | 전체 원문 수집·DB·벡터 검색 경로 |
+| 공식 HTML 전체 경로 | 고정한 공식 HTML → Core 공개 HTTP → 실제 MySQL·Qdrant → 실제 임베딩·답변 → 인용, API 없는 기록 검증 | 모든 공고의 HTML 변형·다수 청크 검색 품질·운영 부하 |
 
-코드 검수·회귀 테스트에서 재현 가능한 production 결함은 발견하지 못했습니다. 다만 실제 모델 호출에서
-답변 검증 실패 1건을 관측했고 원인은 아직 확정하지 못했습니다. 무결함이나 운영 품질 보장은 아닙니다.
-Core 기존 두 테스트 파일에 19개 실행 사례를 추가했고, JDK 21·실제 MySQL 8.4 Testcontainers 포함
-전체 340개가 통과했습니다. AI Service 기존 전체 192개와 새 평가 도구 37개 테스트도 통과했습니다.
+이전 E01 실패는 당시 생성 텍스트가 저장되지 않아 원인을 확정할 수 없습니다. 이번 E12의 확인 가능한
+오류와 구별합니다. 새 통합 테스트 포함 Core 전체 344개, 인용 번호 회귀 테스트 포함 AI 전체 206개가
+통과했습니다. 평가 도구·기록 검증 테스트도 103개 통과했습니다.
+테스트 통과를 무결함이나 운영 품질 보장으로 해석하지 않습니다.
 
 관련 테스트: [Facade](../../backend/core-api/src/test/kotlin/ai/govbiz/core/supportprogram/facade/AiSupportProgramEvidenceFacadeTest.kt),
 [Service](../../backend/core-api/src/test/kotlin/ai/govbiz/core/supportprogram/service/evidence/SupportProgramEvidenceServiceTest.kt),
@@ -63,7 +67,7 @@ Core 기존 두 테스트 파일에 19개 실행 사례를 추가했고, JDK 21�
 backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate.py
 
 # 테스트: 실제 Agent/SDK 경로도 HTTP 스텁으로만 검증하며 외부 호출 없음
-backend/ai-service/.venv/bin/python -m pytest evaluation/support-program-evidence/test_evaluate.py
+backend/ai-service/.venv/bin/python -m pytest evaluation/support-program-evidence
 ```
 
 실제 모델 평가를 선택한 경우에만 아래 명령을 실행합니다. `OPENAI_API_KEY`는 기존 보안 환경변수 주입
@@ -93,7 +97,57 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 - `work/`는 기존 임시 출력 제외 경로입니다. 도구·질문·참조·문서는 모두 Git 공유 대상입니다.
   실제 실행 기록을 팀에 공유할 때는 민감정보를 확인한 뒤 별도 버전 폴더에 보존해야 합니다.
 
-## 실제 호출 흐름과 다음 작업
+## 공식 HTML 전체 경로 재실행
+
+[Core 통합 테스트](../../backend/core-api/src/test/kotlin/ai/govbiz/core/supportprogram/service/evidence/SupportProgramEvidenceIntegrationTest.kt)는
+기본적으로 실제 MySQL 8.4와 고정 HTML·AI HTTP 스텁을 사용하므로 OpenAI 비용이 없습니다.
+공식 HTML의 제목·본문 조각과 출처·원본/조각 해시는
+[테스트 자료](../../backend/core-api/src/test/resources/support-program-evidence/official-sources.json)에 보관합니다.
+이 테스트는 운영 DB가 아닌 Testcontainers DB만 사용합니다.
+
+유료 모델 연결을 선택할 때만 아래처럼 실행합니다. 먼저 Docker로 **비어 있는 별도 Qdrant**를 준비하고,
+API 키는 보안 환경변수로 주입합니다. `serve_flow.py`는 별도 production 서버가 아니라 기존 AI 앱을
+호출 한도·기록 장치로 감싼 로컬 평가 실행기입니다. 동기화·랭킹 endpoint는 허용하지 않습니다.
+
+```bash
+# 저장소 루트: 평가 전용 빈 Qdrant. 운영 볼륨은 연결하지 않음
+docker run --detach --rm --name govbiz-rag-evaluation \
+  --publish 127.0.0.1:17333:6333 qdrant/qdrant:v1.17.1
+
+# 저장소 루트, 터미널 1: API 비용 발생 가능. 출력은 매번 새 경로
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/serve_flow.py \
+  --execute --port 18009 --qdrant-url http://127.0.0.1:17333 \
+  --max-api-calls 14 --output-dir work/evidence-flow-v2/api
+
+# 터미널 2: JDK 21·Docker 환경에서 실행. capture 경로는 실제 절대 경로로 지정
+cd backend/core-api
+GOVBIZ_EVIDENCE_FLOW_AI_URL=http://127.0.0.1:18009 \
+GOVBIZ_EVIDENCE_FLOW_CAPTURE_DIR=/absolute/path/to/work/evidence-flow-v2/core \
+./gradlew test \
+  --tests '*SupportProgramEvidenceIntegrationTest.runsSixFixedOfficialQuestionsThroughThePublicHttpApi' \
+  --rerun-tasks --no-daemon
+```
+
+빈 Qdrant 기준 공고 임베딩 2회·질문 임베딩 6회·답변 6회, 최대 14회가 예상됩니다. 이미 벡터가 있는
+Qdrant를 사용하면 호출 조건이 달라지므로 같은 조건 비교가 아닙니다. SDK 재시도는 없고 첫 오류에서
+중단합니다. 예산은 서버에만 적용되므로 다른 평가 실행의 호출도 합산해야 합니다.
+`--rerun-tasks`는 이전 Gradle 결과 재사용을 막습니다. 라이브 환경변수를 켠 채 전체 테스트를 실행하지 마세요.
+실행 후 서버를 종료하고 평가용 Qdrant만 정리합니다.
+위 예제에서 직접 만든 컨테이너라면 `docker stop govbiz-rag-evaluation`으로 종료합니다.
+`--rm`이므로 임시 벡터는 제거되지만 별도 출력 경로의 캡처 파일은 유지됩니다.
+
+공유 결과는 API 없이 다시 검사할 수 있습니다.
+
+```bash
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/verify_flow.py \
+  --run-dir evaluation/support-program-evidence/runs/official-flow-20260907-v1
+```
+
+원문 HTTPS 다운로드 자체는 별도로 확인했고, 반복 가능한 전체 흐름에서는 그때 받은 HTML 조각을
+공식 URL의 HTTP 응답으로 재생합니다. 따라서 최신 공식 사이트를 실시간으로 다시 수집한 평가와는 다릅니다.
+이 평가의 Core→AI 읽기 제한은 60초이므로 production 제한·지연 검증으로 사용하지 않습니다.
+
+## 실제 호출 흐름과 해석
 
 기존 사용자 기능은 **HTTP API → Service → 원문 수집/Repository → AI Facade → AI HTTP API → Service → Agent → OpenAI → Response**입니다.
 그 과정에서 근거 청크를 별도 Qdrant 컬렉션에 색인·검색하며 Core가 최종 인용문을 원래 청크에서 구성합니다.
@@ -102,12 +156,9 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 이 평가 도구는 **고정 fixture → 기존 AI 답변 Service → Agent → OpenAI → 캡처/보고서**입니다.
 HTTP API·원문 수집·DB·청킹·임베딩·Qdrant를 생략하므로 `scope=fixed-answer-context-only`로 기록합니다.
 
-5단계 전체 완료를 판단하려면 다음을 구분해서 끝내야 합니다.
-
-1. 미실행 질문을 확인하고 초기 검증 실패를 추적합니다. 답변·기대 사실·금지 주장을 대조합니다.
-   AI-only 검토를 선택하면 검토 모델·출처·한계를 명시하며 사람 검토로 위장하지 않습니다.
-2. 실제 공고 HTML을 고정한 사례에서 수집 → 청킹 → 검색 → 답변 → 인용이 연결되는지도 확인합니다.
-   위의 가상 고정 근거 테스트를 이 전체 경로 평가로 대체하지 않습니다.
-3. 확인한 오류만 수정하고 같은 입력으로 다시 비교해 보고서를 남깁니다.
+전체 흐름은 `scope=core-http-mysql-frozen-html-ai-evidence-flow`로 별도 기록합니다.
+`completed`는 실행·계약 검증의 완료이며 모델 의미의 정답 판정은 아닙니다. 상태 일치·인용 무결성과
+답변 의미 검토를 구분하고, AI-only 검토를 사람 검토로 소개하지 않습니다. 현재 공식 자료는 공고당
+청크 1개뿐이므로 이 결과로 다수 청크 중 검색 성능이나 일반적인 RAG 정확도를 주장하지 않습니다.
 
 첨부파일·PDF/OCR 확장과 새로운 제공처 추가는 이번 검수에 포함하지 않습니다.

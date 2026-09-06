@@ -124,7 +124,8 @@ POST /api/v1/support-programs/detail/answers
   → AiSupportProgramEvidenceFacade → AI Service
       → 별도 Qdrant evidence 컬렉션에 청크 색인
       → 질문과 가까운 청크 최대 5개 검색
-      → 단일 typed Agent → OpenAI 근거 답변·인용 청크 ID
+      → 단일 typed Agent → OpenAI 근거 답변·짧은 인용 번호 선택
+      → Agent가 검증한 번호를 요청의 원래 청크 ID로 복원
   → Core가 청크·인용을 검증 → 답변과 원문 발췌·URL 반환
 ```
 
@@ -146,6 +147,11 @@ POST /api/v1/support-programs/detail/answers
 답변이 충분한 근거를 찾지 못하면 `INSUFFICIENT_EVIDENCE`와 인용 없는 안내를 반환합니다. `ANSWERED`에는
 검색된 청크의 인용이 하나 이상 있어야 하며 Core는 인용이 전달한 청크 밖을 가리키면 응답을 거부합니다.
 인용 발췌문은 선택한 청크 전체를 반환해 청크 뒤쪽의 답변 근거도 화면에서 확인할 수 있습니다.
+
+모델에는 64자리 해시를 복사시키지 않습니다. Agent가 이번 요청 배열에 `index`(0~4)를 붙여 전달하고
+`SupportProgramEvidenceAnswerSelection.citationChunkIndexes`를 검증한 뒤 원래 `citationChunkIds`로 변환합니다.
+`index`는 원문의 `order`와 다르며 요청마다 새로 부여합니다. 범위 초과·중복·상태 모순을 보정하거나 무시하지
+않고 기존 오류로 반환합니다. Core와 공개 HTTP의 인용 계약은 변경하지 않습니다.
 
 첨부파일·PDF·OCR·다른 제공처 원문 수집은 이 흐름에 포함하지 않습니다. 공고 목록 검색의 의미·키워드 후보 선정·AI
 점수화와도 별도 사용 사례이므로, 원문 질문을 하지 않으면 기업마당 상세 HTML을 수집하거나 evidence 컬렉션을
@@ -324,4 +330,7 @@ Core의 Health는 프로세스 상태, AI Health는 AI Service의 정해진 Heal
 실제 검색 후보·최종 추천의 캡처, AI-only 참조 판정과 변경 전후 보고서는
 [공유 평가 자료](../evaluation/support-program-search/runs/support-program-catalog-20260906-v1/README.md)에 있습니다.
 평가 가능한 질문은 6개, 그중 양성 질문은 2개뿐이며 독립적인 사람 검토 품질 증거는 아닙니다.
-근거 답변의 실제 공고 질문에 대한 인용 정확도 평가와 PDF·첨부·다른 제공처 확장은 후속 범위입니다.
+근거 답변은 [5단계 후속 검증](../evaluation/support-program-evidence/runs/official-flow-20260907-v1/README.md)에서
+공식 HTML 2건·질문 6개의 실제 MySQL·Qdrant·모델 연결과 인용을 확인했습니다. 고정 HTML을 재생한
+소규모 AI-only 검토이며 공고당 청크 1개여서 일반적인 검색 품질 근거는 아닙니다.
+PDF·첨부·다른 제공처 확장은 후속 범위입니다.
