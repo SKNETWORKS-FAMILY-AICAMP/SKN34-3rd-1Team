@@ -1,4 +1,5 @@
 import hashlib
+import copy
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from evaluate import (
     evaluate_results,
     eligible_catalog_fingerprint,
     load_fixture,
+    label_reference_report,
     query_set_sha256,
     validate_capture,
     validate_results,
@@ -463,6 +465,108 @@ class RetrievalEvaluationTest(unittest.TestCase):
         self.assertEqual(26, report["answerableQueries"])
         self.assertEqual(3, report["noMatchQueries"])
         self.assertEqual(1, report["unlabeledQueriesSkipped"])
+
+    def reviewed_fixture(self, mode="ai-only"):
+        fixture = self.capture_fixture()
+        suffix = {"ai-only": "ai_consensus", "hybrid": "hybrid", "human": "human"}[mode]
+        fixture["dataType"] = f"real_catalog_snapshot_labeled_pooled_{suffix}"
+        fixture["labelReview"] = {
+            "schemaVersion": "support-program-label-review-v1",
+            "mode": mode,
+            "sourceHashes": {"selectionSha256": "a" * 64, "aiReviewSha256": "b" * 64},
+            "sourceCounts": {"ai": 2, "human": 0, "unresolved": 1},
+            "requiredHumanReviewCount": 0,
+            "pendingHumanReviewCount": 0,
+            "counts": {"reviewRowCount": 3, "labeledQueryCount": 2, "excludedQueryCount": 1},
+            "excludedQueries": [{"id": "Q3", "reason": "Insufficient evidence in one pooled document"}],
+            "warnings": [],
+        }
+        if mode == "hybrid":
+            fixture["labelReview"]["sourceCounts"] = {"ai": 2, "human": 1, "unresolved": 0}
+            fixture["labelReview"]["requiredHumanReviewCount"] = 1
+            fixture["labelReview"]["sourceHashes"]["humanReviewSha256"] = "c" * 64
+        elif mode == "human":
+            fixture["labelReview"]["sourceCounts"] = {"ai": 0, "human": 3, "unresolved": 0}
+            fixture["labelReview"]["requiredHumanReviewCount"] = 3
+            del fixture["labelReview"]["sourceHashes"]["aiReviewSha256"]
+            fixture["labelReview"]["sourceHashes"]["humanReviewSha256"] = "c" * 64
+        return fixture
+
+    def test_capture_includes_ai_reference_provenance_and_pool_limitations(self):
+        fixture = self.reviewed_fixture()
+        capture = self.capture(fixture, [
+            self.observation(fixture, "Q1", ["BIZINFO:A"], ["BIZINFO:A"]),
+            self.observation(fixture, "Q2", [], []),
+        ])
+        report = evaluate_capture(capture, fixture, fixture["cases"], candidate_k=20)
+        reference = report["labelReference"]
+        self.assertEqual("ai-only", reference["mode"])
+        self.assertIn("not independently human-validated", reference["metricInterpretation"])
+        self.assertTrue(any("pooled-reference Recall" in item for item in reference["limitations"]))
+        self.assertTrue(any("share errors" in item for item in reference["limitations"]))
+        self.assertEqual({"total": 3, "evaluated": 2, "excluded": 1}, reference["selectedQueryCounts"])
+        self.assertEqual(fixture["labelReview"]["sourceHashes"], reference["sourceHashes"])
+        self.assertEqual(1.0, report["candidate"]["macroRecallAtK"])
+        self.assertEqual(1.0, report["final"]["mrrAt5"])
+
+    def test_provenance_distinguishes_hybrid_and_human_without_overclaiming(self):
+        for mode, phrase in (("hybrid", "unreviewed AI labels"), ("human", "does not establish expert")):
+            with self.subTest(mode=mode):
+                fixture = self.reviewed_fixture(mode)
+                reference = label_reference_report(fixture, fixture["cases"][:2])
+                self.assertEqual(mode, reference["mode"])
+                self.assertIn(phrase, reference["metricInterpretation"])
+                self.assertEqual({"total": 2, "evaluated": 2, "excluded": 0}, reference["selectedQueryCounts"])
+
+    def test_old_fixtures_are_accepted_but_not_inferred_human_verified(self):
+        fixture = self.capture_fixture()
+        reference = label_reference_report(fixture, fixture["cases"])
+        self.assertEqual("legacy_unspecified", reference["mode"])
+        self.assertIn("must not be described as human-validated", reference["metricInterpretation"])
+
+    def test_provenance_rejects_mode_conflict_and_missing_audit(self):
+        fixture = self.reviewed_fixture()
+        invalid = []
+        item = copy.deepcopy(fixture)
+        item["labelReview"]["mode"] = "human"
+        invalid.append((item, "dataType"))
+        item = copy.deepcopy(fixture)
+        del item["labelReview"]
+        invalid.append((item, "requires a labelReview schema"))
+        item = copy.deepcopy(fixture)
+        del item["labelReview"]["sourceHashes"]["selectionSha256"]
+        invalid.append((item, "selection source hash"))
+        item = copy.deepcopy(fixture)
+        item["labelReview"]["sourceHashes"]["aiReviewSha256"] = "invalid"
+        invalid.append((item, "SHA-256"))
+        for candidate, message in invalid:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                label_reference_report(candidate, candidate["cases"])
+
+    def test_provenance_rejects_hidden_exclusions_and_pending_human_checks(self):
+        fixture = self.reviewed_fixture("hybrid")
+        invalid = []
+        item = copy.deepcopy(fixture)
+        item["labelReview"]["excludedQueries"] = []
+        invalid.append((item, "exclusions do not match"))
+        item = copy.deepcopy(fixture)
+        item["labelReview"]["counts"]["labeledQueryCount"] = 3
+        invalid.append((item, "query counts"))
+        item = copy.deepcopy(fixture)
+        item["labelReview"]["pendingHumanReviewCount"] = 1
+        invalid.append((item, "pending required human"))
+        item = copy.deepcopy(fixture)
+        item["labelReview"]["sourceCounts"]["ai"] = 99
+        invalid.append((item, "source counts do not match"))
+        for candidate, message in invalid:
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                label_reference_report(candidate, candidate["cases"])
+
+    def test_ai_only_provenance_rejects_human_claims(self):
+        fixture = self.reviewed_fixture()
+        fixture["labelReview"]["sourceCounts"] = {"ai": 1, "human": 1, "unresolved": 1}
+        with self.assertRaisesRegex(ValueError, "AI-only labels cannot claim human"):
+            label_reference_report(fixture, fixture["cases"])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,46 @@
-# 실제 공고 스냅샷, 라벨, 캡처, 평가 보고서는 제공처 이용 조건을 확인한 로컬 보관물이다.
+# 새 실행·임시 출력은 기본적으로 제외한다. 협업에 필요한 고정 자료만 명시적으로 허용한다.
+# 이 목록을 추가할 때 비밀정보·공유 범위를 검토하고 README의 이어받기 검증을 실행한다.
 *
 !.gitignore
 !README.md
+
+!support-program-catalog-20260906-v1/
+!support-program-catalog-20260906-v1/README.md
+!support-program-catalog-20260906-v1/fixture-unlabeled.json
+!support-program-catalog-20260906-v1/query-set.json
+!support-program-catalog-20260906-v1/pool-config.json
+!support-program-catalog-20260906-v1/run-manifest.md
+
+!support-program-catalog-20260906-v1/review-v2/
+!support-program-catalog-20260906-v1/review-v2/review-pool.csv
+!support-program-catalog-20260906-v1/review-v2/review-pool-provenance.csv
+!support-program-catalog-20260906-v1/review-v2/review-pool-manifest.json
+!support-program-catalog-20260906-v1/review-v2/conversation-judgments.json
+
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/prepared.json
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/blind-input.jsonl
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/policy.json
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/assignments.json
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/judge-1.jsonl
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/judge-2.jsonl
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/judge-3.jsonl
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/judge-4.jsonl
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/judge-5.jsonl
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/ai-review.json
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/judge-1-rejected-draft.jsonl
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/execution-log.md
+!support-program-catalog-20260906-v1/review-v2/codex-ai-v1/labeling-report.md
+
+!support-program-catalog-20260906-v1/review-v2/selected-ai-v1/
+!support-program-catalog-20260906-v1/review-v2/selected-ai-v1/selection.json
+!support-program-catalog-20260906-v1/review-v2/selected-ai-v1/reviewed.csv
+!support-program-catalog-20260906-v1/review-v2/selected-ai-v1/review-progress.json
+!support-program-catalog-20260906-v1/review-v2/selected-hybrid-v1/
+!support-program-catalog-20260906-v1/review-v2/selected-hybrid-v1/selection.json
+!support-program-catalog-20260906-v1/review-v2/selected-hybrid-v1/reviewed.csv
+!support-program-catalog-20260906-v1/review-v2/selected-hybrid-v1/review-progress.json
+!support-program-catalog-20260906-v1/review-v2/selected-human-v1/
+!support-program-catalog-20260906-v1/review-v2/selected-human-v1/selection.json
+!support-program-catalog-20260906-v1/review-v2/selected-human-v1/reviewed.csv
+!support-program-catalog-20260906-v1/review-v2/selected-human-v1/review-progress.json

@@ -119,6 +119,14 @@ jobs:
         working-directory: evaluation/support-program-search
         run: python -m unittest discover
 
+      - name: Test offline review tools
+        working-directory: evaluation/support-program-search
+        run: python -B -m unittest discover -s review -p 'test_*.py'
+
+      - name: Verify shared evaluation run without model calls
+        working-directory: evaluation/support-program-search
+        run: python -B review/verify-shared-run.py --run-dir runs/support-program-catalog-20260906-v1
+
   container-integration:
     name: Container integration
     needs:
