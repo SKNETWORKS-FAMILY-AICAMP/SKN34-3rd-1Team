@@ -23,6 +23,7 @@ from app.config import (  # noqa: E402
 from app.support_program_evidence.models import (  # noqa: E402
     SupportProgramEvidenceAnswerRequest,
     SupportProgramEvidenceAnswerResponse,
+    SupportProgramEvidenceAnswerSelection,
     SupportProgramEvidenceAnswerChunk,
 )
 from app.support_program_evidence.prompt import (  # noqa: E402
@@ -182,6 +183,62 @@ def report(fixture: dict, prepared: list, fixture_hash: str, capture: dict | Non
     return result
 
 
+def diagnose_response(response: dict, request: SupportProgramEvidenceAnswerRequest) -> str:
+    """Classify recorded evidence only; this cannot recover an unrecorded historical cause."""
+    if response.get("responseStatus") == "incomplete":
+        return "incomplete_response"
+    if response.get("responseStatus") == "failed":
+        return "upstream_failed"
+    if response.get("hasRefusal") is True:
+        return "model_refusal"
+    if response.get("outputTextTruncated") is True:
+        return "unknown"
+    texts = response.get("outputTexts")
+    if not isinstance(texts, list) or len(texts) != 1 or not isinstance(texts[0], str):
+        return "unknown"
+    try:
+        payload = json.loads(texts[0])
+    except ValueError:
+        return "invalid_json"
+    try:
+        if isinstance(payload, dict) and "citationChunkIndexes" in payload:
+            selection = SupportProgramEvidenceAnswerSelection.model_validate(payload)
+            return "unknown_citation" if any(index >= len(request.chunks) for index in selection.citation_chunk_indexes) else "unknown"
+        answer = SupportProgramEvidenceAnswerResponse.model_validate(payload)
+    except ValueError:
+        return "invalid_answer_contract"
+    if not set(answer.citation_chunk_ids).issubset({chunk.id for chunk in request.chunks}):
+        return "unknown_citation"
+    return "unknown"
+
+
+def response_record(status_code: int, body: object) -> dict:
+    """Allowlisted response diagnostics shared by the answer and full-flow evaluation tools."""
+    body = body if isinstance(body, dict) else {}
+    usage = body.get("usage")
+    parts = [part for item in body.get("output", [])
+             if isinstance(item, dict) and isinstance(item.get("content"), list)
+             for part in item["content"] if isinstance(part, dict)] \
+        if status_code == 200 and isinstance(body.get("output"), list) else []
+    status = body.get("status")
+    incomplete = body.get("incomplete_details")
+    reason = incomplete.get("reason") if isinstance(incomplete, dict) else None
+    return {
+        "httpStatus": status_code,
+        "usage": {name: usage.get(name) for name in ("input_tokens", "output_tokens", "total_tokens")}
+        if isinstance(usage, dict) else None,
+        "responseStatus": status if status in (
+            "completed", "failed", "in_progress", "cancelled", "queued", "incomplete",
+        ) else None,
+        "incompleteReason": reason if reason in ("max_output_tokens", "content_filter") else None,
+        "hasRefusal": any(part.get("type") == "refusal" for part in parts),
+        "outputTextTruncated": any(part.get("type") == "output_text" and
+                                   isinstance(part.get("text"), str) and len(part["text"]) > 20_000 for part in parts),
+        "outputTexts": [part["text"][:20_000] for part in parts
+                        if part.get("type") == "output_text" and isinstance(part.get("text"), str)],
+    }
+
+
 async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
     from agents import OpenAIResponsesModel
     import httpx2
@@ -209,18 +266,7 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
             body = response.json()
         except ValueError:
             body = {}
-        usage = body.get("usage") if isinstance(body, dict) else None
-        capture["apiResponses"].append({
-            "httpStatus": response.status_code,
-            "usage": {name: usage.get(name) for name in ("input_tokens", "output_tokens", "total_tokens")}
-            if isinstance(usage, dict) else None,
-            # Keep only generated answer text for contract-failure diagnosis, never full HTTP bodies.
-            "outputTexts": [part["text"][:20_000]
-                            for item in body.get("output", []) if isinstance(item, dict) and isinstance(item.get("content"), list)
-                            for part in item.get("content", []) if isinstance(part, dict)
-                            and part.get("type") == "output_text" and isinstance(part.get("text"), str)]
-            if response.status_code == 200 and isinstance(body, dict) and isinstance(body.get("output"), list) else [],
-        })
+        capture["apiResponses"].append(response_record(response.status_code, body))
 
     client = AsyncOpenAI(
         api_key=key, base_url="https://api.openai.com/v1", max_retries=0,
@@ -234,6 +280,7 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
     try:
         for case, request in prepared:
             record = {"caseId": case["id"], "requestSha256": request_digest(request)}
+            response_offset = len(capture["apiResponses"])
             started = perf_counter()
             try:
                 answer = await service.answer(request)
@@ -243,6 +290,9 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
                 record.update(outcome="error", errorType=type(error).__name__)
                 if error.__cause__ is not None:
                     record["causeType"] = type(error.__cause__).__name__
+                observed = capture["apiResponses"][response_offset:]
+                record["diagnosticCategory"] = diagnose_response(observed[0], request) \
+                    if len(observed) == 1 else "unknown"
             record["elapsedMs"] = round((perf_counter() - started) * 1000, 3)
             capture["cases"].append(record)
             (output_dir / "capture.json").write_text(json.dumps(capture, ensure_ascii=False, indent=2) + "\n")

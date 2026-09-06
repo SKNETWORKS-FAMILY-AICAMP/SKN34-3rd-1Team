@@ -282,3 +282,8 @@ AI Service는 LLM 실행 실패와 색인 미준비·Qdrant 실패를 내부 503
 테스트는 Controller 계약·Client/Facade 응답 검증·상태 계산·동기화 순서·공식 원문 HTML 검증·근거 청크/인용 계약과
 MySQL의 JSON, 복합 식별자, UPSERT, rollback, 시작 세대에 따른 공개 제어, 공개 스냅샷 준비 상태 전이를 검증합니다. 전체 서비스 연결 검증은
 [인프라 README](../../infrastructure/README.md)의 Compose 검증 절차를 참고하세요.
+
+`SupportProgramEvidenceIntegrationTest`는 실제 Core HTTP·MySQL과 고정한 공식 HTML 2건으로 RAG 경계를
+통합 검증합니다. 기본 실행에서 원문/AI 외부 HTTP는 스텁이며 API 키를 사용하지 않습니다.
+명시적으로 별도 로컬 AI 주소와 새 캡처 경로를 지정한 경우에만 실제 AI 경로를 호출할 수 있습니다.
+실행 조건·범위·기록은 [RAG 평가 안내](../../evaluation/support-program-evidence/README.md)를 참고하세요.

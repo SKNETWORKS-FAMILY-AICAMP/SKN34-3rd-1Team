@@ -119,6 +119,11 @@ Core가 제공하는 기업마당 상세 공고를 대상으로 하지만, AI Se
 공고 ID를 나누므로 원본 ID에 추가 콜론이 있어도 됩니다. `order`는 0 이상의 정수이고, 같은 요청 안의
 청크 ID는 중복될 수 없습니다.
 
+LLM이 긴 해시를 잘못 복사하는 오류를 막기 위해, Agent는 이번 요청 배열의 짧은 `index`만 선택하게 합니다.
+모델 전용 결과는 `SupportProgramEvidenceAnswerSelection`의 `citationChunkIndexes`이며, 범위·중복·상태를
+검증한 뒤 요청의 원래 64자리 ID로 복원합니다. 원문 `order`와 요청 배열 `index`는 다릅니다.
+공개/내부 HTTP 응답은 기존 `citationChunkIds`를 유지하고, 잘못된 선택을 자동 보정하지 않습니다.
+
 ```text
 Core의 상세 공고 준비
 → 공식 상세 원문 정제·고정 크기 청크화 → 각 청크 ID·text SHA-256 검증
@@ -133,6 +138,7 @@ Core의 상세 공고 준비
 → 최대 5개의 match 반환
 → Core가 match의 공식 text만 포함해 POST /support-program-evidence/answers 호출
 → SupportProgramEvidenceAnswerAgent (max_turns=1)
+→ OpenAI가 이번 요청의 citationChunkIndexes 선택 → 번호 검증 후 원래 ID 복원
 → 출력 상태·중복 인용·입력 밖 citationChunkIds 재검증 → 한국어 답변 반환
 ```
 

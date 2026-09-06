@@ -115,8 +115,8 @@ jobs:
       - name: Build package
         run: uv build
 
-      - name: Test fixed-context evidence evaluation without model calls
-        run: uv run --locked --extra dev python -m pytest ../../evaluation/support-program-evidence/test_evaluate.py
+      - name: Test evidence evaluation tools without model calls
+        run: uv run --locked --extra dev python -m pytest ../../evaluation/support-program-evidence
 
       - name: Validate retrieval evaluation fixture and metrics
         working-directory: evaluation/support-program-search

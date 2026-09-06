@@ -288,6 +288,10 @@ Core만 아래 AI Service endpoint를 호출합니다. 브라우저에 공개하
 검색 결과 수·점수 순서·인용 범위를 다시 검증합니다. 답변 Agent는 전달받은 청크의 텍스트 밖 정보를 사용하지
 않도록 지시되며, Core도 `ANSWERED`의 인용 누락과 `INSUFFICIENT_EVIDENCE`의 인용 포함을 계약 위반으로 거부합니다.
 
+LLM 전용 입출력은 HTTP 계약과 다릅니다. Agent는 해시 ID 대신 요청 배열의 `index`와 텍스트를 전달하고,
+모델의 `citationChunkIndexes`를 범위·중복·상태 검증 후 원래 64자리 `citationChunkIds`로 복원합니다.
+클라이언트는 계속 위 HTTP 계약을 사용하며 `index`를 보내거나 받을 필요가 없습니다.
+
 ## 전체 카탈로그 후보 검색
 
 검색어가 있으면 Core는 MySQL에서 현재 노출된 전체 제공처 공고를 읽어 접수 상태를 적용합니다.

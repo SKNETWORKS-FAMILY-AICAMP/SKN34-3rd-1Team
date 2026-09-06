@@ -138,8 +138,13 @@ def test_cli_default_never_executes_or_writes(loaded, monkeypatch, capsys):
     assert not json.loads(capsys.readouterr().out)["measured"]
 
 
-@pytest.mark.parametrize("status", [200, 429, "invalid-citation"])
-def test_execute_uses_production_agent_with_mock_http_only(loaded, tmp_path, monkeypatch, status):
+@pytest.mark.parametrize("status,category", [
+    (200, None), (429, "unknown"), ("invalid-citation", "unknown_citation"),
+    ("invalid-json", "invalid_json"), ("invalid-contract", "invalid_answer_contract"),
+    ("incomplete", "incomplete_response"), ("refusal", "model_refusal"),
+    ("invalid-json-unknown-metadata", "invalid_json"),
+])
+def test_execute_uses_production_agent_with_mock_http_only(loaded, tmp_path, monkeypatch, status, category):
     requests = []
     fake_capture = capture_for(loaded)
     real_client = httpx2.AsyncClient
@@ -152,20 +157,34 @@ def test_execute_uses_production_agent_with_mock_http_only(loaded, tmp_path, mon
         assert body["max_output_tokens"] == 2000
         assert body["tools"] == []
         output = fake_capture["cases"][len(requests)]["response"]
+        output.pop("citationChunkIds")
+        output["citationChunkIndexes"] = loaded[1][len(requests)][0]["expectedCitationOrders"]
         requests.append(body)
         if status == 429:
             return httpx2.Response(status, json={"error": {"message": "SECRET-MUST-NOT-PERSIST", "type": "rate_limit_error"}})
         if status == "invalid-citation":
-            output["citationChunkIds"] = ["0" * 64]
-        return httpx2.Response(200, json={
+            output["citationChunkIndexes"] = [4]
+        if status == "invalid-contract":
+            output["citationChunkIndexes"] = []
+        output_text = "not-json" if status in ("invalid-json", "invalid-json-unknown-metadata") else json.dumps(output)
+        response_body = {
             "id": "resp_test", "created_at": 0, "object": "response",
             "model": evaluate.DEFAULT_OPENAI_MODEL, "status": "completed",
             "error": None, "incomplete_details": None,
             "output": [{"id": "msg_test", "type": "message", "role": "assistant", "status": "completed",
-                        "content": [{"type": "output_text", "annotations": [], "text": json.dumps(output)}]}],
+                        "content": [{"type": "output_text", "annotations": [], "text": output_text}]}],
             "parallel_tool_calls": False, "tool_choice": "none", "tools": [],
             "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
-        })
+        }
+        if status == "incomplete":
+            response_body.update(status="incomplete", incomplete_details={"reason": "max_output_tokens"})
+            response_body["output"][0]["content"][0]["text"] = "{"
+        if status == "refusal":
+            response_body["output"][0]["content"] = [{"type": "refusal", "refusal": "SECRET-MUST-NOT-PERSIST"}]
+        if status == "invalid-json-unknown-metadata":
+            response_body.update(status="SECRET-MUST-NOT-PERSIST",
+                                 incomplete_details={"reason": "SECRET-MUST-NOT-PERSIST"})
+        return httpx2.Response(200, json=response_body)
 
     class MockClient(real_client):
         def __init__(self, **kwargs):
@@ -182,10 +201,34 @@ def test_execute_uses_production_agent_with_mock_http_only(loaded, tmp_path, mon
         {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150} if status != 429 else None
     )
     if status == "invalid-citation":
-        assert "0" * 64 in capture["apiResponses"][0]["outputTexts"][0]
+        assert json.loads(capture["apiResponses"][0]["outputTexts"][0])["citationChunkIndexes"] == [4]
+        assert "causeType" not in capture["cases"][0]
+    if category is not None:
+        assert capture["cases"][0]["diagnosticCategory"] == category
+    else:
+        assert "diagnosticCategory" not in capture["cases"][0]
+    observation = capture["apiResponses"][0]
+    assert observation["hasRefusal"] == (status == "refusal")
+    assert observation["incompleteReason"] == ("max_output_tokens" if status == "incomplete" else None)
+    assert observation["responseStatus"] == (
+        None if status in (429, "invalid-json-unknown-metadata") else
+        "incomplete" if status == "incomplete" else "completed"
+    )
+    if status in ("invalid-json", "invalid-contract"):
+        assert isinstance(capture["cases"][0].get("causeType"), str)
     saved = (output / "capture.json").read_text()
     assert "SECRET-MUST-NOT-PERSIST" not in saved and "fake-key" not in saved
     assert evaluate.report(*loaded, capture)["completed"] == (status == 200)
+
+
+def test_diagnosis_does_not_invent_unknown_or_historical_causes(loaded):
+    request = loaded[1][0][1]
+    assert evaluate.diagnose_response({"httpStatus": 200}, request) == "unknown"
+    assert evaluate.diagnose_response({"outputTexts": []}, request) == "unknown"
+    assert evaluate.diagnose_response({"outputTexts": ["{", "}"]}, request) == "unknown"
+    assert evaluate.diagnose_response({"outputTexts": ["{"], "outputTextTruncated": True}, request) == "unknown"
+    valid = capture_for(loaded)["cases"][0]["response"]
+    assert evaluate.diagnose_response({"outputTexts": [json.dumps(valid)]}, request) == "unknown"
 
 
 def test_execute_requires_explicit_key_and_new_directory(loaded, tmp_path, monkeypatch):
