@@ -9,6 +9,7 @@ import ai.govbiz.core.supportprogram.helper.SupportProgramContentHashHelper
 import ai.govbiz.core.supportprogram.helper.SupportProgramTestHelper
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
+import ai.govbiz.core.supportprogram.service.detail.exception.SupportProgramNotFoundException
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerResult
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerStatus
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
@@ -18,6 +19,7 @@ import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -25,9 +27,11 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.Mock
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.doThrow
+import org.mockito.Mockito.inOrder
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
+import org.mockito.Mockito.verifyNoMoreInteractions
 import org.mockito.junit.jupiter.MockitoExtension
 
 @ExtendWith(MockitoExtension::class)
@@ -141,6 +145,101 @@ class SupportProgramEvidenceServiceTest {
         }
 
         verifyNoInteractions(sourceDocumentFacade, aiEvidenceFacade)
+    }
+
+    @Test
+    fun refreshesAFreshDocumentWhenTheOfficialUrlHasChanged() {
+        val original = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program
+        val program = original.copy(
+            sourceUrl = "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_TEST",
+        )
+        val cached = document(original, LocalDateTime.of(2026, 9, 5, 11, 0))
+        val refreshed = document(program, LocalDateTime.of(2026, 9, 5, 12, 0), "변경한 공식 URL에서 수집한 신청 방법입니다.")
+        doReturn(program).`when`(detailService).get("BIZINFO", "PBLN_TEST")
+        doReturn(cached).`when`(repository).findPresentSourceDocument("BIZINFO", "PBLN_TEST")
+        doReturn(refreshed).`when`(sourceDocumentFacade).load(program)
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(
+            QUESTION,
+            SupportProgramEvidenceChunker.chunk(refreshed),
+            program.sourceUrl,
+        )
+
+        assertEquals(answer(), service.answer("BIZINFO", "PBLN_TEST", QUESTION))
+
+        val ordered = inOrder(sourceDocumentFacade, repository, aiEvidenceFacade)
+        ordered.verify(sourceDocumentFacade).load(program)
+        ordered.verify(repository).upsertSourceDocument(refreshed)
+        ordered.verify(aiEvidenceFacade).answer(QUESTION, SupportProgramEvidenceChunker.chunk(refreshed), program.sourceUrl)
+    }
+
+    @Test
+    fun refetchesADocumentWhoseStoredContentCannotPassHashValidation() {
+        val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program
+        val refreshed = document(program, LocalDateTime.of(2026, 9, 5, 12, 0))
+        doReturn(program).`when`(detailService).get("BIZINFO", "PBLN_TEST")
+        doThrow(IllegalArgumentException("contentHash must match the UTF-8 source document content"))
+            .`when`(repository).findPresentSourceDocument("BIZINFO", "PBLN_TEST")
+        doReturn(refreshed).`when`(sourceDocumentFacade).load(program)
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(
+            QUESTION,
+            SupportProgramEvidenceChunker.chunk(refreshed),
+            program.sourceUrl,
+        )
+
+        assertEquals(answer(), service.answer("BIZINFO", "PBLN_TEST", QUESTION))
+
+        verify(sourceDocumentFacade).load(program)
+        verify(repository).upsertSourceDocument(refreshed)
+    }
+
+    @Test
+    fun doesNotAnswerFromAnExpiredDocumentWhenItsRefreshFails() {
+        val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program
+        val stale = document(program, LocalDateTime.of(2026, 9, 5, 4, 59))
+        val failure = sourceFailure()
+        doReturn(program).`when`(detailService).get("BIZINFO", "PBLN_TEST")
+        doReturn(stale).`when`(repository).findPresentSourceDocument("BIZINFO", "PBLN_TEST")
+        doThrow(failure).`when`(sourceDocumentFacade).load(program)
+
+        val exception = assertThrows(SupportProgramEvidenceUnavailableException::class.java) {
+            service.answer("BIZINFO", "PBLN_TEST", QUESTION)
+        }
+
+        assertSame(failure, exception.cause)
+        verify(repository).findPresentSourceDocument("BIZINFO", "PBLN_TEST")
+        verifyNoMoreInteractions(repository)
+        verifyNoInteractions(aiEvidenceFacade)
+    }
+
+    @Test
+    fun stopsBeforeCallingAiWhenTheRefreshedDocumentCannotBeStored() {
+        val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program
+        val refreshed = document(program, LocalDateTime.of(2026, 9, 5, 12, 0))
+        val failure = IllegalStateException("database write failed")
+        doReturn(program).`when`(detailService).get("BIZINFO", "PBLN_TEST")
+        doReturn(null).`when`(repository).findPresentSourceDocument("BIZINFO", "PBLN_TEST")
+        doReturn(refreshed).`when`(sourceDocumentFacade).load(program)
+        doThrow(failure).`when`(repository).upsertSourceDocument(refreshed)
+
+        val exception = assertThrows(IllegalStateException::class.java) {
+            service.answer("BIZINFO", "PBLN_TEST", QUESTION)
+        }
+
+        assertSame(failure, exception)
+        verifyNoInteractions(aiEvidenceFacade)
+    }
+
+    @Test
+    fun stopsBeforeReadingSourceDocumentsWhenTheSelectedProgramIsNotPresent() {
+        val failure = SupportProgramNotFoundException()
+        doThrow(failure).`when`(detailService).get("BIZINFO", "PBLN_TEST")
+
+        val exception = assertThrows(SupportProgramNotFoundException::class.java) {
+            service.answer("BIZINFO", "PBLN_TEST", QUESTION)
+        }
+
+        assertSame(failure, exception)
+        verifyNoInteractions(repository, sourceDocumentFacade, aiEvidenceFacade)
     }
 
     private fun answer() = SupportProgramEvidenceAnswerResult(
