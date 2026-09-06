@@ -242,7 +242,13 @@ def test_execute_requires_explicit_key_and_new_directory(loaded, tmp_path, monke
 
 
 @pytest.mark.parametrize("capture_path", sorted((HERE / "runs").glob("*/capture.json")))
-def test_shared_run_reports_recalculate_without_api(loaded, capture_path):
-    actual = evaluate.report(*loaded, json.loads(capture_path.read_text()))
+def test_shared_run_reports_recalculate_without_api(capture_path):
+    capture = json.loads(capture_path.read_text())
+    fixtures = [evaluate.load_fixture(HERE / name) for name in (
+        "fixture.json", "target-coverage-fixture.json",
+    )]
+    matching = [loaded for loaded in fixtures if loaded[2] == capture["fixtureSha256"]]
+    assert len(matching) == 1, "shared capture must match exactly one known fixture"
+    actual = evaluate.report(*matching[0], capture)
     expected = json.loads((capture_path.parent / "report.json").read_text())
     assert actual == expected

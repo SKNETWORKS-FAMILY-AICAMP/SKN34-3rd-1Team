@@ -36,6 +36,16 @@ def test_recalculates_the_saved_official_flow_without_semantic_quality_claims(re
     assert result["singleChunkDocumentsOnly"] and not result["apiRequestBodiesRecorded"]
 
 
+@pytest.mark.parametrize("capture_path", sorted((HERE / "runs").glob("official-flow-*/core/capture.json")))
+def test_all_shared_official_runs_recalculate_without_api(capture_path):
+    core = json.loads(capture_path.read_text())
+    api = json.loads((capture_path.parent.parent / "api/api-capture.json").read_text())
+    result = verify_flow.verify(core, api)
+    assert result["integrityVerified"] and result["completed"]
+    assert result["caseCount"] == 6
+    assert result["semanticFaithfulness"] is None
+
+
 @pytest.mark.parametrize("mutate", [
     lambda c: c.update(fixtureSha256="0" * 64),
     lambda c: c["fixture"]["documents"][0]["cases"][0].update(question="임의 질문"),

@@ -7,6 +7,8 @@
 기존 기업마당 HTML RAG를 검수하고, 고정 근거 답변 평가와 실제 공개 공고의 전체 경로 검증을 분리합니다.
 [이전 부분 평가](runs/README.md)와 [2026-09-07 후속 검증](runs/official-flow-20260907-v1/README.md)에
 실행 원본·실패·AI 의미 검토·표본 한계를 보존합니다. 첨부파일·PDF/OCR은 이번 범위가 아닙니다.
+최신 [대상 조건 요약 보완 검증](runs/official-flow-20260907-v2/README.md)에서는 추가 20회로 가상 6건·공식 6건을
+확인했고, 공식 H01의 누락 보완과 기존 사례의 비회귀를 단회 AI-only 평가에서 관찰했습니다.
 
 E12 추가 실행에서 모델이 64자리 인용 ID를 63자리로 복사한 오류를 확인했습니다. 이제 모델은 전달받은
 청크의 짧은 배열 번호만 선택하고, Agent가 원래 ID를 복원합니다. 공개 API의 `citationChunkIds` 계약은
@@ -21,13 +23,61 @@ E12 추가 실행에서 모델이 64자리 인용 ID를 63자리로 복사한 �
 | 공식 HTML 전체 경로 | 고정한 공식 HTML → Core 공개 HTTP → 실제 MySQL·Qdrant → 실제 임베딩·답변 → 인용, API 없는 기록 검증 | 모든 공고의 HTML 변형·다수 청크 검색 품질·운영 부하 |
 
 이전 E01 실패는 당시 생성 텍스트가 저장되지 않아 원인을 확정할 수 없습니다. 이번 E12의 확인 가능한
-오류와 구별합니다. 새 통합 테스트 포함 Core 전체 344개, 인용 번호 회귀 테스트 포함 AI 전체 206개가
-통과했습니다. 평가 도구·기록 검증 테스트도 103개 통과했습니다.
+오류와 구별합니다. Core 전체 344개는 기존 통합 검증에서, AI 전체 207개는 최신 프롬프트 수정 후 통과했습니다.
+최신 평가 도구·기록 검증 테스트는 118개 통과했습니다.
 테스트 통과를 무결함이나 운영 품질 보장으로 해석하지 않습니다.
 
 관련 테스트: [Facade](../../backend/core-api/src/test/kotlin/ai/govbiz/core/supportprogram/facade/AiSupportProgramEvidenceFacadeTest.kt),
 [Service](../../backend/core-api/src/test/kotlin/ai/govbiz/core/supportprogram/service/evidence/SupportProgramEvidenceServiceTest.kt),
 [AI 근거 기능](../../backend/ai-service/tests/support_program_evidence), [평가 도구](test_evaluate.py).
+
+## 대상 조건 요약 보완 — 실제 모델 검증 완료
+
+이전 공식 H01에서 빠진 ‘중소·중견 제조기업’ 범위는 저장 원문·색인 청크·AI 답변 요청에 모두 있었습니다.
+실제 OpenAI 출력에서 처음 빠졌으므로 검색·청킹을 바꾸지 않고 답변 프롬프트만 보완했습니다.
+
+- 질문과 관련된 명시적 대상 범위·필수 자격·제외·예외를 간결함 때문에 생략하지 않도록 지시
+- 필수·우대·선택 조건과 원문 AND/OR 관계 유지, 없는 제한이나 불분명한 신청 가능성은 확정 금지
+- 조건이 여러 청크에 나뉘면 각각을 뒷받침하는 청크를 함께 인용
+- 모델·호출 수·HTTP 계약·인용 ID 복원·오류 처리·production 의존성은 변경하지 않음
+
+[target-coverage-fixture.json](target-coverage-fixture.json)은 **추가 가상 공고 3건·고정 청크 9개·질문 6개**입니다.
+기존 `fixture.json`, 공식 자료와 H01의 부분 일치 기록은 바꾸지 않았습니다. 새 참조는 AI 작성 자료이며
+이미 관측한 실패를 바탕으로 만든 회귀용 자료입니다. 숨겨 둔 평가 자료나 사람 검토 정답이 아닙니다.
+청크 번호와 원문 구절을 붙인 참조는 출처 확인을 위한 것이며 답변의 단어 포함 여부로 의미 정답을 채점하지 않습니다.
+
+```bash
+# API 키·서버 없이 새 입력 검증. 지표는 null이며 품질 평가가 아님
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate.py \
+  --fixture evaluation/support-program-evidence/target-coverage-fixture.json
+
+# 명시적으로 유료 평가를 선택한 경우에만 실행: 답변 최대 6회, 임베딩 없음
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate.py \
+  --fixture evaluation/support-program-evidence/target-coverage-fixture.json \
+  --execute --output-dir work/evidence-target-coverage-v1
+```
+
+**승인된 추가 20회로 실제 검증을 완료했습니다.** 가상 6건·공식 6건 모두 기대 상태가 일치했고, 원문 대조
+AI 의미 검토도 일치로 판단했습니다. H01은 기존에 빠진 ‘중소·중견 제조기업’ 범위를 보존했습니다.
+공식 전후 비교는 질문·원문·Core→AI 요청을 동일하게 유지했으며, 기존 나머지 5건의 새 오류는 발견하지 못했습니다.
+단위 테스트와 실제 모델 의미 검토는 별개이며, 단회 결과를 일반 정확도나 통계적 개선으로 주장하지 않습니다.
+프롬프트가 달라진 결과를 과거 실행과 섞어 단일 정확도로 계산하지 않습니다.
+
+프롬프트 수정 후 AI Service 전체 207개, 새 공유 결과 추가 후 평가 도구 전체 118개와 `git diff --check`가
+통과했습니다. 공식 라이브 통합 테스트도 공개 HTTP 질문 6건을 완료했습니다.
+Core·DB·Frontend 코드는 변경하지 않아 이번에는 해당 전체 회귀 테스트를 재실행하지 않았습니다.
+
+- 변경 전 프롬프트: 커밋 `88aa61f`, SHA-256 `588a36e7afe2b3e8b8d5467b24397edbb40ed045f6a7b77bdeec8c55ada0cde1`
+- 변경 후 프롬프트 SHA-256: `560ad134d3ce657561e6dfa67793078c7526c5b5f1ebb691e6e972b27924655c`
+- 추가 fixture SHA-256: `7cc1224e143f772e80713f267ed9b3b6d0262cabe75383b64f3e6b77ad496f8b`
+
+새 질문의 답변 6회와 공식 전체 경로 14회(답변 6 + 임베딩 8), 합계 20회를 사용했고 재시도는 없었습니다.
+사용량·의미 판정·전후 차이와 API 없는 재계산 명령은 [검증 보고서](runs/official-flow-20260907-v2/README.md)에 있습니다.
+기존 캡처는 덮지 않았으며, 이번 검증이 끝난 뒤 평가용 서버와 임시 Qdrant를 종료했습니다.
+
+관측 오류에 맞춘 명확한 지침과 별도 실제 모델 평가를 사용하는 방식은
+[공식 OpenAI 프롬프트 안내](https://developers.openai.com/api/docs/guides/prompt-engineering)와
+[평가 안내](https://developers.openai.com/api/docs/guides/evaluation-best-practices)를 참고했습니다.
 
 ## 자료와 해석 범위
 

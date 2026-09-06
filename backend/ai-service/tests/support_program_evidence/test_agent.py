@@ -83,6 +83,18 @@ def test_answer_status_requires_consistent_unique_citations() -> None:
         )
 
 
+def test_prompt_requires_target_scope_and_preserves_condition_relationships() -> None:
+    # Checks the instruction contract, not whether a live model actually follows it.
+    instructions = SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS
+    assert "규모·업종·지역·업력·기업 형태" in instructions
+    assert "제외·예외" in instructions
+    assert "사업개요에 설명된 대상 범위" in instructions
+    assert "우대 사항을 필수 자격으로 바꾸거나 본문에 없는 제한을 추가하지" in instructions
+    assert "'모두 충족'과 '중 하나'의 관계를 유지" in instructions
+    assert "최종 신청 가능 여부를 확정하지" in instructions
+    assert "각 조건을 뒷받침하는 청크를 함께 인용" in instructions
+
+
 @pytest.mark.anyio
 async def test_runs_typed_evidence_answer_agent_through_the_real_runner() -> None:
     expected = valid_output()
