@@ -23,8 +23,8 @@ cd backend/core-api
 
 기본 주소는 `http://127.0.0.1:8080`입니다. 실행 시 Flyway가 MySQL 스키마를 적용합니다.
 `DATA_GO_KR_SERVICE_KEY`가 비어 있으면 수집 작업은 실패를 기록하며 다음 주기에 다시 시도합니다.
-빈 검색어 목록은 색인 준비가 확인된 제공처의 기존 DB 공고만 반환하며, 상세 조회는 현재 공개 공고를
-제공처별 색인 준비와 별개로 조회합니다. 검색어가 있는 검색은 AI Service와 해당 공고 버전의
+빈 검색어 목록은 이미 공개된 제공처의 DB 스냅샷에서 최신 공고를 반환하며, 상세 조회와 함께 이후
+제공처별 색인 장애에도 사용할 수 있습니다. 검색어가 있는 검색은 AI Service와 해당 공고 버전의
 색인이 있어야 성공합니다. 새 카탈로그 공개에도 색인 준비가 필수이므로 기업마당 키만으로 동기화가
 완료되지는 않습니다.
 
@@ -112,12 +112,17 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 | `POST /api/v1/support-programs/detail/answers` | 특정 공고의 공식 원문 근거 질문·답변 |
 | `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
 
-- 검색: 필수 `query`는 최대 500자이며 빈 문자열을 허용합니다. `acceptingOnly`의 기본값은 `true`이고
+- 검색: 필수 `query`는 최대 500자이며 빈 문자열을 허용합니다. 탭·줄바꿈·캐리지 리턴을 제외한
+  Unicode C 범주 문자(예: NUL·제로폭 문자·단독 surrogate)는 DB·AI 호출 전에 400으로 거부합니다.
+  `acceptingOnly`의 기본값은 `true`이고
   이때 `OPEN` 공고만 대상으로 삼습니다. 검색어가 있으면 검증된 의미 검색 상위 20개와 전체 적격 공고의
   키워드 상위 20개를 같은 가중치의 RRF(`1 / (60 + 순위)`)로 결합하고, 최대 20개를 AI가 점수화하여
   기준을 통과한 0~5개를 반환합니다. 키워드는 색인 본문의 NFC·소문자 토큰 집합 교집합 수로 정렬하고
   동점은 최신순·제공처 포함 ID순입니다. RRF 동점은 의미 검색 순위·제공처 포함 ID순입니다.
-  의미 검색 실패는 오류로 반환합니다. 빈 검색어는 AI를 호출하지 않고 최신순 최대 5개를 반환합니다.
+  의미 검색 실패는 오류로 반환합니다. 게시된 공고나 미복구 기존 공고가 있지만 준비된 색인이 하나도 없으면
+  자연어 검색은 빈 결과가 아니라 503을 반환합니다. 최초 빈 DB와 준비된 제공처의 정상 0건은 구별합니다.
+  빈 검색어는 AI를 호출하지 않고 이미 공개된 DB 스냅샷에서 최신순 최대 5개를 반환하므로 이후 Qdrant 장애에도
+  목록을 유지합니다. 아직 공개 세대·지문이 없는 신규/미검증 제공처의 공고는 이 최신 목록에 포함하지 않습니다.
 - 검색 준비 상태: `readiness`는 필수 `sources` 배열로 제공처별 저장 공고 수·색인 준비·동기화 성공/실패를
   반환합니다. 전체 공고 수는 검색 가능한 제공처의 합계이고 `indexReady`는 한 제공처 이상 준비되었는지입니다.
   `SEARCHABLE_WITH_PARTIAL_SOURCES`는 일부만 준비된 상태이며 검색은 준비된 범위에서 가능합니다.
@@ -138,9 +143,10 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
   상세 URL의 리디렉션은 매번 공식 HTTPS 호스트와 같은 `pblancId`인지 검증하며 최대 3회 따릅니다.
   HTML은 jsoup `1.23.2`로 파싱하고 `.support_project_detail`의 제목이 요청한 공고와 일치할 때
   `.view_cont` 본문만 추출합니다. 인용에는 검색된 청크 전체를 반환하며 청크당 최대 1,500 UTF-16 코드 단위입니다.
-- 현재 수집기는 `BIZINFO` 한 제공처만 구현되어 있습니다. 검색·최신 목록·평가 fixture/capture는
+- 현재 수집기는 `BIZINFO` 한 제공처만 구현되어 있습니다. 자연어 검색·평가 fixture/capture는
   `findSearchablePresent`의 제공처 상태 JOIN으로 `index_ready=true`인 공고만 읽고, 색인 복구는
-  미준비 공고도 제공처별로 처리합니다. 내부 식별자 `sourceCode:sourceProgramId`로 같은 원본 ID를 구분합니다.
+  미준비 공고도 제공처별로 처리합니다. 최신 목록은 `findPublishedPresent`로 공개된 스냅샷만 읽되
+  이후 색인 장애와 분리합니다. 내부 식별자 `sourceCode:sourceProgramId`로 같은 원본 ID를 구분합니다.
   K-Startup은 Frontend의 공식 URL 허용과 RAG 미지원 사전 안내만 준비했으며 수집 Client·동기화는 없습니다.
 
 제공처별 복구 실패 격리와 구현/미구현 범위는 [6단계 다중 제공처 준비](../../docs/support-program-multi-source-preparation.md)에 정리합니다.
@@ -189,6 +195,8 @@ Compose는 일부 주소·CORS 값을 내부 네트워크에 맞게 덮어씁니
 다음 주기에 다시 시도합니다. 현재 공개된 수동 동기화 HTTP API는 없습니다.
 
 기업마당 키는 Encoding·Decoding 형식 모두 받을 수 있으며 Client가 요청 전에 정규화합니다.
+목록 DTO는 검색·저장에 사용하는 원본 필드만 디코딩합니다. 사용하지 않는 신청 방법
+(`reqstMthPapersCn`) 필드는 무시하며, 실제 사용하는 필드와 페이지 완전성 검증은 유지합니다.
 실제 인증키·운영 DB 비밀번호는 환경변수로 주입하고 Git에 기록하지 않습니다. OpenAI 키는
 Core API가 아닌 AI Service에만 설정합니다.
 
@@ -255,6 +263,9 @@ SQL은 [`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/re
   여전히 일치할 때만 `indexReady=false`로 바꿉니다. 복구 성공도 같은 조건에서만 준비 완료를 기록합니다.
 - 복구는 제공처별로 벡터를 확인하고 상태를 갱신합니다. 한 제공처의 실패 이후에도 다른 제공처를 처리하고,
   전체 처리가 끝나면 실패를 오류로 전달합니다. 최신 수집 실패와 기존 공개 스냅샷 복구 실패는 서로 다른 상태입니다.
+- Repository의 `findSearchablePresent()`는 공개 스냅샷과 색인 준비를 모두 요구하고, 최신 목록용
+  `findPublishedPresent()`는 공개 스냅샷만 요구합니다. Mapper의 `findPublishedPresent(requireIndexReady)`가
+  같은 SQL에서 색인 조건만 선택하며, 색인 복구용 전체 조회 `findPresent()`와 혼용하지 않습니다.
 - V4 적용 전부터 있던 공고에는 공개 세대·검색 문서 지문·과거 색인 성공 여부가 없습니다. 다만 현재 공개된
   제공처별 공고가 1건 이상이고 해당 제공처 전체 색인 복구가 성공하면, 그때 읽어 색인한 지문·공고 수를 sentinel 세대 `0`과
   함께 한 번만 채택합니다. 빈 초기 DB는 `PREPARING`, 복구 전 legacy 공고는 `UNAVAILABLE`이며, 실제 새 스냅샷의 지문은 이

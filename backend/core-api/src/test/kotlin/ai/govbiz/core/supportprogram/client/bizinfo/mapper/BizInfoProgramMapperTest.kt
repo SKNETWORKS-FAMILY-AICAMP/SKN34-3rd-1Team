@@ -173,7 +173,6 @@ class BizInfoProgramMapperTest {
         updatedAt = "2026-08-02",
         target = "중소기업",
         hashtags = "서울,AI",
-        applicationMethod = "온라인",
     )
 
     private companion object {

@@ -185,7 +185,13 @@ class SupportProgramRepository(
     /** 색인이 준비된 제공처의 현재 공고만 하나의 DB 조회로 검색 후보에 포함합니다. */
     fun findSearchablePresent(): List<CatalogSupportProgram> =
         java.util.List.copyOf(
-            supportProgramMapper.findSearchablePresent().map { it.toCatalogProgram() },
+            supportProgramMapper.findPublishedPresent(requireIndexReady = true).map { it.toCatalogProgram() },
+        )
+
+    /** 이미 공개된 DB 스냅샷의 최신 목록은 이후 색인 장애와 무관하게 읽을 수 있습니다. */
+    fun findPublishedPresent(): List<CatalogSupportProgram> =
+        java.util.List.copyOf(
+            supportProgramMapper.findPublishedPresent(requireIndexReady = false).map { it.toCatalogProgram() },
         )
 
     /** 해당 제공처의 동기화 또는 기존 공고 색인 복구가 아직 시작되지 않았으면 null을 반환합니다. */

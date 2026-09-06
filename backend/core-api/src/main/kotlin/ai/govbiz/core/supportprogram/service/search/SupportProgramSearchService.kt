@@ -1,5 +1,6 @@
 package ai.govbiz.core.supportprogram.service.search
 
+import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
@@ -55,8 +56,22 @@ class SupportProgramSearchService(
         referenceDate: LocalDate? = null,
     ): SearchExecution {
         val query = rawQuery?.trim().orEmpty()
-        val presentPrograms = supportProgramRepository.findSearchablePresent().let { programs ->
+        val presentPrograms = (if (query.isBlank()) {
+            supportProgramRepository.findPublishedPresent()
+        } else {
+            supportProgramRepository.findSearchablePresent()
+        }).let { programs ->
             referenceDate?.let { date -> programs.map { it.withStatusAt(date) } } ?: programs
+        }
+        if (query.isNotBlank() && presentPrograms.isEmpty()) {
+            val statuses = supportProgramRepository.findSyncStatuses()
+            // 게시된 공고/미복구 기존 공고가 있는데 모든 색인이 불가하면 '검색 결과 없음'이 아닙니다.
+            // 초기 빈 DB나 검색 가능한 제공처의 정상 0건 스냅샷은 기존 빈 결과를 유지합니다.
+            if (statuses.none { it.indexReady } &&
+                statuses.any { it.publishedGeneration != null || it.publishedProgramCount > 0 }
+            ) {
+                throw AiServiceCallException.unavailable(null)
+            }
         }
         val eligiblePrograms = presentPrograms
             .asSequence()

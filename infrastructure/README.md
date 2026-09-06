@@ -174,7 +174,8 @@ Docker Engine·Compose v2·Bash·curl이 필요합니다. 다음 스크립트는
    Web → Core API → MySQL 카탈로그를 거쳐 이를 반환하는지 확인합니다. 이 검색 요청은 로컬 스텁을
    직접 호출하지 않으며, 더미 OpenAI 키도 외부로 보내지 않습니다.
 4. 자연어 검색이 Web → Core → MySQL → AI Service → Qdrant → 점수화를 거쳐 오래된 관련 공고를 반환하는지 확인합니다.
-5. Qdrant를 중지하면 자연어 검색은 503, 빈 검색어 목록은 200인지 확인하고, 재시작 뒤 검색 복구를 확인합니다.
+5. Qdrant를 중지하고 정기 복구가 `UNAVAILABLE/indexReady=false`를 기록한 뒤에도 자연어 검색은 503,
+   빈 검색어 목록은 기존 공개 공고를 포함한 200인지 확인합니다. 이후 재시작 뒤 검색 복구를 확인합니다.
 6. SampleItem 준비 POST가 200과 `READY_FOR_PROCESSING`을 반환하는지 확인합니다.
 7. Core API를 통한 AI Service Health가 200인지 확인합니다.
 8. AI Service를 중지했을 때 Core Health는 200, AI Health와 자연어 검색은 503(연결 불가) 또는 504(시간 초과)인지 확인합니다.
@@ -183,4 +184,14 @@ Docker Engine·Compose v2·Bash·curl이 필요합니다. 다음 스크립트는
 기본적으로 5173과 8080을 사용하므로, 같은 포트를 쓰는 다른 Compose 프로젝트는 중지한 뒤 실행하세요.
 스크립트는 종료 시 검증용 컨테이너와 volume을 삭제합니다. 조사 목적으로 유지하려면
 `VERIFY_COMPOSE_KEEP_RUNNING=true`로 실행합니다. `VERIFY_COMPOSE_PROJECT_NAME`을 변경할 경우 기존
-개발·운영 프로젝트 이름을 사용하지 마세요. 해당 이름의 스택도 중지·삭제 대상이 됩니다.
+개발·운영 프로젝트 이름을 사용하지 마세요. 실행 전 해당 이름의 컨테이너·네트워크·volume이 하나라도
+존재하면 정리 작업 없이 중단합니다. 설정 검증이나 Docker 자원 확인에 실패해도 기존 자원을 정리하지
+않으며, 새 검증 스택의 시작을 시도한 뒤부터만 자동 정리를 적용합니다. 같은 프로젝트 이름으로 검증을
+동시에 실행하지 마세요. `KEEP_RUNNING`으로 남긴 스택이 있다면 새 이름을 지정하거나 해당 검증 자원을
+직접 확인한 후 정리해야 합니다.
+
+안전장치 회귀 테스트는 실제 Docker를 호출하지 않고 실행할 수 있습니다.
+
+```bash
+python3 -B -m unittest discover -s infrastructure/scripts -p 'test_*.py'
+```

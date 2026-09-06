@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SupportProgramSearchReadiness } from '../../../../domain/entities/SupportProgramSearchReadiness'
 import {
   supportProgramReadinessPollingMilliseconds,
+  supportProgramReadinessTimeoutMilliseconds,
   useSupportProgramSearchReadinessViewModel,
 } from './useSupportProgramSearchReadinessViewModel'
 
@@ -15,6 +16,74 @@ afterEach(() => {
 })
 
 describe('useSupportProgramSearchReadinessViewModel', () => {
+  it('times out an unresponsive initial check and allows manual retry without accepting its late response', async () => {
+    vi.useFakeTimers()
+    const pending = deferred<SupportProgramSearchReadiness>()
+    let initialSignal: AbortSignal | undefined
+    const execute = vi.fn()
+      .mockImplementationOnce((signal?: AbortSignal) => {
+        initialSignal = signal
+        return pending.promise
+      })
+      .mockResolvedValueOnce(readiness('SEARCHABLE'))
+    const useCase = createReadinessUseCase(execute)
+    const { result } = renderHook(() => useSupportProgramSearchReadinessViewModel(useCase))
+
+    await act(async () => vi.advanceTimersByTimeAsync(supportProgramReadinessTimeoutMilliseconds - 1))
+    expect(result.current.isInitialLoading).toBe(true)
+    expect(initialSignal?.aborted).toBe(false)
+
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(initialSignal?.aborted).toBe(true)
+    expect(result.current).toMatchObject({
+      isInitialLoading: false,
+      isRefreshing: false,
+      isError: true,
+      canSearch: false,
+    })
+    expect(execute).toHaveBeenCalledOnce()
+
+    await act(async () => result.current.refetch())
+    expect(result.current.canSearch).toBe(true)
+
+    await act(async () => {
+      pending.resolve(readiness('UNAVAILABLE'))
+      await pending.promise
+    })
+    expect(result.current.data?.searchState).toBe('SEARCHABLE')
+    expect(result.current.isError).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('ignores a timed-out response even before another request begins', async () => {
+    vi.useFakeTimers()
+    const pending = deferred<SupportProgramSearchReadiness>()
+    const useCase = createReadinessUseCase(vi.fn().mockReturnValue(pending.promise))
+    const { result } = renderHook(() => useSupportProgramSearchReadinessViewModel(useCase))
+
+    await act(async () => vi.advanceTimersByTimeAsync(supportProgramReadinessTimeoutMilliseconds))
+    await act(async () => {
+      pending.resolve(readiness('SEARCHABLE'))
+      await pending.promise
+    })
+
+    expect(result.current.isError).toBe(true)
+    expect(result.current.canSearch).toBe(false)
+    expect(result.current.data).toBeUndefined()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('clears the timeout when unmounting a request that never settles', () => {
+    vi.useFakeTimers()
+    const pending = deferred<SupportProgramSearchReadiness>()
+    const useCase = createReadinessUseCase(vi.fn().mockReturnValue(pending.promise))
+    const { unmount } = renderHook(() => useSupportProgramSearchReadinessViewModel(useCase))
+
+    expect(vi.getTimerCount()).toBe(1)
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('aborts an outdated request and only displays the newest readiness response', async () => {
     const first = deferred<SupportProgramSearchReadiness>()
     const second = deferred<SupportProgramSearchReadiness>()

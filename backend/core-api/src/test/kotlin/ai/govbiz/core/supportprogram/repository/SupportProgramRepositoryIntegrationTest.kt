@@ -1,6 +1,8 @@
 package ai.govbiz.core.supportprogram.repository
 
 import ai.govbiz.core._common.test.MySqlTestContainerConfig
+import ai.govbiz.core._common.exception.AiServiceCallException
+import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.supportprogram.client.ai.mapper.SupportProgramIndexDocumentMapper
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
@@ -720,6 +722,69 @@ class SupportProgramRepositoryIntegrationTest {
         val failureGeneration = repository.startSyncGeneration("KSTARTUP")
         assertTrue(repository.recordSyncFailureIfCurrent("KSTARTUP", failureGeneration))
         assertEquals(listOf(bizInfo, kStartup), repository.findSearchablePresent())
+    }
+
+    @Test
+    fun keepsPublishedLatestProgramsAndDetailsAvailableDuringIndexOutageWithoutExposingPendingSources() {
+        val published = catalogProgram(id = "PUBLISHED", title = "기존 공개 공고")
+        val removed = catalogProgram(id = "REMOVED", title = "이미 제거된 공고")
+        repository.synchronizeSource("BIZINFO", listOf(published, removed))
+        val generation = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", listOf(published), generation))
+        repository.synchronizeSource("KSTARTUP", listOf(catalogProgram("PENDING", "미공개", "KSTARTUP")))
+        repository.startSyncGeneration("KSTARTUP")
+        repository.synchronizeSource("LEGACY", listOf(catalogProgram("LEGACY", "미검증", "LEGACY")))
+        assertTrue(repository.markIndexNotReadyIfPublishedSnapshotMatches(
+            "BIZINFO", generation, SupportProgramCatalogFingerprintHelper.calculate(listOf(published)), 1,
+        ))
+
+        val result = supportProgramSearchService.search("  ", acceptingOnly = true)
+
+        assertEquals(listOf("BIZINFO:PUBLISHED"), result.programs.map { it.sourceQualifiedId })
+        assertNull(result.programs.single().recommendationScore)
+        assertEquals(published, repository.findPresentBySourceAndProgramId("BIZINFO", "PUBLISHED"))
+        assertTrue(repository.findSearchablePresent().isEmpty())
+    }
+
+    @Test
+    fun doesNotDisguiseAnUnavailablePublishedSearchIndexAsNoNaturalLanguageMatches() {
+        val published = catalogProgram(id = "PUBLISHED", title = "기존 공개 공고")
+        val generation = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", listOf(published), generation))
+        assertTrue(repository.markIndexNotReadyIfPublishedSnapshotMatches(
+            "BIZINFO", generation, SupportProgramCatalogFingerprintHelper.calculate(listOf(published)), 1,
+        ))
+
+        val exception = assertThrows(AiServiceCallException::class.java) {
+            supportProgramSearchService.search("서울 AI", acceptingOnly = true)
+        }
+        assertEquals(AiServiceFailure.UNAVAILABLE, exception.failure)
+    }
+
+    @Test
+    fun allowsAnActuallyEmptyReadySourceWhileAnotherPublishedSourceHasAnIndexOutage() {
+        val published = catalogProgram(id = "PUBLISHED", title = "기존 공개 공고")
+        val generation = repository.startSyncGeneration("BIZINFO")
+        assertTrue(repository.publishSnapshotIfCurrent("BIZINFO", listOf(published), generation))
+        assertTrue(repository.markIndexNotReadyIfPublishedSnapshotMatches(
+            "BIZINFO", generation, SupportProgramCatalogFingerprintHelper.calculate(listOf(published)), 1,
+        ))
+        val emptyGeneration = repository.startSyncGeneration("KSTARTUP")
+        assertTrue(repository.publishSnapshotIfCurrent("KSTARTUP", emptyList(), emptyGeneration))
+
+        assertTrue(supportProgramSearchService.search("서울 AI", acceptingOnly = true).programs.isEmpty())
+    }
+
+    @Test
+    fun distinguishesAnUnrepairedLegacyCatalogFromAnInitiallyEmptyDatabase() {
+        assertTrue(supportProgramSearchService.search("서울 AI", acceptingOnly = true).programs.isEmpty())
+        repository.synchronizeSource("BIZINFO", listOf(catalogProgram("LEGACY", "아직 복구하지 않은 공고")))
+
+        val exception = assertThrows(AiServiceCallException::class.java) {
+            supportProgramSearchService.search("서울 AI", acceptingOnly = true)
+        }
+        assertEquals(AiServiceFailure.UNAVAILABLE, exception.failure)
+        assertTrue(supportProgramSearchService.search("", acceptingOnly = true).programs.isEmpty())
     }
 
     @Test

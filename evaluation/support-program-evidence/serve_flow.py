@@ -104,7 +104,12 @@ def build_evaluation_app(output_dir: Path, qdrant_url: str, max_api_calls: int):
             return JSONResponse({"detail": "evaluation endpoint only"}, status_code=404)
         if trace["stopped"]:
             return JSONResponse({"detail": "evaluation stopped"}, status_code=503)
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            trace["stopped"] = True
+            save()
+            raise
         if response.status_code >= 400:
             trace["stopped"] = True
             save()

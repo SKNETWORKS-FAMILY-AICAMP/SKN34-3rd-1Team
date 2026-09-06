@@ -183,6 +183,21 @@ class BizInfoClientTest {
     }
 
     @Test
+    fun ignoresUnusedSourceFieldsWithoutRejectingAnOtherwiseValidCatalog() {
+        val sourceItem = item("PBLN_1").trim().dropLast(1) +
+            """, "reqstMthPapersCn": {"unexpected": "unused source data"}}"""
+        server.expect(requestTo(expectedUrl(1)))
+            .andRespond(
+                withSuccess(
+                    pageWithItems(1, "[$sourceItem]"),
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        assertEquals(listOf("PBLN_1"), client.fetchAll().map { it.id })
+    }
+
+    @Test
     fun rejectsNegativeTotalCount() {
         server.expect(requestTo(expectedUrl(1)))
             .andRespond(withSuccess(pageWithoutItems(-1), MediaType.APPLICATION_JSON))

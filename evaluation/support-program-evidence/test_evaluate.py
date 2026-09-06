@@ -241,6 +241,61 @@ def test_execute_requires_explicit_key_and_new_directory(loaded, tmp_path, monke
         asyncio.run(evaluate.execute(loaded[1], loaded[2], tmp_path))
 
 
+@pytest.mark.parametrize("failure", ["partial-write", "replace"])
+def test_capture_write_failure_preserves_previous_record_and_closes_client(loaded, tmp_path, monkeypatch, failure):
+    import app.support_program_evidence.answer_service as answer_module
+    import openai
+
+    class FakeClient:
+        closed = False
+
+        async def close(self):
+            self.closed = True
+
+    class FakeService:
+        def __init__(self, agent):
+            pass
+
+        async def answer(self, request):
+            return evaluate.SupportProgramEvidenceAnswerResponse(
+                answer="파일 기록 실패 검증용 응답", answerStatus="ANSWERED",
+                citationChunkIds=[request.chunks[0].id],
+            )
+
+    client = FakeClient()
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-no-api-key")
+    monkeypatch.setattr(openai, "AsyncOpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(httpx2, "AsyncClient", lambda **kwargs: object())
+    monkeypatch.setattr(answer_module, "SupportProgramEvidenceAnswerService", FakeService)
+    original_write, original_replace = Path.write_text, Path.replace
+    writes, replacements = [], []
+
+    def write(path, text, **kwargs):
+        writes.append(text)
+        if failure == "partial-write" and len(writes) >= 2:
+            original_write(path, text[:20], **kwargs)
+            raise OSError("simulated partial disk write")
+        return original_write(path, text, **kwargs)
+
+    def replace(path, target):
+        replacements.append(target)
+        if failure == "replace" and len(replacements) >= 2:
+            raise OSError("simulated replacement failure")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "write_text", write)
+    monkeypatch.setattr(Path, "replace", replace)
+    output = tmp_path / "new-run"
+    with pytest.raises(OSError):
+        asyncio.run(evaluate.execute(loaded[1][:2], loaded[2], output))
+
+    assert client.closed
+    assert (output / "capture.json").read_text() == writes[0]
+    retained = json.loads((output / "capture.json").read_text())
+    assert len(retained["cases"]) == 1
+    assert retained["completed"] is False
+
+
 @pytest.mark.parametrize("capture_path", sorted((HERE / "runs").glob("*/capture.json")))
 def test_shared_run_reports_recalculate_without_api(capture_path):
     capture = json.loads(capture_path.read_text())

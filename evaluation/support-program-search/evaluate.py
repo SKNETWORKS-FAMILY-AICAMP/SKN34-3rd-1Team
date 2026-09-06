@@ -450,10 +450,13 @@ def tokenize(text):
 def baseline_results(docs, cases, k):
     ordered = newest_first(docs)
     latest = [doc["id"] for doc in ordered[:k]]
+    # A fixed corpus has the same tokens for every query. Keep this local to the
+    # evaluation run so edited fixtures never reuse stale cross-run tokens.
+    document_words = [(doc, tokenize(doc["text"])) for doc in ordered] if cases else []
     latest_results, keyword_results = {}, {}
     for case in cases:
         query_words = tokenize(case["query"])
-        scored = [(doc, len(query_words & tokenize(doc["text"]))) for doc in ordered]
+        scored = [(doc, len(query_words & words)) for doc, words in document_words]
         scored.sort(key=lambda item: item[1], reverse=True)
         latest_results[case["id"]] = latest.copy()
         keyword_results[case["id"]] = [doc["id"] for doc, score in scored if score > 0][:k]

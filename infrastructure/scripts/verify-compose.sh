@@ -47,6 +47,19 @@ COMPOSE=(
   --project-name "${PROJECT_NAME}"
   --file "${COMPOSE_FILE}"
 )
+
+# Fail before installing a destructive cleanup trap. A reused project name can
+# otherwise make even a failed config/build delete another stack's MySQL volume.
+echo "Validating Compose configuration"
+"${COMPOSE[@]}" config --quiet
+EXISTING_CONTAINERS="$(docker ps --all --quiet --filter "label=com.docker.compose.project=${PROJECT_NAME}")"
+EXISTING_NETWORKS="$(docker network ls --quiet --filter "label=com.docker.compose.project=${PROJECT_NAME}")"
+EXISTING_VOLUMES="$(docker volume ls --quiet --filter "label=com.docker.compose.project=${PROJECT_NAME}")"
+if [[ -n "${EXISTING_CONTAINERS}${EXISTING_NETWORKS}${EXISTING_VOLUMES}" ]]; then
+  echo "Verification project '${PROJECT_NAME}' already has Docker resources; choose an unused project name. Nothing was changed." >&2
+  exit 1
+fi
+
 RESPONSE_DIR="$(mktemp -d)"
 LAST_RESPONSE_FILE="${RESPONSE_DIR}/last-response"
 
@@ -218,9 +231,6 @@ wait_for_synchronized_catalog_program() {
   return 1
 }
 
-echo "Validating Compose configuration"
-"${COMPOSE[@]}" config --quiet
-
 echo "Building and starting the GovBiz verification stack (${PROJECT_NAME})"
 "${COMPOSE[@]}" up --build --detach --remove-orphans
 
@@ -255,6 +265,19 @@ echo "Stopping Qdrant to verify that a vector outage is not hidden as a successf
 "${COMPOSE[@]}" stop qdrant
 wait_for_http \
   "Explicit vector search failure while Qdrant is stopped" \
+  "http://127.0.0.1:5173/api/v1/support-programs/search?query=AI&acceptingOnly=true" \
+  "503" \
+  '"code"[[:space:]]*:[[:space:]]*"AI_SERVICE_UNAVAILABLE"'
+# The scheduled repair must first persist the outage. Checking only immediately
+# after stopping Qdrant can miss a regression that turns later searches into [].
+wait_for_http \
+  "Scheduled repair records vector unavailability" \
+  "http://127.0.0.1:5173/api/v1/support-programs/readiness" \
+  "200" \
+  '"searchState"[[:space:]]*:[[:space:]]*"UNAVAILABLE"' \
+  '"indexReady"[[:space:]]*:[[:space:]]*false'
+wait_for_http \
+  "Recorded vector outage stays an explicit natural-language search failure" \
   "http://127.0.0.1:5173/api/v1/support-programs/search?query=AI&acceptingOnly=true" \
   "503" \
   '"code"[[:space:]]*:[[:space:]]*"AI_SERVICE_UNAVAILABLE"'
