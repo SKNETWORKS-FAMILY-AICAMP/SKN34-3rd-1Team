@@ -26,7 +26,7 @@ Accept: application/json
 
 | Query parameter | 필수 | 설명 |
 |---|---|---|
-| `query` | 예 | 사용자의 검색 문장. 요청값 최대 500자. 앞뒤 공백 제거 후 비어 있으면 임베딩·Qdrant·LLM을 호출하지 않고 최신 공고 최대 5개를 반환 |
+| `query` | 예 | 사용자의 검색 문장. 요청값 최대 500자. 탭·줄바꿈·CR을 제외한 Unicode `C` 범주 문자는 400으로 거부. 앞뒤 공백 제거 후 비어 있으면 임베딩·Qdrant·LLM을 호출하지 않고 최신 공고 최대 5개를 반환 |
 | `acceptingOnly` | 아니요 | `true`이면 Core가 `OPEN` 공고만 AI 후보로 전달. 기본값 `true` |
 
 ## 공개 검색 준비 상태
@@ -330,8 +330,12 @@ LLM 전용 입출력은 HTTP 계약과 다릅니다. Agent는 해시 ID 대신 �
 `source_code`로 JOIN하여 `index_ready=true`인 제공처의 공고만 읽고 접수 상태를 적용합니다.
 그 전체 허용 목록의 ID·검색 텍스트 해시를 AI Service에 보내고, Qdrant의 의미 검색으로 최대 20개를
 선택합니다. 최신순 21번째 이후의 공고도 후보가 될 수 있습니다. 빈 검색어만 최신순 최대 5개를 반환합니다.
-빈 검색어 최신 목록과 신규 평가 fixture/capture도 같은 준비된 제공처 범위를 사용합니다. 이 상태 필터는
-저장된 준비 결과로 검색 범위를 정하며, 범위 안에서 발생한 AI·벡터 검색 오류는 기존처럼 명시적으로 반환합니다.
+신규 평가 fixture/capture도 같은 색인 준비 범위를 사용합니다. 빈 검색어 최신 목록은 `findPublishedPresent`로
+공개 세대·지문이 있는 DB 스냅샷을 읽으며, 공개 이후 색인 장애가 나도 기존 목록을 유지합니다. 아직 공개되지
+않은 제공처나 미채택 legacy 데이터는 최신 목록에도 포함하지 않습니다. 자연어 검색에서 모든 제공처의 색인이
+불가하고 이전 공개 스냅샷 또는 미복구 legacy 공고가 있으면 빈 결과 대신 `503 AI_SERVICE_UNAVAILABLE`입니다.
+최초 빈 DB나 준비된 제공처의 정상 0건 스냅샷은 기존 빈 결과를 유지합니다. 일부 제공처만 준비되었으면 준비된
+제공처만 검색하며 그 범위 안에서 발생한 AI·벡터 오류도 기존처럼 명시적으로 반환합니다.
 기존 고정 평가 스냅샷·판정 원표·캡처의 의미와 지표는 변경하지 않습니다.
 
 내부 색인 API는 다음 세 가지입니다. 공개 브라우저 API가 아니며 FastAPI 내부 포트에서만 제공합니다.
@@ -400,6 +404,7 @@ Service가 만든 후보 최대 20개와 최종 추천 최대 5개의 ID를 기�
 | 검색·근거 답변의 주소별 또는 전체 요청량 한도 초과 | 429 | `SUPPORT_PROGRAM_RATE_LIMITED` |
 | 검색·근거 답변의 동시 처리 한도 초과 | 503 | `SUPPORT_PROGRAM_BUSY` |
 | `query`가 500자를 초과함 | 400 | `REQUEST_VALIDATION_FAILED` |
+| `query`에 NUL·제로폭 문자 등 허용되지 않은 제어·형식 문자가 있음 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 상세 조회의 `sourceCode`·`sourceProgramId`가 누락·형식·공백·길이 제한을 위반함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 원문 근거 질문의 `sourceCode`·`sourceProgramId`·`question`이 누락·형식·공백·길이 제한을 위반함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 상세 조회 대상이 없거나 현재 제공처 목록에서 사라짐 | 404 | `SUPPORT_PROGRAM_NOT_FOUND` |

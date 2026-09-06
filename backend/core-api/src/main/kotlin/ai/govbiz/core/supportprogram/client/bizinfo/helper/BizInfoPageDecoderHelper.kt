@@ -113,7 +113,6 @@ internal object BizInfoPageDecoderHelper {
             updatedAt = text(node, "updtPnttm"),
             target = text(node, "trgetNm"),
             hashtags = text(node, "hashtags"),
-            applicationMethod = text(node, "reqstMthPapersCn"),
         )
     }
 

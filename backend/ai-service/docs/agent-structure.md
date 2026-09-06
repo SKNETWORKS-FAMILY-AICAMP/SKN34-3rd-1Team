@@ -74,6 +74,8 @@ Answer Agent는 한 번의 typed structured output 호출만 사용하며 tool·
 상세 근거 기능에서는 `SupportProgramEvidenceService`가 OpenAI 임베딩과 Qdrant를 직접 사용하고,
 `SupportProgramEvidenceAnswerService`만 Answer Agent를 주입받습니다. 이 분리는 벡터 검색 결과의
 현재 ID·내용 해시·문서 ID 검증과, 답변 인용 집합 검증의 책임을 명확히 하기 위한 현재 기능 범위의 분리입니다.
+두 색인 Service의 입력 토큰 상한 처리는 `support_program_embedding.py`의 함수 하나를 공유하며,
+이 CPU 작업은 `asyncio.to_thread`로 실행합니다. 외부 API 호출·응답 검증·오류 경계는 각 Service가 유지합니다.
 
 후보 원문은 신뢰할 수 없는 데이터입니다. 프롬프트는 후보 안의 명령을 따르지 않도록 명시하고,
 Agent는 tool이나 handoff 없이 한 turn만 실행합니다. Core와 AI Service는 모두 존재하지 않는 공고 ID와
@@ -109,6 +111,7 @@ tests/
 │   └── test_service.py
 ├── test_bootstrap.py
 ├── test_config.py
+├── test_support_program_embedding.py
 └── test_health.py
 ```
 
@@ -117,6 +120,7 @@ tests/
 - 색인 테스트: 고정 임베딩 HTTP 응답과 Qdrant로 색인·현재 해시 필터·누락 및 장애 처리 검증
 - 상세 근거 테스트: 별도 collection, 현재 청크 전량 색인, 교차 문서 ID 재사용 차단, strict Agent 출력·인용 집합 검증
 - bootstrap 테스트: 단일 client/model/Agent/Service 객체 그래프와 종료 시 client close
+- 공유 임베딩 전처리 테스트: 두 Service의 토큰화가 이벤트 루프 밖에서 실행되고 입력 순서·토큰 상한을 유지하는지 확인
 
 테스트의 고정 모델 응답과 임베딩 벡터는 동작·계약 검증용입니다. 실제 한국어 질문의 검색 정확도나
 모델의 자격 판단 정확도를 측정한 결과는 아닙니다.

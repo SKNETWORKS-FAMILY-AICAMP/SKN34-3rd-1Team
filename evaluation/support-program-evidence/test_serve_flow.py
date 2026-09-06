@@ -1,4 +1,5 @@
 import json
+from unittest.mock import AsyncMock
 
 import httpx2
 from fastapi.testclient import TestClient
@@ -78,3 +79,35 @@ def test_real_app_with_mock_http_enforces_budget_and_records_only_safe_data(tmp_
     trace = json.loads(saved)
     assert trace["calls"][0]["response"]["httpStatus"] == (429 if mode == "rate-limit" else 200)
     assert trace["stopped"]
+
+
+def test_unexpected_service_error_stops_the_run_and_preserves_http_500(tmp_path, monkeypatch):
+    _, prepared, _ = evaluate.load_fixture(evaluate.HERE / "fixture.json")
+    original_client = httpx2.AsyncClient
+
+    def forbidden(request):
+        pytest.fail("a service error test must not invoke an external API")
+
+    class MockClient(original_client):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx2.MockTransport(forbidden), **kwargs)
+
+    monkeypatch.setattr(httpx2, "AsyncClient", MockClient)
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-test-key")
+    output = tmp_path / "run"
+    app = serve_flow.build_evaluation_app(output, "http://127.0.0.1:1", 1)
+    answer = AsyncMock(side_effect=RuntimeError("PRIVATE-UNEXPECTED-ERROR"))
+    monkeypatch.setattr(app.state.container.support_program_evidence_answer_service, "answer", answer)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        payload = prepared[0][1].model_dump(by_alias=True)
+        first = client.post("/internal/v1/support-program-evidence/answers", json=payload)
+        assert first.status_code == 500
+        assert client.get("/health").json() == {"status": "ready", "calls": 0, "stopped": True}
+        second = client.post("/internal/v1/support-program-evidence/answers", json=payload)
+        assert second.status_code == 503
+
+    answer.assert_awaited_once()
+    saved = (output / "api-capture.json").read_text()
+    assert json.loads(saved)["stopped"] is True
+    assert "PRIVATE-UNEXPECTED-ERROR" not in saved

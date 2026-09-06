@@ -3,10 +3,10 @@ from hashlib import sha256
 from math import isfinite
 from uuid import NAMESPACE_URL, uuid5
 
-import tiktoken
 from openai import AsyncOpenAI
 from qdrant_client import AsyncQdrantClient, models
 
+from app.support_program_embedding import prepare_embedding_inputs
 from app.support_program_index.models import (
     IndexedDocumentIdentity,
     SupportProgramIndexBatchRequest,
@@ -181,15 +181,7 @@ class SupportProgramIndexService:
             raise SupportProgramIndexError()
 
     async def _embed(self, texts: list[str]) -> list[list[float]]:
-        encoding = await asyncio.to_thread(tiktoken.get_encoding, "cl100k_base")
-        inputs: list[str] = []
-        for text in texts:
-            tokens = encoding.encode_ordinary(text)
-            if len(tokens) > 8191:
-                text = encoding.decode(tokens[:8191])
-                while len(encoding.encode_ordinary(text)) > 8191:
-                    text = text[:-1]
-            inputs.append(text)
+        inputs = await asyncio.to_thread(prepare_embedding_inputs, texts)
         vectors: list[list[float]] = []
         # 32 × 8191 < OpenAI 요청당 최대 300,000 tokens.
         for offset in range(0, len(inputs), 32):

@@ -36,6 +36,31 @@ afterEach(() => {
 })
 
 describe('App navigation', () => {
+  it('준비 상태와 오류 안내가 있어도 검색·취소 버튼을 입력창 안에 배치한다', async () => {
+    let rejectSearch!: (reason: Error) => void
+    const fetchMock = vi.fn().mockReturnValue(new Promise<Response>((_resolve, reject) => {
+      rejectSearch = reject
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    renderApp(createAppStore())
+
+    const input = screen.getByRole('textbox', { name: '지원사업 검색어' })
+    const inputGroup = input.parentElement!
+    const notice = document.getElementById('support-program-search-readiness')!
+    expect(inputGroup.classList.contains('relative')).toBe(true)
+    expect(inputGroup.contains(notice)).toBe(false)
+    expect(screen.getByRole('button', { name: '검색 전송' }).parentElement).toBe(inputGroup)
+
+    fireEvent.change(input, { target: { value: '서울 AI' } })
+    fireEvent.submit(input.closest('form')!)
+    expect(screen.getByRole('button', { name: '취소' }).parentElement).toBe(inputGroup)
+
+    await act(async () => rejectSearch(new Error('network failure')))
+    const error = await screen.findByRole('alert')
+    expect(inputGroup.contains(error)).toBe(false)
+    expect(screen.getByRole('button', { name: '검색 전송' }).parentElement).toBe(inputGroup)
+  })
+
   it('두 예제의 상태 수명과 Redux의 production DI·HTTP 흐름을 비교한다', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body)) as {

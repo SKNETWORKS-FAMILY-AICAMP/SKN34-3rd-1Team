@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.Mock
 import org.mockito.Mockito
 import org.mockito.junit.jupiter.MockitoExtension
@@ -131,6 +132,36 @@ class SupportProgramControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.query").value("서울"))
             .andExpect(jsonPath("$.programs").isEmpty())
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["서울\u0000AI", "서울\u200BAI", "서울\uE000AI", "서울\uD800AI"])
+    fun rejectsUnreadableSearchQueriesBeforeCallingTheDatabaseOrAi(query: String) {
+        mockMvc.perform(get(PATH).queryParam("query", query))
+            .andExpect(status().isBadRequest())
+            .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+            .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+            .andExpect(jsonPath("$.errors[0].field").value("query"))
+
+        Mockito.verifyNoInteractions(supportProgramRepository, retrieval)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["", "  \t\r\n", "서울\tAI\n기업\r지원", "서울 😀 AI"])
+    fun keepsBlankAndReadableMultilineSearchQueriesSupported(query: String) {
+        if (query.isBlank()) {
+            Mockito.doReturn(emptyList<CatalogSupportProgram>())
+                .`when`(supportProgramRepository).findPublishedPresent()
+        } else {
+            Mockito.doReturn(emptyList<CatalogSupportProgram>())
+                .`when`(supportProgramRepository).findSearchablePresent()
+        }
+
+        mockMvc.perform(get(PATH).queryParam("query", query))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.query").value(query.trim()))
+
+        Mockito.verifyNoInteractions(retrieval)
     }
 
     @Test

@@ -39,7 +39,6 @@ export const supportProgramDetailStyles = {
   sectionTitle: 'm-0 text-[1.25rem] font-bold tracking-[-0.03em] text-app-ink',
   reasonList: 'mt-5 mb-0 grid list-none gap-2 p-0',
   reason: 'rounded-xl bg-[#f7f8fc] px-4 py-3 text-[0.88rem] text-[#455276]',
-  emptyReason: 'mt-4 mb-0 text-[#6d7898]',
   evidenceSection: 'mt-6 rounded-3xl border border-[#dfe4f2] bg-white p-[clamp(1.4rem,4vw,2.1rem)]',
   evidenceHeader: 'flex items-start justify-between gap-4',
   evidenceBadge: 'shrink-0 rounded-full bg-[#edf8e5] px-3 py-[0.45rem] text-[0.7rem] font-extrabold text-[#536d37]',

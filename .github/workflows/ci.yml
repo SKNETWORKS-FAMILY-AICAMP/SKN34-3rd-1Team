@@ -118,6 +118,9 @@ jobs:
       - name: Test evidence evaluation tools without model calls
         run: uv run --locked --extra dev python -m pytest ../../evaluation/support-program-evidence
 
+      - name: Test Compose cleanup guards without Docker mutations
+        run: python -B -m unittest discover -s ../../infrastructure/scripts -p 'test_*.py'
+
       - name: Validate retrieval evaluation fixture and metrics
         working-directory: evaluation/support-program-search
         run: python -m unittest discover

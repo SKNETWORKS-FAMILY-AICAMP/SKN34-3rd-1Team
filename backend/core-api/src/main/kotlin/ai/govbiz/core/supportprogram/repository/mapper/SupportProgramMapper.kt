@@ -19,7 +19,7 @@ interface SupportProgramMapper {
 
     fun findPresent(): List<SupportProgramDbRow>
 
-    fun findSearchablePresent(): List<SupportProgramDbRow>
+    fun findPublishedPresent(@Param("requireIndexReady") requireIndexReady: Boolean): List<SupportProgramDbRow>
 
     fun upsertSourceDocument(row: SupportProgramSourceDocumentDbRow): Int
 

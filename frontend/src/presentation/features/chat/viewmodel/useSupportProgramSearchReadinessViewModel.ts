@@ -7,6 +7,9 @@ import type { GetSupportProgramSearchReadinessUseCase } from '../../../../domain
 /** 제공처의 초기 동기화 중 새로고침 없이 준비 완료를 반영하는 간격입니다. */
 export const supportProgramReadinessPollingMilliseconds = 5_000
 
+/** 단순 상태 조회가 응답하지 않아 검색 화면이 계속 잠기는 것을 막습니다. */
+export const supportProgramReadinessTimeoutMilliseconds = 10_000
+
 type SupportProgramSearchReadinessUseCase = Pick<
   GetSupportProgramSearchReadinessUseCase,
   'execute'
@@ -33,11 +36,13 @@ export function useSupportProgramSearchReadinessViewModel(
   ),
 ) {
   const activeController = useRef<AbortController | null>(null)
+  const activeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activeRequestId = useRef(0)
   const isMounted = useRef(false)
   const [state, setState] = useState<SupportProgramSearchReadinessState>(initialState)
 
   const refetch = useCallback(async () => {
+    if (activeTimeout.current !== null) clearTimeout(activeTimeout.current)
     activeController.current?.abort()
 
     const controller = new AbortController()
@@ -50,10 +55,25 @@ export function useSupportProgramSearchReadinessViewModel(
       isInitialLoading: currentState.data === undefined,
       isRefreshing: currentState.data !== undefined,
     }))
+    const timeoutId = setTimeout(() => {
+      if (!isMounted.current || activeRequestId.current !== requestId) return
+      controller.abort()
+      setState((currentState) => ({
+        ...currentState,
+        isError: true,
+        isInitialLoading: false,
+        isRefreshing: false,
+      }))
+    }, supportProgramReadinessTimeoutMilliseconds)
+    activeTimeout.current = timeoutId
 
     try {
       const data = await getSupportProgramSearchReadinessUseCase.execute(controller.signal)
-      if (!isMounted.current || activeRequestId.current !== requestId) return
+      if (
+        !isMounted.current
+        || activeRequestId.current !== requestId
+        || controller.signal.aborted
+      ) return
       setState({
         data,
         isError: false,
@@ -72,6 +92,12 @@ export function useSupportProgramSearchReadinessViewModel(
         isInitialLoading: false,
         isRefreshing: false,
       }))
+    } finally {
+      clearTimeout(timeoutId)
+      if (activeRequestId.current === requestId) {
+        activeController.current = null
+        activeTimeout.current = null
+      }
     }
   }, [getSupportProgramSearchReadinessUseCase])
 
@@ -82,6 +108,7 @@ export function useSupportProgramSearchReadinessViewModel(
     return () => {
       isMounted.current = false
       activeRequestId.current += 1
+      if (activeTimeout.current !== null) clearTimeout(activeTimeout.current)
       activeController.current?.abort()
     }
   }, [refetch])

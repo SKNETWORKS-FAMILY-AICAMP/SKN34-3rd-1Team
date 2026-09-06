@@ -50,7 +50,7 @@ class SupportProgramSearchServiceTest {
                 catalogProgram(id = "unknown", status = SupportProgramStatus.UNKNOWN),
                 catalogProgram(id = "closed", status = SupportProgramStatus.CLOSED),
             ),
-        ).`when`(supportProgramRepository).findSearchablePresent()
+        ).`when`(supportProgramRepository).findPublishedPresent()
 
         val result = service().search("", false)
         val byId = result.programs.associateBy(SupportProgram::id)
@@ -68,7 +68,8 @@ class SupportProgramSearchServiceTest {
         assertEquals(emptyList<String>(), byId.getValue("open").matchedReasons)
         assertEquals(emptyList<RankingCall>(), ranking.calls)
         Mockito.verifyNoInteractions(retrieval)
-        Mockito.verify(supportProgramRepository).findSearchablePresent()
+        Mockito.verify(supportProgramRepository).findPublishedPresent()
+        Mockito.verify(supportProgramRepository, Mockito.never()).findSearchablePresent()
     }
 
     @Test
@@ -182,7 +183,7 @@ class SupportProgramSearchServiceTest {
         val bizInfo = catalogProgram(id = "SHARED", sourceCode = "BIZINFO")
         Mockito.doReturn(
             listOf(other, bizInfo),
-        ).`when`(supportProgramRepository).findSearchablePresent()
+        ).`when`(supportProgramRepository).findPublishedPresent()
 
         val result = service().search("", false)
 
@@ -193,7 +194,7 @@ class SupportProgramSearchServiceTest {
     @Test
     fun returnsAnImmutableResultList() {
         Mockito.doReturn(listOf(catalogProgram(id = "open")))
-            .`when`(supportProgramRepository).findSearchablePresent()
+            .`when`(supportProgramRepository).findPublishedPresent()
 
         val result = service().search("   ", true)
 

@@ -20,6 +20,11 @@ import {
 } from './ChatPage.styles'
 
 const chatMobileMediaQuery = '(max-width: 47.5rem)'
+const syncTimeFormatter = new Intl.DateTimeFormat('ko-KR', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'Asia/Seoul',
+})
 
 export function ChatPage() {
   const readiness = useSupportProgramSearchReadinessViewModel()
@@ -243,7 +248,7 @@ export function ChatPage() {
             <strong className={chatPageStyles.dataSummaryValue}>
               {readiness.data ? `${readiness.data.programCount}건` : '확인 중'}
             </strong>
-            <span className={chatPageStyles.dataSummaryLabel}>현재 동기화된 공고</span>
+            <span className={chatPageStyles.dataSummaryLabel}>검색 가능한 공고</span>
           </div>
           <div className={chatPageStyles.dataSummaryCard}>
             <strong className={chatPageStyles.dataSummaryValue}>{conversationCount}</strong>
@@ -378,51 +383,53 @@ export function ChatPage() {
               ) : null}
             </div>
           ) : null}
-          <textarea
-            className={chatPageStyles.composerInput}
-            aria-label="지원사업 검색어"
-            aria-describedby="support-program-search-readiness"
-            value={draft}
-            disabled={!readiness.canSearch}
-            onChange={(event) => updateDraft(event.target.value)}
-            onCompositionStart={() => {
-              isComposingInput.current = true
-            }}
-            onCompositionEnd={() => {
-              isComposingInput.current = false
-            }}
-            onKeyDown={(event) => {
-              if (
-                isComposingInput.current ||
-                event.nativeEvent.isComposing ||
-                event.nativeEvent.keyCode === 229
-              ) return
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                event.currentTarget.form?.requestSubmit()
-              }
-            }}
-            placeholder="예: 서울에서 AI 창업지원 사업을 찾아줘"
-            rows={1}
-          />
-          {isSearching ? (
-            <button
-              type="button"
-              className={chatPageStyles.cancelSearchButton}
-              onClick={cancelSearch}
-            >
-              취소
-            </button>
-          ) : (
-            <button
-              type="submit"
-              className={chatPageStyles.submitButton}
-              aria-label="검색 전송"
-              disabled={!isReadyToSubmit || !readiness.canSearch}
-            >
-              ↑
-            </button>
-          )}
+          <div className={chatPageStyles.composerInputGroup}>
+            <textarea
+              className={chatPageStyles.composerInput}
+              aria-label="지원사업 검색어"
+              aria-describedby="support-program-search-readiness"
+              value={draft}
+              disabled={!readiness.canSearch}
+              onChange={(event) => updateDraft(event.target.value)}
+              onCompositionStart={() => {
+                isComposingInput.current = true
+              }}
+              onCompositionEnd={() => {
+                isComposingInput.current = false
+              }}
+              onKeyDown={(event) => {
+                if (
+                  isComposingInput.current ||
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229
+                ) return
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+              placeholder="예: 서울에서 AI 창업지원 사업을 찾아줘"
+              rows={1}
+            />
+            {isSearching ? (
+              <button
+                type="button"
+                className={chatPageStyles.cancelSearchButton}
+                onClick={cancelSearch}
+              >
+                취소
+              </button>
+            ) : (
+              <button
+                type="submit"
+                className={chatPageStyles.submitButton}
+                aria-label="검색 전송"
+                disabled={!isReadyToSubmit || !readiness.canSearch}
+              >
+                ↑
+              </button>
+            )}
+          </div>
           <small className={chatPageStyles.composerHint}>
             Enter로 전송 · Shift+Enter로 줄바꿈
           </small>
@@ -614,11 +621,7 @@ function formatSyncTime(value: string | null) {
   const date = new Date(value)
   if (Number.isNaN(date.valueOf())) return value
 
-  return new Intl.DateTimeFormat('ko-KR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'Asia/Seoul',
-  }).format(date)
+  return syncTimeFormatter.format(date)
 }
 
 function ProgramCard({ program }: { program: SupportProgram }) {

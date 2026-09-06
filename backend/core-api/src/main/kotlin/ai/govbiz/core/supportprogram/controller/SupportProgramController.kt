@@ -34,7 +34,10 @@ class SupportProgramController(
 
     @GetMapping("/search")
     fun search(
-        @RequestParam @Size(max = 500) query: String,
+        @RequestParam
+        @Size(max = 500)
+        @Pattern(regexp = "(?s)^(?!.*[\\p{C}&&[^\\n\\r\\t]]).*$")
+        query: String,
         @RequestParam(defaultValue = "true") acceptingOnly: Boolean,
         httpRequest: HttpServletRequest,
     ): SupportProgramSearchResponse = requestAdmissionService.execute(httpRequest.remoteAddr) {

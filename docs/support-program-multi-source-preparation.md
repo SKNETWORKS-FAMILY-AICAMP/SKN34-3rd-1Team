@@ -12,7 +12,8 @@ K-Startup 외부 API 호출·가짜 공고 영속화·새 스키마·새 product
 |---|---|
 | 준비 상태 | 기존 전체 필드를 유지하고 필수 `sources` 배열에 제공처별 이름·상태·공고 수·색인 준비·동기화 시각 제공 |
 | 일부 제공처만 준비 | 전체 상태는 `SEARCHABLE_WITH_PARTIAL_SOURCES`; 준비된 제공처 이름을 안내하고 검색 허용 |
-| 검색과 최신 목록 | `findSearchablePresent`의 공고/상태 JOIN으로 `index_ready=true`인 제공처만 선택 |
+| 자연어 검색 | `findSearchablePresent`의 공고/상태 JOIN으로 공개 세대·지문이 있고 `index_ready=true`인 제공처만 선택 |
+| 빈 검색어 최신 목록 | `findPublishedPresent`로 공개된 DB 스냅샷을 읽어, 공개 이후 색인 장애에도 기존 공고 유지 |
 | 누락 벡터 복구 | 제공처별 색인·조건부 상태 갱신·legacy 채택. 한 제공처 실패 뒤에도 나머지를 처리하고 마지막에 실패 전달 |
 | K-Startup 공식 URL | Frontend에서 `KSTARTUP`과 `k-startup.go.kr` 및 하위 도메인의 HTTP(S) URL 조합 허용 |
 | 원문 근거 질문 | `BIZINFO`만 입력 제공. K-Startup 등 다른 제공처는 미지원 안내·원문 링크를 표시하고 전송 차단 |
@@ -53,8 +54,12 @@ Frontend는 부분 준비에서도 검색을 허용하고, 제공처별 실패 �
 
 검색은 `SupportProgramSearchService → SupportProgramRepository.findSearchablePresent → Mapper → XML`
 흐름으로 `support_program`과 `support_program_sync_status`를 `source_code`로 JOIN합니다.
-현재 공개 공고이면서 해당 제공처가 준비된 경우만 의미·키워드 검색 후보와 빈 검색어 최신 목록에
-포함합니다. 그 범위 안에서 AI·벡터 검색이 실패하면 기존처럼 오류를 반환합니다.
+현재 공개 공고이면서 해당 제공처가 준비된 경우만 의미·키워드 검색 후보에 포함합니다. 빈 검색어는
+`findPublishedPresent`로 공개 세대·지문이 있는 DB 공고를 읽으므로 이후 색인 장애에도 목록을 유지합니다.
+미공개 제공처와 미채택 legacy 공고를 빈 검색어로 우회해 노출하지는 않습니다. 자연어 검색에 필요한 모든
+색인이 불가하고 기존 공개 스냅샷 또는 미복구 공고가 있다면 빈 결과 대신 503으로 알립니다. 최초 빈 DB나
+준비된 제공처의 정상 0건 스냅샷은 빈 목록을 유지하며, 일부 준비 상태에서는 준비된 제공처만 검색합니다.
+선택된 범위 안에서 AI·벡터 검색이 실패해도 기존처럼 오류를 반환합니다.
 상세 GET은 현재 공개 공고를 복합 식별자로 조회하므로 색인 준비 상태와 별개입니다.
 
 ## 동기화 실패와 복구 실패

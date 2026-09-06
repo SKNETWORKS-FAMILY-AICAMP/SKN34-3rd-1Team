@@ -42,7 +42,8 @@ GET /api/v1/support-programs/search
   → SupportProgramController
     → SupportProgramSearchService
       → SupportProgramRepository → MyBatis Mapper → Mapper XML → MySQL
-        → findSearchablePresent: 공개 공고와 제공처 상태 JOIN, index_ready=true인 제공처만 선택
+        → 빈 검색: findPublishedPresent로 공개 세대·지문이 있는 DB 공고 선택
+        → 자연어 검색: findSearchablePresent로 위 조건에 index_ready=true 추가
       → 접수 상태 계산·필터
       ├→ 빈 검색어: 최신순 최대 5개 반환
       └→ 검색어 있음:
@@ -54,10 +55,12 @@ GET /api/v1/support-programs/search
           Core의 응답 검증 → 최종 추천 0~5개
 ```
 
-1. Repository는 `is_source_present = TRUE`이고 제공처 상태의 `index_ready = TRUE`인 공고를 읽고, 저장된 신청 기간과
-   서울 날짜로 접수 상태를 다시 계산합니다. `acceptingOnly=true`이면 `OPEN`만 남깁니다.
-2. 검색어는 앞뒤 공백을 제거합니다. 대상 공고가 없으면 빈 목록, 검색어가 비어 있으면
-   `source_sort_timestamp` 내림차순·제공처 코드·원본 ID 오름차순의 최대 5개를 반환합니다. 이 두 경로는 AI를 호출하지 않습니다.
+1. Repository는 `is_source_present = TRUE`이고 제공처의 공개 세대·지문이 있는 공고를 읽습니다. 자연어 검색은
+   `index_ready = TRUE`도 요구하며, 빈 검색은 공개 이후 색인 장애와 무관하게 기존 DB 목록을 유지합니다.
+   저장된 신청 기간과 서울 날짜로 접수 상태를 다시 계산하고 `acceptingOnly=true`이면 `OPEN`만 남깁니다.
+2. 검색어는 앞뒤 공백을 제거합니다. 검색어가 비어 있으면 `source_sort_timestamp` 내림차순·제공처 코드·원본 ID
+   오름차순의 최대 5개를 AI 없이 반환합니다. 자연어 검색의 빈 후보가 전체 색인 장애 때문이면 503으로 알리고,
+   최초 빈 DB나 준비된 제공처의 정상 0건이면 빈 목록을 반환합니다. 미공개 제공처 데이터는 노출하지 않습니다.
 3. 비어 있지 않은 질의는 대상 공고 전체의 정확한 ID·내용 해시를 AI Service에 전달합니다.
    최신 공고 20개를 먼저 자르지 않습니다. Qdrant가 반환해야 할 개수는 `min(대상 공고 수, 20)`입니다.
 4. `AiSupportProgramRetrievalFacade`는 의미 검색 응답의 질의·ID·해시·중복·유한 점수·내림차순·개수를
@@ -325,6 +328,10 @@ AI Service는 점수화와 원문 근거 답변에서 각각 `HTTP API → Servi
 `max_turns=1`로 실행합니다. 현재 tool·handoff·multi-agent orchestration은 없습니다. 일반 공고 색인·검색은
 `support_program_index`, 원문 청크 색인·검색은 `support_program_evidence`가 OpenAI 임베딩과 분리된 Qdrant
 컬렉션을 직접 사용합니다.
+
+두 색인 Service가 실제로 공유하는 입력 토큰 상한 처리는 `support_program_embedding.py`의 함수 하나로
+유지합니다. 토크나이저 준비·인코딩·잘라내기를 작업 스레드에서 실행해 HTTP 이벤트 루프를 막지 않으며,
+OpenAI 호출·응답 검증·오류 처리는 각 Service에 남겨 둡니다.
 
 추천 점수화와 근거 답변의 기본 제한시간은 모델 `25s` → Agent 실행 `30s` → Core 읽기 `35s`입니다.
 AI Health도 Core의 같은 읽기 설정을 사용합니다. 공고 의미 검색 전체는 AI에서 `25s`, Core 읽기는

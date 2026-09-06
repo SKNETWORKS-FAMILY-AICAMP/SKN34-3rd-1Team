@@ -99,7 +99,8 @@ export const chatPageStyles = {
     'text-[#6d7898] shadow-[0_10px_30px_rgb(47_67_129_/_7%)]',
   ),
   composer:
-    'relative mx-auto w-[min(860px,calc(100%_-_2rem))] pb-6 max-chat:w-[calc(100%_-_1.2rem)]',
+    'mx-auto w-[min(860px,calc(100%_-_2rem))] pb-6 max-chat:w-[calc(100%_-_1.2rem)]',
+  composerInputGroup: 'relative',
   searchStatus: 'sr-only',
   searchError: classes(
     'mt-0 mb-[0.55rem] flex items-center justify-between gap-3 rounded-[0.7rem] border px-[0.8rem] py-[0.65rem] text-[0.76rem]',

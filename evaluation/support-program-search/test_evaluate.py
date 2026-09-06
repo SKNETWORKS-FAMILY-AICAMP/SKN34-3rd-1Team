@@ -2,6 +2,7 @@ import hashlib
 import copy
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from evaluate import (
     CAPTURE_SCHEMA_VERSION,
@@ -15,10 +16,30 @@ from evaluate import (
     query_set_sha256,
     validate_capture,
     validate_results,
+    tokenize,
 )
 
 
 class RetrievalEvaluationTest(unittest.TestCase):
+    def test_baselines_tokenize_each_document_once_and_preserve_tied_order(self):
+        docs = [
+            {"id": "B", "text": "서울 AI", "sortTimestamp": "2026-09-07"},
+            {"id": "A", "text": "서울 AI", "sortTimestamp": "2026-09-07"},
+            {"id": "C", "text": "부산 제조", "sortTimestamp": "2026-09-06"},
+        ]
+        cases = [
+            {"id": "Q1", "query": "서울 AI"},
+            {"id": "Q2", "query": "부산 제조"},
+            {"id": "Q3", "query": "해당 없음"},
+        ]
+        original = copy.deepcopy(docs)
+        with patch("evaluate.tokenize", wraps=tokenize) as tokenizer:
+            latest, keyword = baseline_results(docs, cases, k=2)
+        self.assertEqual(len(docs) + len(cases), tokenizer.call_count)
+        self.assertEqual({case["id"]: ["A", "B"] for case in cases}, latest)
+        self.assertEqual({"Q1": ["A", "B"], "Q2": ["C"], "Q3": []}, keyword)
+        self.assertEqual(original, docs)
+
     def capture_fixture(self):
         docs = [
             {"id": "BIZINFO:A", "text": "서울 AI 지원사업"},

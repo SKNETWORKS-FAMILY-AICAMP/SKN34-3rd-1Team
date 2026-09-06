@@ -141,7 +141,7 @@
         ORDER BY source_code ASC, source_program_id ASC
     </select>
 
-    <select id="findSearchablePresent" resultMap="supportProgramDbRow">
+    <select id="findPublishedPresent" resultMap="supportProgramDbRow">
         SELECT
             program.source_code,
             program.source_program_id,
@@ -160,7 +160,11 @@
         INNER JOIN support_program_sync_status sync_status
             ON sync_status.source_code = program.source_code
         WHERE program.is_source_present = TRUE
+          AND sync_status.published_generation IS NOT NULL
+          AND sync_status.published_catalog_fingerprint IS NOT NULL
+        <if test="requireIndexReady">
           AND sync_status.index_ready = TRUE
+        </if>
         ORDER BY program.source_code ASC, program.source_program_id ASC
     </select>
 

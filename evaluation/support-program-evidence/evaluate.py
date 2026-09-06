@@ -260,6 +260,11 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
         "cases": [], "apiResponses": [],
     }
 
+    def save_capture() -> None:
+        temporary = output_dir / "capture.partial.json"
+        temporary.write_text(json.dumps(capture, ensure_ascii=False, indent=2) + "\n")
+        temporary.replace(output_dir / "capture.json")
+
     async def record_usage(response: httpx2.Response) -> None:
         await response.aread()
         try:
@@ -295,16 +300,18 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
                     if len(observed) == 1 else "unknown"
             record["elapsedMs"] = round((perf_counter() - started) * 1000, 3)
             capture["cases"].append(record)
-            (output_dir / "capture.json").write_text(json.dumps(capture, ensure_ascii=False, indent=2) + "\n")
+            save_capture()
             if record["outcome"] == "error":
                 break
         capture["completed"] = len(capture["cases"]) == len(prepared) and all(
             record["outcome"] == "success" for record in capture["cases"]
         )
     finally:
-        capture["finishedAt"] = datetime.now(timezone.utc).isoformat()
-        (output_dir / "capture.json").write_text(json.dumps(capture, ensure_ascii=False, indent=2) + "\n")
-        await client.close()
+        try:
+            capture["finishedAt"] = datetime.now(timezone.utc).isoformat()
+            save_capture()
+        finally:
+            await client.close()
     return capture
 
 

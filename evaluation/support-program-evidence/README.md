@@ -141,6 +141,8 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 - 매 질문 후 `capture.json`을 저장하며 오류 메시지 원문·키·인증 헤더는 저장하지 않습니다.
   계약 실패 진단용 생성 답변 텍스트(`outputTexts`)와 하위 예외 종류(`causeType`)는 기록합니다.
   API 응답에서 제공한 토큰 사용량과 질문별 지연을 기록하며, 사용량 미제공은 0이 아니라 `null`입니다.
+  임시 파일을 끝까지 쓴 후 교체하므로 쓰기·교체 실패가 이전 캡처를 잘라내지 않습니다. 저장 실패가 발생해도
+  API 클라이언트는 종료합니다. 남은 `capture.partial.json`은 미완성 기록일 수 있으므로 평가 입력으로 사용하지 마세요.
 - 끝나면 `report.json`을 저장합니다. 미완료 실행은 종료 코드 1이며 부분 결과로 전체 점수를 내지 않습니다.
 - 재계산 시 fixture·요청 해시·질문 순서·인용·완료 여부를 검사합니다. 해시는 파일 일치를 확인하는 것이며,
   캡처가 실제 API에서 생성됐음을 암호학적으로 증명하지는 않습니다.
@@ -181,6 +183,8 @@ GOVBIZ_EVIDENCE_FLOW_CAPTURE_DIR=/absolute/path/to/work/evidence-flow-v2/core \
 빈 Qdrant 기준 공고 임베딩 2회·질문 임베딩 6회·답변 6회, 최대 14회가 예상됩니다. 이미 벡터가 있는
 Qdrant를 사용하면 호출 조건이 달라지므로 같은 조건 비교가 아닙니다. SDK 재시도는 없고 첫 오류에서
 중단합니다. 예산은 서버에만 적용되므로 다른 평가 실행의 호출도 합산해야 합니다.
+평가 서버 내부의 예기치 않은 예외도 중단 상태로 기록하고 이후 요청을 거부하며, 최초 요청의 HTTP 500을
+정상 응답으로 바꾸지 않습니다.
 `--rerun-tasks`는 이전 Gradle 결과 재사용을 막습니다. 라이브 환경변수를 켠 채 전체 테스트를 실행하지 마세요.
 실행 후 서버를 종료하고 평가용 Qdrant만 정리합니다.
 위 예제에서 직접 만든 컨테이너라면 `docker stop govbiz-rag-evaluation`으로 종료합니다.
