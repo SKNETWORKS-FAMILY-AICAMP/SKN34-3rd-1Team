@@ -13,11 +13,11 @@ from agents import (
 )
 from openai import OpenAIError
 from openai.types.shared import Reasoning
-from pydantic import ValidationError
+from pydantic import Field, ValidationError, create_model
 
 from app.support_program_ranking.errors import AgentExecutionError
 
-from .models import SupportProgramRankingOutput, SupportProgramRankingRequest
+from .models import ScoredSupportProgram, SupportProgramRankingOutput, SupportProgramRankingRequest
 from .prompt import SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
 
 
@@ -54,10 +54,21 @@ class SupportProgramRecommendationAgent:
         self,
         request: SupportProgramRankingRequest,
     ) -> SupportProgramRankingOutput:
+        candidate_count = len(request.candidates)
+        output_type = create_model(
+            f"SupportProgramRankingOutputFor{candidate_count}Candidates",
+            __base__=SupportProgramRankingOutput,
+            rankings=(
+                list[ScoredSupportProgram],
+                Field(min_length=candidate_count, max_length=candidate_count),
+            ),
+        )
+        # 요청별 개수만 제한하고 공통 Agent와 기존 출력 검증 규칙은 유지한다.
+        agent = self._agent.clone(output_type=output_type)
         try:
             async with asyncio.timeout(self._run_timeout_seconds):
                 result = await Runner.run(
-                    self._agent,
+                    agent,
                     request.model_dump_json(by_alias=True),
                     max_turns=1,
                     run_config=self._run_config,

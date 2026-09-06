@@ -22,14 +22,14 @@ from app.support_program_ranking.prompt import (
 )
 
 
-def ranking_request() -> SupportProgramRankingRequest:
+def ranking_request(candidate_count: int = 1) -> SupportProgramRankingRequest:
     return SupportProgramRankingRequest(
         originalQuery="서울 AI 창업기업 지원",
         scoringVersion=SCORING_VERSION,
-        resultLimit=1,
+        resultLimit=min(candidate_count, 5),
         candidates=[
             SupportProgramCandidate(
-                id="BIZINFO:program-1",
+                id=f"BIZINFO:program-{index}",
                 title="서울 AI 창업기업 사업화",
                 organization="서울경제진흥원",
                 summary="AI 창업기업의 사업화를 지원합니다.",
@@ -39,15 +39,16 @@ def ranking_request() -> SupportProgramRankingRequest:
                 applicationPeriod="상시 접수",
                 status="OPEN",
             )
+            for index in range(1, candidate_count + 1)
         ],
     )
 
 
-def valid_output() -> SupportProgramRankingOutput:
+def valid_output(candidate_count: int = 1) -> SupportProgramRankingOutput:
     return SupportProgramRankingOutput(
         rankings=[
             ScoredSupportProgram(
-                programId="BIZINFO:program-1",
+                programId=f"BIZINFO:program-{index}",
                 semanticRelevance=38,
                 targetFit=24,
                 targetEligibility=SupportProgramEligibility.MATCH,
@@ -58,6 +59,7 @@ def valid_output() -> SupportProgramRankingOutput:
                 totalScore=95,
                 recommendationReasons=["서울 AI 창업기업 사업화 지원"],
             )
+            for index in range(1, candidate_count + 1)
         ]
     )
 
@@ -84,7 +86,9 @@ async def test_runs_typed_ranking_agent_through_the_real_runner() -> None:
         run_timeout_seconds=4.0,
     )
 
-    assert await agent.rank(ranking_request()) == expected
+    output = await agent.rank(ranking_request())
+    assert isinstance(output, SupportProgramRankingOutput)
+    assert output.model_dump() == expected.model_dump()
 
     call = model.first_call
     assert call is not None
@@ -93,10 +97,71 @@ async def test_runs_typed_ranking_agent_through_the_real_runner() -> None:
     assert request_json["originalQuery"] == "서울 AI 창업기업 지원"
     assert request_json["candidates"][0]["id"] == "BIZINFO:program-1"
     assert call.output_schema is not None
-    assert call.output_schema.output_type is SupportProgramRankingOutput
+    assert issubclass(call.output_schema.output_type, SupportProgramRankingOutput)
+    rankings_schema = call.output_schema.json_schema()["properties"]["rankings"]
+    assert rankings_schema["minItems"] == rankings_schema["maxItems"] == 1
     assert call.model_settings.timeout == 3.0
     assert call.tracing is ModelTracing.DISABLED
     model.assert_complete()
+
+
+@pytest.mark.anyio
+async def test_output_count_is_bound_to_each_request_without_changing_the_shared_agent() -> None:
+    counts = (1, 20, 1)
+    model = ScriptedModel([
+        [assistant_message(valid_output(count).model_dump_json(by_alias=True))]
+        for count in counts
+    ])
+    agent = SupportProgramRecommendationAgent(
+        model=model,
+        model_timeout_seconds=3.0,
+        run_timeout_seconds=4.0,
+    )
+
+    for count in counts:
+        output = await agent.rank(ranking_request(count))
+        assert isinstance(output, SupportProgramRankingOutput)
+        assert len(output.rankings) == count
+
+    for call, count in zip(model.calls, counts, strict=True):
+        assert call.output_schema is not None
+        schema = call.output_schema.json_schema()["properties"]["rankings"]
+        assert schema["minItems"] == schema["maxItems"] == count
+    assert agent._agent.output_type is SupportProgramRankingOutput
+    model.assert_complete()
+
+
+@pytest.mark.anyio
+async def test_rejects_nineteen_rankings_for_twenty_candidates_before_service_validation() -> None:
+    model = ScriptedModel([[assistant_message(valid_output(19).model_dump_json(by_alias=True))]])
+    agent = SupportProgramRecommendationAgent(
+        model=model,
+        model_timeout_seconds=3.0,
+        run_timeout_seconds=4.0,
+    )
+
+    with pytest.raises(AgentExecutionError) as captured:
+        await agent.rank(ranking_request(20))
+
+    assert isinstance(captured.value.__cause__, ModelBehaviorError)
+    assert len(model.calls) == 1
+
+
+@pytest.mark.anyio
+async def test_request_bound_output_preserves_duplicate_id_validation() -> None:
+    output = valid_output(20).model_dump(by_alias=True)
+    output["rankings"][-1]["programId"] = output["rankings"][0]["programId"]
+    model = ScriptedModel([[assistant_message(json.dumps(output, ensure_ascii=False))]])
+    agent = SupportProgramRecommendationAgent(
+        model=model,
+        model_timeout_seconds=3.0,
+        run_timeout_seconds=4.0,
+    )
+
+    with pytest.raises(AgentExecutionError) as captured:
+        await agent.rank(ranking_request(20))
+
+    assert isinstance(captured.value.__cause__, ModelBehaviorError)
 
 
 @pytest.mark.anyio
@@ -182,14 +247,15 @@ def responses_body(output_json: str) -> dict[str, object]:
 
 
 @pytest.mark.anyio
-async def test_openai_request_uses_non_stored_strict_structured_output() -> None:
+@pytest.mark.parametrize("candidate_count", [1, 20])
+async def test_openai_request_uses_non_stored_strict_structured_output(candidate_count: int) -> None:
     captured_requests: list[dict[str, object]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         captured_requests.append(json.loads(request.content))
         return httpx2.Response(
             200,
-            json=responses_body(valid_output().model_dump_json(by_alias=True)),
+            json=responses_body(valid_output(candidate_count).model_dump_json(by_alias=True)),
         )
 
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
@@ -209,7 +275,9 @@ async def test_openai_request_uses_non_stored_strict_structured_output() -> None
     )
 
     try:
-        assert await agent.rank(ranking_request()) == valid_output()
+        output = await agent.rank(ranking_request(candidate_count))
+        assert isinstance(output, SupportProgramRankingOutput)
+        assert output.model_dump() == valid_output(candidate_count).model_dump()
     finally:
         await openai_client.close()
 
@@ -223,3 +291,5 @@ async def test_openai_request_uses_non_stored_strict_structured_output() -> None
     schema = text_format["schema"]
     assert schema["additionalProperties"] is False
     assert schema["required"] == ["rankings"]
+    assert schema["properties"]["rankings"]["minItems"] == candidate_count
+    assert schema["properties"]["rankings"]["maxItems"] == candidate_count
