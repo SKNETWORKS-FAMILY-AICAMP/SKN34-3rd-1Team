@@ -3,6 +3,7 @@ import { useReviewSessionIsolation } from './presentation/features/combination-r
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router'
 
 import { AdminMembersPage } from './presentation/features/admin/view/AdminMembersPage'
+import { SavedProgramsPage } from './presentation/features/saved-programs/view/SavedProgramsPage'
 import { LoginPage } from './presentation/features/auth/view/LoginPage'
 import { SignupPage } from './presentation/features/auth/view/SignupPage'
 import { SupportProgramSearchPage } from './presentation/features/support-program-catalog/view/SupportProgramSearchPage'
@@ -67,6 +68,7 @@ function App() {
 
       <Route element={<RequireAuth />}>
         <Route element={<WorkspaceLayout />}>
+          <Route path={appPaths.savedPrograms} element={<SavedProgramsPage />} />
           <Route path={appPaths.combinationReviews} element={<CombinationReviewListPage />} />
           <Route path={appPaths.combinationReviewNew} element={<CombinationReviewEditorPage create />} />
           <Route path={appPaths.combinationReviewDetail} element={<CombinationReviewEditorPage />} />

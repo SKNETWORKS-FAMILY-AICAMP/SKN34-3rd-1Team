@@ -255,7 +255,7 @@ describe('작업 화면 사이드바', () => {
     renderApp('/app/chat')
 
     const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
-    expect(within(sidebar).queryByRole('link', { name: /관심 공고함/ })).toBeNull()
+    expect(within(sidebar).getByRole('link', { name: /관심 공고함/ }).getAttribute('href')).toBe('/app/saved-programs')
     expect(within(sidebar).getByText('관심 공고함')).toBeTruthy()
   })
 
