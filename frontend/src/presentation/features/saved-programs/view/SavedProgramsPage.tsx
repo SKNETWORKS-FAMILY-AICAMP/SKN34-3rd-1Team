@@ -175,7 +175,7 @@ function ApplicationPipeline({ filteredSavedPrograms, filtersActive, savedPhase,
     ? items.filter(item => filteredProgramKeys.has(`${item.sourceCode}:${item.sourceProgramId}`))
     : items
   const interestPrograms = filteredSavedPrograms.filter(program => !preparedProgramKeys.has(`${program.sourceCode}:${program.sourceProgramId}`))
-  const visibleInterestPrograms = interestPrograms.slice(0, pipelineColumnPreviewSize)
+  const visibleInterestPrograms = interestPrograms.slice(0, interestPipelinePreviewSize)
   const openedStage = applicationPipelineStages.find(stage => stage.key === openedColumn)
   const openedStageItems = openedStage
     ? visiblePreparationItems.filter(item => item.progressStage === openedStage.key)
@@ -209,12 +209,12 @@ function ApplicationPipeline({ filteredSavedPrograms, filtersActive, savedPhase,
         <div className={s.pipelineCards}>
           {visibleInterestPrograms.map(program => <InterestPipelineCard key={program.id} program={program} />)}
           {savedPhase !== 'loading' && interestPrograms.length === 0 ? <p className={s.pipelineEmpty}>지원 준비 전인 관심 공고가 없습니다.</p> : null}
-          <PipelineColumnMore total={interestPrograms.length} onClick={() => openColumn('INTEREST')} />
+          <PipelineColumnMore total={interestPrograms.length} previewSize={interestPipelinePreviewSize} onClick={() => openColumn('INTEREST')} />
         </div>
       </section>
       {applicationPipelineStages.map((stage, index) => {
         const stageItems = visiblePreparationItems.filter(item => item.progressStage === stage.key)
-        const visibleStageItems = stageItems.slice(0, pipelineColumnPreviewSize)
+        const visibleStageItems = stageItems.slice(0, applicationPipelinePreviewSize)
         return <section key={stage.key} className={`${s.pipelineColumn} ${pipelineColumnTone[index + 1]}`} aria-labelledby={`pipeline-${stage.key}`}>
           <header className={s.pipelineColumnHeader}>
             <h2 id={`pipeline-${stage.key}`} className={s.pipelineColumnTitle}>{stage.label}</h2>
@@ -224,7 +224,7 @@ function ApplicationPipeline({ filteredSavedPrograms, filtersActive, savedPhase,
           <div className={s.pipelineCards}>
             {visibleStageItems.map(item => <PipelineCard key={item.id} item={item} changing={changingId === item.id} onChangeProgress={onChangeProgress} />)}
             {phase === 'ready' && stageItems.length === 0 ? <p className={s.pipelineEmpty}>해당 단계의 사업이 없습니다.</p> : null}
-            <PipelineColumnMore total={stageItems.length} onClick={() => openColumn(stage.key)} />
+            <PipelineColumnMore total={stageItems.length} previewSize={applicationPipelinePreviewSize} onClick={() => openColumn(stage.key)} />
           </div>
         </section>
       })}
@@ -262,13 +262,14 @@ function ApplicationPipeline({ filteredSavedPrograms, filtersActive, savedPhase,
   </div>
 }
 
-const pipelineColumnPreviewSize = 3
+const interestPipelinePreviewSize = 3
+const applicationPipelinePreviewSize = 2
 const pipelineDialogPageSize = 4
 
-function PipelineColumnMore({ total, onClick }: { total: number; onClick: () => void }) {
-  if (total <= pipelineColumnPreviewSize) return null
+function PipelineColumnMore({ total, previewSize, onClick }: { total: number; previewSize: number; onClick: () => void }) {
+  if (total <= previewSize) return null
   return <button type="button" className={s.pipelineColumnMore} onClick={onClick}>
-    +{total - pipelineColumnPreviewSize}건 더보기
+    +{total - previewSize}건 더보기
   </button>
 }
 
